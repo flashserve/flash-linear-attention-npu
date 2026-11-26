@@ -29,7 +29,9 @@ def build_inputs(spec):
     lengths = spec["lengths"]
     batch, sequence, heads = len(lengths), max(lengths), spec["heads"]
     slots = spec.get("slots", batch if spec["name"].startswith("main") else batch + 1)
-    inputs, hidden, _ = _make_case(batch, sequence, heads, slots, spec["conv"], seed=spec["seed"])
+    inputs, hidden, _ = _make_case(
+        batch, sequence, heads, slots, spec["conv"], seed=spec["seed"], hidden=spec.get("hidden", 7168)
+    )
     hidden = torch.cat([hidden[i * sequence : i * sequence + n] for i, n in enumerate(lengths)])
     inputs["hidden_states"] = hidden.reshape(batch, sequence, -1) if spec["layout"] == "BSH" else hidden
     prefix_dtype = torch.int64 if spec["name"] == "cross" else torch.int32
@@ -46,10 +48,11 @@ def build_inputs(spec):
         cols = heads * 384
         original = inputs["qkv_projection_weight"].T.contiguous()
         # Vary the E8M0 scale independently over K group, output column and pair lane.
-        pair = torch.arange(112)[:, None, None]
+        h = original.shape[0]
+        pair = torch.arange(h // 64)[:, None, None]
         scale = (121 + (pair + torch.arange(cols)[None, :, None] + 2 * torch.arange(2)) % 5).byte()
-        factors = torch.exp2(scale.transpose(1, 2).reshape(224, 1, cols).float() - 127)
-        weights = (original.reshape(224, 32, cols).float() / factors).reshape(1, 7168, cols)
+        factors = torch.exp2(scale.transpose(1, 2).reshape(h // 32, 1, cols).float() - 127)
+        weights = (original.reshape(h // 32, 32, cols).float() / factors).reshape(1, h, cols)
         inputs.update(qkv_projection_weight=weights.to(torch.float8_e4m3fn),
                       qkv_projection_weight_scale=scale.unsqueeze(0), qkv_scale_alg=spec["qkv_scale_alg"])
     if spec["name"] == "slot_gaps":

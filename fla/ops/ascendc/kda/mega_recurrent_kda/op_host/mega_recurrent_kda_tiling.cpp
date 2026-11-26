@@ -13,7 +13,6 @@ namespace {
 using kda::Input;
 namespace geometry = kda::geometry;
 using Dims = std::vector<int64_t>;
-constexpr int64_t kHiddenWidth = 7168;
 constexpr int64_t kHeadWidth = 128;
 Dims GetDimensions(gert::TilingContext *ctx, Input input)
 {
@@ -46,32 +45,34 @@ void CheckShape(const Dims &actual, const Dims &required, const char *name)
         throw std::invalid_argument(name);
     }
 }
-void CheckProjectionShapes(gert::TilingContext *ctx, int64_t batch, int64_t n)
+void CheckProjectionShapes(gert::TilingContext *ctx, int64_t batch, int64_t n, int64_t hidden)
 {
     const int64_t width = n * kHeadWidth;
     CheckShape(GetDimensions(ctx, Input::AcceptedTokens), {batch}, "accepted-token shape");
     if (ctx->GetInputDesc(static_cast<size_t>(Input::QkvWeight))->GetDataType() == ge::DT_INT8) {
+        if (hidden % 32) throw std::invalid_argument("INT8 hidden width must align to 32");
         const auto weight = GetDimensions(ctx, Input::QkvWeight);
-        if (weight != Dims{kHiddenWidth, 3 * width}) {
-            CheckShape(weight, {3 * width / 32, kHiddenWidth / 16, 16, 32}, "INT8 QKV NZ storage shape");
+        if (weight != Dims{hidden, 3 * width}) {
+            CheckShape(weight, {3 * width / 32, hidden / 16, 16, 32}, "INT8 QKV NZ storage shape");
         }
         CheckShape(GetDimensions(ctx, Input::WeightScale), {3 * width}, "INT8 QKV channel scales");
     } else if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
         // The launcher may forward the packed storage dimensions as the origin shape.
+        if (hidden % 64) throw std::invalid_argument("MXFP8 hidden width must align to a pair of scale groups");
         const auto qkv = GetDimensions(ctx, Input::QkvWeight);
-        if (qkv != Dims{1, kHiddenWidth, 3 * width}) {
-            CheckShape(qkv, {1, 3 * width / 32, kHiddenWidth / 16, 16, 32}, "MX QKV storage shape");
+        if (qkv != Dims{1, hidden, 3 * width}) {
+            CheckShape(qkv, {1, 3 * width / 32, hidden / 16, 16, 32}, "MX QKV storage shape");
         }
-        CheckShape(GetDimensions(ctx, Input::WeightScale), {1, kHiddenWidth / 64, 3 * width, 2}, "MX weight scale shape");
+        CheckShape(GetDimensions(ctx, Input::WeightScale), {1, hidden / 64, 3 * width, 2}, "MX weight scale shape");
     } else {
-        CheckShape(GetDimensions(ctx, Input::QkvWeight), {3 * width, kHiddenWidth}, "QKV projection shape");
+        CheckShape(GetDimensions(ctx, Input::QkvWeight), {3 * width, hidden}, "QKV projection shape");
     }
-    CheckShape(GetDimensions(ctx, Input::DecayAWeight), {kHeadWidth, kHiddenWidth}, "decay-A shape");
+    CheckShape(GetDimensions(ctx, Input::DecayAWeight), {kHeadWidth, hidden}, "decay-A shape");
     CheckShape(GetDimensions(ctx, Input::DecayBWeight), {width, kHeadWidth}, "decay-B shape");
-    CheckShape(GetDimensions(ctx, Input::BetaWeight), {n, kHiddenWidth}, "beta shape");
-    CheckShape(GetDimensions(ctx, Input::GateWeight), {width, kHiddenWidth}, "gate shape");
+    CheckShape(GetDimensions(ctx, Input::BetaWeight), {n, hidden}, "beta shape");
+    CheckShape(GetDimensions(ctx, Input::GateWeight), {width, hidden}, "gate shape");
     CheckShape(GetDimensions(ctx, Input::NormWeight), {kHeadWidth}, "norm weight shape");
-    CheckShape(GetDimensions(ctx, Input::OutputWeight), {kHiddenWidth, width}, "output weight shape");
+    CheckShape(GetDimensions(ctx, Input::OutputWeight), {hidden, width}, "output weight shape");
     CheckShape(GetDimensions(ctx, Input::ALog), {n}, "A_log shape");
     CheckShape(GetDimensions(ctx, Input::DtBias), {n, kHeadWidth}, "dt_bias shape");
 }
@@ -92,8 +93,8 @@ MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int6
 {
     const auto *attrs = ctx->GetAttrs();
     Dims x = GetDimensions(ctx, Input::HiddenStates);
-    if ((x.size() != 2 && x.size() != 3) || x.back() != kHiddenWidth) {
-        throw std::invalid_argument("hidden_states must be BSH or TH with H=7168");
+    if ((x.size() != 2 && x.size() != 3) || x.back() <= 0 || x.back() > INT32_MAX) {
+        throw std::invalid_argument("hidden_states must be BSH or TH with a positive int32 hidden width");
     }
     Dims batchDim = GetDimensions(ctx, Input::StateIndices);
     if (batchDim.size() != 1) {
@@ -104,7 +105,7 @@ MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int6
     if (n > UINT32_MAX / (6 * kHeadWidth)) {
         throw std::invalid_argument("head count exceeds device stride range");
     }
-    CheckProjectionShapes(ctx, batch, n);
+    CheckProjectionShapes(ctx, batch, n, x.back());
     uint32_t layout = GetConvLayout(ctx, n);
     const bool packed = x.size() == 2;
     uint32_t seq = packed ? 0 : CheckedDimension(x[1]);
@@ -132,6 +133,7 @@ MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int6
     common.uStride = uint64_t(geometryData[geometry::UStride]);
     common.keyStride = uint64_t(geometryData[geometry::KStride]);
     common.decayStride = uint64_t(geometryData[geometry::DecayStride]);
+    common.hidden = CheckedDimension(x.back());
     common.batch = CheckedDimension(batch);
     common.sequence = seq;
     common.tokens = rows;
@@ -220,7 +222,7 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
         return ge::GRAPH_FAILED;
     }
     KdaProblem shape{common.batch,    common.sequence, common.heads,  data.poolSlots,
-                     data.convLength, common.capacity, common.tokens, kTileRows};
+                     data.convLength, common.capacity, common.tokens, kTileRows, common.hidden};
     uint64_t l2Bytes = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, l2Bytes);
     data.arch22 = ComputeTiling(shape, cores, 2 * cores, common.crosses == 1, l2Bytes);
@@ -229,15 +231,24 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
     }
     uint64_t key = 0;
     if (int8Qkv) {
+        // Each QKV panel is read once for a single row tile. Keep it cached if another
+        // tile can reuse it or if the layer's projection weights fit together in L2.
+        const uint64_t width = data.arch22.p;
+        const uint64_t qkvBytes = 3 * width * common.hidden * sizeof(int8_t);
+        const uint64_t bf16Bytes = sizeof(uint16_t) * ((2 * width + common.heads + kHeadWidth) * common.hidden +
+                                                       width * kHeadWidth);
         uint64_t ubBytes = 0;
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
         key = UseSplitQkvSums(data.arch22, common.crosses == 2, ubBytes) ? 7 : 6;
+        if (key == 6 && data.arch22.tiles == 1 && l2Bytes != 0 && qkvBytes + bf16Bytes > l2Bytes) {
+            return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, 10);
+        }
         // With spare vector cores, independent ranges of V keep the long recurrence in parallel.
         // Keys 8/9 share the same two INT8 QKV layouts as keys 6/7.
         const uint64_t units = uint64_t(common.batch) * common.heads;
         const uint64_t historyBytes = units * 9 * kHeadWidth * sizeof(uint16_t);
         const uint64_t valuesBytes = uint64_t(common.tokens) * data.arch22.p * sizeof(float);
-        const uint64_t outputBytes = uint64_t(common.tokens) * kHiddenWidth * sizeof(uint16_t);
+        const uint64_t outputBytes = uint64_t(common.tokens) * common.hidden * sizeof(uint16_t);
         if (common.batch <= common.tokens / 128u && 2 * units <= data.arch22.aivNum &&
             data.arch22.slotsPR >= data.arch22.tiles && historyBytes <= outputBytes &&
             valuesBytes <= outputBytes - historyBytes) {

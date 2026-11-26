@@ -7,14 +7,15 @@ namespace kda {
 // BF16 magnitudes use one exponent and seven fraction bits. Round a shifted integer to nearest even.
 __simt_vf__ __aicore__ LAUNCH_BOUND(1024) inline void QuantizeHidden(
     __gm__ const uint16_t *hidden, __gm__ uint8_t *codes, __gm__ uint8_t *scales, uint32_t rows,
-    uint32_t core, uint32_t cores, uint32_t algorithm)
+    uint32_t hiddenWidth, uint32_t core, uint32_t cores, uint32_t algorithm)
 {
     const uint32_t lane = AscendC::Simt::GetThreadIdx();
     // Distribute aligned groups across all Vector workers, including the last partial row wave.
-    const uint64_t chunks = uint64_t(rows) * (7168 / 256);
+    const uint64_t elements = uint64_t(rows) * hiddenWidth;
+    const uint64_t chunks = (elements + 255) / 256;
     const uint64_t first = chunks * core / cores * 256;
     const uint64_t end = chunks * (core + 1) / cores * 256;
-    for (uint64_t index = first + lane; index < end; index += 1024) {
+    for (uint64_t index = first + lane; index < end && index < elements; index += 1024) {
         const uint32_t raw = hidden[index], magnitude = raw & 0x7fff;
         int32_t maximum = static_cast<int32_t>(magnitude);
         for (int mask = 16; mask; mask >>= 1) {
@@ -52,12 +53,12 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(1024) inline void QuantizeHidden(
 template <uint32_t maxRows>
 CATLASS_DEVICE void ProjectMxQkvTile(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
                                  GM_ADDR weights, GM_ADDR weightScales, GM_ADDR projected, uint32_t rows,
-                                 uint32_t channels, uint32_t tileRows)
+                                 uint32_t channels, uint32_t tileRows, uint32_t K)
 {
     using F8 = float8_e4m3_t;
     using S8 = float8_e8m0_t;
     using NZ = Catlass::layout::zN;
-    constexpr uint32_t K = 7168, groups = K / 32;
+    const uint32_t groups = K / 32;
     auto layoutA = tla::MakeLayout<F8, Row>(rows, K);
     auto layoutB = tla::MakeLayout<F8, NZ>(K, channels);
     auto layoutSA = tla::MakeMxScaleLayout<S8, Row, false>(rows, groups);
@@ -105,7 +106,7 @@ CATLASS_DEVICE void ProjectMxQkvTile(Catlass::Arch::Resource<Arch> &resource, GM
 }
 CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
                                  GM_ADDR weights, GM_ADDR weightScales, GM_ADDR projected, uint32_t rows,
-                                 uint32_t channels)
+                                 uint32_t channels, uint32_t hidden)
 {
     const uint32_t panels = (channels + 191) / 192, workers = AscendC::GetBlockNum();
     const uint64_t defaultTiles = (uint64_t(rows) + 127) / 128;
@@ -116,9 +117,9 @@ CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADD
     if (minWaves < defaultWaves) {
         const uint64_t tiles = minWaves * workers / panels;
         const uint32_t tileRows = ((rows + tiles - 1) / tiles + 15) / 16 * 16;
-        ProjectMxQkvTile<maxRows>(resource, codes, scales, weights, weightScales, projected, rows, channels, tileRows);
+        ProjectMxQkvTile<maxRows>(resource, codes, scales, weights, weightScales, projected, rows, channels, tileRows, hidden);
     } else {
-        ProjectMxQkvTile<128>(resource, codes, scales, weights, weightScales, projected, rows, channels, 128);
+        ProjectMxQkvTile<128>(resource, codes, scales, weights, weightScales, projected, rows, channels, 128, hidden);
     }
 }
 } // namespace kda

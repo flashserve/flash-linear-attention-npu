@@ -23,6 +23,7 @@ from executor_mega_recurrent_kda import build_inputs, to_device
         "invalid_lower_bound",
         "invalid_epsilon",
         "requires_grad",
+        "mismatched_projection_width",
     ],
 )
 def test_invalid_inputs_preserve_state(invalid):
@@ -39,6 +40,8 @@ def test_invalid_inputs_preserve_state(invalid):
         host["cu_seqlens"][-1] += 1
     elif invalid == "wrong_index_dtype":
         host["state_indices"] = host["state_indices"].long()
+    elif invalid == "mismatched_projection_width":
+        host["decay_projection_a_weight"] = host["decay_projection_a_weight"][:, :-16].contiguous()
     elif invalid == "invalid_scale":
         host["scale"] = float("inf")
     elif invalid == "invalid_lower_bound":

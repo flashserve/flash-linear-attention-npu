@@ -32,7 +32,6 @@
 namespace MegaRecurrentKdaV2 {
 
 constexpr uint32_t kHeadDim = 128;                       // D = K = V
-constexpr uint32_t kHidden = 7168;                       // H
 constexpr uint32_t kTileRows = 64;                       // tile = one ring slot = 64 tokens
 constexpr uint32_t kBlockTiles = 3;                      // P row block spans at most 3 tiles
 constexpr uint32_t kBlockRows = kTileRows * kBlockTiles; // BP = 192
@@ -77,6 +76,7 @@ struct KdaProblem {
     uint32_t replayCapacity; // S capacity
     uint32_t tokens;         // T = token_count
     uint32_t tileRows;       // kTileRows
+    uint32_t hidden;
 
     uint32_t projectWidth() const
     {
@@ -128,7 +128,10 @@ struct KdaTiling {
 };
 
 constexpr uint32_t kInt8ScaleBytes = 32;
-constexpr uint32_t kInt8SumColumns = (kHidden - kInt8ScaleBytes) / sizeof(int32_t) / kNW * kNW;
+KDA_INLINE uint32_t Int8SumColumns(uint32_t hidden)
+{
+    return (hidden - kInt8ScaleBytes) / sizeof(int32_t) / kNW * kNW;
+}
 constexpr uint32_t kInt8DequantBytesPerColumn = 16;
 constexpr uint32_t kArch22UbBytes = 192 * 1024;
 
@@ -151,7 +154,7 @@ inline bool UseSplitQkvSums(const KdaTiling &t, bool devicePrefix, uint64_t ubBy
 {
     const uint32_t columns = 3 * t.p;
     const uint64_t dequantBytes = uint64_t(columns) * kInt8DequantBytesPerColumn;
-    if (columns <= kInt8SumColumns || dequantBytes > ubBytes || dequantBytes > kArch22UbBytes) {
+    if (!Int8SumColumns(t.hidden) || columns <= Int8SumColumns(t.hidden) || dequantBytes > ubBytes || dequantBytes > kArch22UbBytes) {
         return false;
     }
     // The existing kernel already fits all INT32 sums in the unused QKV tail.
@@ -159,7 +162,7 @@ inline bool UseSplitQkvSums(const KdaTiling &t, bool devicePrefix, uint64_t ubBy
         return false;
     }
     const uint32_t end = MayOverlapQkv(t, devicePrefix) ? t.offCounts : t.offBetaRaw;
-    const uint64_t bytes = uint64_t(t.tokens) * (columns - kInt8SumColumns) * sizeof(int32_t);
+    const uint64_t bytes = uint64_t(t.tokens) * (columns - Int8SumColumns(t.hidden)) * sizeof(int32_t);
     return bytes <= end - SplitQkvSumOffset(t, devicePrefix);
 }
 
@@ -240,7 +243,7 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     t.n = problem.heads;
     t.d = kHeadDim;
     t.p = problem.projectWidth();
-    t.hidden = kHidden;
+    t.hidden = problem.hidden;
     t.aicNum = aicNum;
     t.aivNum = aivNum;
     // Template selection (docs/design.md 3).  T02 owns every input in which a
@@ -263,7 +266,7 @@ inline KdaTiling ComputeTiling(const KdaProblem &problem, uint32_t aicNum, uint3
     t.nBeta = CeilDiv(t.n, kNW);
     t.nDecayRaw = CeilDiv(t.p, kNW);
     t.nProj = t.nQkv + t.nGate + t.nBeta + t.nDecayRaw;
-    t.nOut = CeilDiv(kHidden, kNW);
+    t.nOut = CeilDiv(t.hidden, kNW);
     // Give each tile its own GM slot throughout the P, R and O stages.
     t.slotsPR = t.tiles > kPRSlotsMin ? t.tiles : kPRSlotsMin;
     t.slotsGated = t.tiles > kGatedSlotsMin ? t.tiles : kGatedSlotsMin;

@@ -59,6 +59,9 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     } else if (TILING_KEY_IS(9)) {
         params.weightScale = weightScale;
         RunArch22<true, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(10)) {
+        params.weightScale = weightScale;
+        RunArch22<false, false, true>(tilingData, params, plan, userWorkspace);
     }
 #else
     REGISTER_TILING_DEFAULT(MegaRecurrentKdaTilingData);
@@ -71,6 +74,7 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     params.betaWeight = beta;
     params.gateWeight = gate;
     params.rows = tilingData.tokens;
+    params.hidden = tilingData.hidden;
     params.heads = tilingData.heads;
     params.decayRing = AscendC::GetUserWorkspace(workspace);
     auto &recurrence = params.recurrence;
@@ -107,7 +111,7 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
 
     if (TILING_KEY_IS(5)) {
         // Output storage is private until the QKV projection has finished on every core.
-        GM_ADDR scales = out + uint64_t(params.rows) * 7168;
+        GM_ADDR scales = out + uint64_t(params.rows) * params.hidden;
         params.projectedQkv = params.decayRing;
         params.decayRing += uint64_t(params.rows) * params.heads * 3 * 128 * sizeof(kda::Bf);
         recurrence.crosses = tilingData.crosses == 2 ? reinterpret_cast<__gm__ const int32_t *>(plan)[0] : tilingData.crosses;
@@ -115,7 +119,7 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
         kda::MegaKernel<false, false, true>{}.PrepareFirstMxWave(params);
         if ASCEND_IS_AIV {
             AscendC::Simt::VF_CALL<kda::QuantizeHidden>(AscendC::Simt::Dim3(1024),
-                reinterpret_cast<__gm__ const uint16_t *>(x), out, scales, params.rows,
+                reinterpret_cast<__gm__ const uint16_t *>(x), out, scales, params.rows, params.hidden,
                 uint32_t(AscendC::GetBlockIdx()), uint32_t(AscendC::GetBlockNum() * AscendC::GetTaskRation()),
                 tilingData.mxAlgorithm);
         }
@@ -123,7 +127,7 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
         if ASCEND_IS_AIC {
             Catlass::Arch::Resource<kda::Arch> resource;
             kda::ProjectMxQkv(resource, out, scales, qkv, weightScale, params.projectedQkv, params.rows,
-                              params.heads * 3 * 128);
+                              params.heads * 3 * 128, params.hidden);
         }
         AscendC::SyncAll<false>();
         if (recurrence.crosses) {

@@ -20,7 +20,7 @@ rg -n -i 'dynamic_?(mx_?)?quant|quant_?(batch_?)?matmul|causal_conv1d|kda_recove
 
 ## 2. 在权重加载器和状态管理器完成映射
 
-令 `H=7168`、`D=128`、`P=N*D`，其中 N 是当前设备执行的 head 数。每层在加载时按当前 rank 绑定 Q、K、V 顺序的权重与配对的 scale，激活动态量化由融合算子完成。
+令 `H=hidden_states.shape[-1]`、`D=128`、`P=N*D`，其中 N 是当前设备执行的 head 数。每层在加载时按当前 rank 绑定 Q、K、V 顺序的权重与配对的 scale，激活动态量化由融合算子完成。
 
 | 加载到本层 `weights` 的字段 | Atlas A2/A3 · INT8 | Ascend 950（A5）· MXFP8 |
 |---|---|---|
@@ -34,7 +34,7 @@ rg -n -i 'dynamic_?(mx_?)?quant|quant_?(batch_?)?matmul|causal_conv1d|kda_recove
 
 | 模型数据 | 公开参数与准备方式 |
 |---|---|
-| decay、beta、输出 gate 的原始权重 | `decay_projection_a_weight[D,H]`、`decay_projection_b_weight[P,D]`、`beta_projection_weight[N,H]`、`output_gate_projection_weight[P,H]`，均为 BF16。若模型加载时把它们合并成一次 MatMul，应在合并前绑定这四个权重。N=12 时合并矩阵的形状为 `[3084,7168]`；单独持有该矩阵时，须从 checkpoint 或加载器取得原始 decay 因子，切分 3084 行无法恢复这两个因子。 |
+| decay、beta、输出 gate 的原始权重 | `decay_projection_a_weight[D,H]`、`decay_projection_b_weight[P,D]`、`beta_projection_weight[N,H]`、`output_gate_projection_weight[P,H]`，均为 BF16。若模型加载时把它们合并成一次 MatMul，应在合并前绑定这四个权重。H=7168、N=12 时合并矩阵的形状为 `[3084,7168]`；单独持有该矩阵时，须从 checkpoint 或加载器取得原始 decay 因子，切分 3084 行无法恢复这两个因子。 |
 | 卷积、归一化、输出投影、衰减参数 | `conv1d_weight` 取原卷积权重（常用 `[4,3P]`），`output_norm_weight[D]` 为 FP32，`output_projection_weight[H,P]` 为 BF16，`a_log[N]` 和 `dt_bias[N,D]` 为 FP32。标量 `scale`、`lower_bound`、`rms_norm_eps` 取当前层实际值。 |
 | 每层已有的可写状态 | `conv_state[slots,L,3P]` 为 BF16；`replay_u`、`replay_k`、`replay_decay` 的形状均为 `[slots,N,capacity,D]`，依次为 FP32、FP16、FP32。绑定原有存储，保留槽号和槽步长。 |
 | 每层只读的 checkpoint | `checkpoint_state[slots,N,D,D]` 为 FP32，最后两维的语义为 V 行、K 列。 |

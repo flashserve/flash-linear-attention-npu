@@ -92,7 +92,7 @@ CATLASS_DEVICE void InitializeTileSchedule(const MegaRecurrentKdaArch22TilingDat
     }
 }
 
-template <bool splitSums = false, bool splitValues = false>
+template <bool splitSums = false, bool splitValues = false, bool bypassQkvL2 = false>
 CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Params &params, GM_ADDR sequencePlan,
                               GM_ADDR workspace)
 {
@@ -104,7 +104,7 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
     }
     // One projection block fits in the existing INT8 synchronization phases.
     // Its independent BF16 projections do not consume the tile counters.
-    const bool overlapAuxiliary = params.weightScale && params.pBlocks == 1;
+    const bool overlapAuxiliary = params.weightScale && params.pBlocks == 1 && Int8SumColumns(params.hidden) != 0;
     InitializeTileSchedule(plan, params, sequencePlan);
     if (!overlapAuxiliary) {
         AscendC::SyncAll<false>();
@@ -119,7 +119,7 @@ CATLASS_DEVICE void RunArch22(const MegaRecurrentKdaArch22TilingData &plan, V2Pa
         if constexpr (splitSums) {
             extraSums = workspace + SplitQkvSumOffset(plan.arch22, plan.common.crosses == 2);
         }
-        ProjectInt8Qkv<splitSums>(params, overlapAuxiliary, extraSums);
+        ProjectInt8Qkv<splitSums, bypassQkvL2>(params, overlapAuxiliary, extraSums);
     }
     if constexpr (splitValues) {
         // An explicit caller-provided output can share storage with hidden states.

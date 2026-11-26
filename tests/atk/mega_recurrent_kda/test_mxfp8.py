@@ -15,7 +15,7 @@ MUTABLE = ("conv_state", "replay_u", "replay_k", "replay_decay")
 
 def official_qkv(args, algorithm):
     codes, sx = torch_npu.npu_dynamic_mx_quant(
-        args["hidden_states"].reshape(-1, 7168), axis=-1, dst_type=torch.float8_e4m3fn, round_mode="rint",
+        args["hidden_states"].flatten(0, -2), axis=-1, dst_type=torch.float8_e4m3fn, round_mode="rint",
         block_size=32, scale_alg=algorithm,
     )
     return torch_npu.npu_quant_matmul(
@@ -98,6 +98,13 @@ def test_mx_qkv(lengths, heads, layout, algorithm):
         for name in ("hidden_states", "conv_num_accepted_tokens"):
             args[name] = host[name].to(device)
         check_step(host, args, lengths)
+
+
+@pytest.mark.parametrize("hidden,lengths,algorithm", [(4096, [4, 4], 0), (4160, [63, 2], 1), (7168, [1], 0)])
+def test_hidden_width(hidden, lengths, algorithm):
+    host = build_inputs(dict(name="width", lengths=lengths, heads=2, layout="TH", conv="flat", seed=17,
+                             hidden=hidden, qkv_scale_alg=algorithm))
+    check_step(host, device_inputs(host, torch.device("npu", torch.npu.current_device())), lengths)
 
 
 def test_cross_tile_carry_is_deterministic():

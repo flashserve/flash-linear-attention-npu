@@ -4,7 +4,7 @@ import pytest
 import torch
 
 pytest.importorskip("torch_npu")
-from executor_mega_recurrent_kda import build_inputs, expected_outputs, to_device
+from executor_mega_recurrent_kda import build_inputs, device_inputs, expected_outputs, to_device
 
 
 @pytest.mark.parametrize(
@@ -69,3 +69,34 @@ def test_arch22_zero_correction(lengths, layout):
     for slot, length in zip(host["state_indices"].tolist(), lengths):
         active = replay_u[slot, :, :length].contiguous()
         assert torch.count_nonzero(active.view(torch.int32)).item() == 0
+
+
+@pytest.mark.parametrize("hidden,lengths,layout", [
+    (4096, [4, 4], "BSH"), (4097, [4, 4], "BSH"), (17, [63, 2], "TH"), (1, [2], "BSH"),
+    (4112, [63, 2], "TH"), (7168, [2], "BSH"),
+])
+def test_hidden_width(hidden, lengths, layout):
+    from fla_npu.ops.ascendc import npu_mega_recurrent_kda
+
+    host = build_inputs(dict(name="width", hidden=hidden, lengths=lengths, heads=2, layout=layout, conv="flat", seed=17))
+    args = device_inputs(host, torch.device("npu", torch.npu.current_device()))
+    outputs = npu_mega_recurrent_kda(**args)
+    assert outputs[0].shape == args["hidden_states"].shape
+    tolerance = [(0.0156, 0.0156), (0.0156, 0.0156), (1.53e-5, 9.77e-4),
+                 (1.95e-3, 1.95e-3), (1.53e-5, 9.77e-4)]
+    for i, (got, want) in enumerate(zip(outputs, expected_outputs(host))):
+        got = got.cpu().float()
+        if i:
+            assert got.shape == want.shape
+            slots = host["state_indices"].tolist()
+            if i > 1:
+                got, want = got.transpose(1, 2), want.transpose(1, 2)
+            active = torch.zeros(got.shape[:2], dtype=torch.bool)
+            for slot, n in zip(slots, lengths):
+                active[slot, :n + (2 if i == 1 else 0)] = True
+            assert torch.equal(got[~active], want[~active])
+            got, want = got[active], want[active]
+        atol, rtol = tolerance[i]
+        delta = (got - want.float()).abs()
+        assert torch.isfinite(delta).all()
+        assert (delta > atol + rtol * want.abs()).sum().item() <= got.numel() * 0.001, i

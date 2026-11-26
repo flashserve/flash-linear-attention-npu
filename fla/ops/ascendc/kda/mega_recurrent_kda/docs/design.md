@@ -46,6 +46,8 @@ Host 按 token 块数分配投影、门控及同步区。T02 每个序列和 hea
 
 ### Atlas A2/A3 INT8 QKV
 
+若本批 token 只占一个投影行块，且本层 INT8 QKV 与 BF16 辅助、输出投影的权重总量超过目标芯片 L2 容量，Cube 读取 QKV 权重时绕过 L2。多行块会复用 QKV 权重，沿用默认缓存策略。
+
 Vector 按 token 量化 BF16 输入。Cube 按行块和输出列分工，直接读取 INT8 NZ 权重，写 INT32 累加值。Vector 将结果按通道和 token 反量化到现有 BF16 QKV 缓冲区，再由原有 Stage R 执行卷积。激活编码和 token scale 暂存在最终输出写入前的 `out` 中。当前批次的 QKV 缓冲区尾部和片上 UB 都足以处理全部输出列时，一轮完成 INT32 累加与反量化。尾部不足时，tiling 检查能否把一行的 INT32 累加值分两段存放。前段放在 `out` 的剩余空间，后段借用投影阶段的空闲区域。若辅助投影可能与 INT8 重叠，后段使用 gated 区并避开仍在使用的 decay-A 中间值；能确定辅助投影在 INT8 之后执行时，后段使用尚未写入的 decay 和 gate 投影区。TH 的设备端前缀可能改变模板，Host 对两种调度都预留足够空间。两段容量和 UB 均足够就选择独立的单轮 kernel，否则仍按列分批。只有一个投影块时，Cube 在 Vector 量化期间计算 gate、beta 和 decay-A，在最后一批反量化期间计算 decay-B。最后一次同步同时交付 QKV 和辅助投影。相对同形状的 A2 BF16 路径，额外用户 workspace 为 0 B。
 
 对长序列，若请求数乘 head 数较小，A2/A3 的 INT8 路径可将同一状态矩阵按 value 行分给多个 Vector 核。每个核保留完整的 128 个 key 分量，按原先的 token 顺序更新自己负责的行。各核写完后再按整头计算 RMSNorm。分工由实际 token 数、可用核数和暂存容量决定，额外用户 workspace 为 0 B。

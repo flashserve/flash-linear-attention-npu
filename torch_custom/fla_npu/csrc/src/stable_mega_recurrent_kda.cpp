@@ -162,14 +162,17 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor> run_mega_recurrent_kda_mx(
     Tensor conv_num_accepted_tokens, Tensor a_log, Tensor dt_bias, std::optional<Tensor> cu_seqlens,
     std::optional<Tensor> plan, Tensor weight_scale, int64_t mx_alg, double scale, double lower_bound, double rms_norm_eps, int64_t stream)
 {
+    const auto x = meta_of(hidden_states);
+    if (x.ndim != 2 && x.ndim != 3) throw std::invalid_argument("expected TH or BSH hidden_states");
+    const auto hidden = x.sizes.back();
     const auto w = meta_of(qkv_projection_weight), sw = meta_of(weight_scale);
     if (w.scalar_type != 24 || (sw.scalar_type != 0 && sw.scalar_type != 44) ||
-        w.ndim != 3 || w.sizes[0] != 1 || w.sizes[1] != 7168 || w.sizes[2] <= 0 || w.sizes[2] % 384 ||
-        sw.sizes != std::vector<int64_t>{1,112,w.sizes[2],2} || !w.contiguous || !sw.contiguous ||
+        w.ndim != 3 || w.sizes[0] != 1 || hidden <= 0 || hidden % 64 || w.sizes[1] != hidden || w.sizes[2] <= 0 || w.sizes[2] % 384 ||
+        sw.sizes != std::vector<int64_t>{1,hidden/64,w.sizes[2],2} || !w.contiguous || !sw.contiguous ||
         w.storage_offset || sw.device_index != w.device_index || (mx_alg != 0 && mx_alg != 1)) {
         throw std::invalid_argument("invalid MXFP8 QKV weight, paired E8M0 scales or qkv_scale_alg");
     }
-    TensorArg qkv(w, 29, acl_dtype(w.scalar_type), {1,w.sizes[2]/32,448,16,32});
+    TensorArg qkv(w, 29, acl_dtype(w.scalar_type), {1,w.sizes[2]/32,hidden/16,16,32});
     return launch_kda(hidden_states, std::move(qkv), decay_projection_a_weight, decay_projection_b_weight,
                       beta_projection_weight, output_gate_projection_weight, output_norm_weight,
                       output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,
@@ -185,22 +188,25 @@ std::tuple<Tensor, Tensor, Tensor, Tensor, Tensor> run_mega_recurrent_kda_int8(
     Tensor conv_num_accepted_tokens, Tensor a_log, Tensor dt_bias, std::optional<Tensor> cu_seqlens,
     std::optional<Tensor> plan, Tensor weight_scale, double scale, double lower_bound, double rms_norm_eps, int64_t stream)
 {
+    const auto x = meta_of(hidden_states);
+    if (x.ndim != 2 && x.ndim != 3) throw std::invalid_argument("expected TH or BSH hidden_states");
+    const auto hidden = x.sizes.back();
     auto w = meta_of(qkv_projection_weight);
     const auto sw = meta_of(weight_scale);
     // Explicit packed weights from QuantMatmulWeightNz have four storage axes.
     // Normalise their ACL view to the same logical matrix as an NZ-format Tensor.
     if (w.ndim == 4 && w.sizes[0] > 0 && w.sizes[0] <= INT32_MAX / 32 &&
-        w.sizes[1] == 448 && w.sizes[2] == 16 && w.sizes[3] == 32) {
+        w.sizes[1] == hidden / 16 && w.sizes[2] == 16 && w.sizes[3] == 32) {
         w.ndim = 2;
-        w.sizes = {7168, w.sizes[0] * 32};
+        w.sizes = {hidden, w.sizes[0] * 32};
         w.strides = {w.sizes[1], 1};
     }
-    if (w.scalar_type != 1 || sw.scalar_type != 15 || w.ndim != 2 || w.sizes[0] != 7168 || w.sizes[1] <= 0 ||
+    if (w.scalar_type != 1 || sw.scalar_type != 15 || w.ndim != 2 || hidden <= 0 || hidden % 32 || w.sizes[0] != hidden || w.sizes[1] <= 0 ||
         w.sizes[1] % 384 || sw.sizes != std::vector<int64_t>{w.sizes[1]} || !w.contiguous || !sw.contiguous ||
         w.storage_offset || sw.device_index != w.device_index) {
         throw std::invalid_argument("expected packed INT8 NZ QKV weights and one BF16 scale per column");
     }
-    TensorArg qkv(w, 29, acl_dtype(w.scalar_type), {w.sizes[1] / 32, 448, 16, 32});
+    TensorArg qkv(w, 29, acl_dtype(w.scalar_type), {w.sizes[1] / 32, hidden / 16, 16, 32});
     return launch_kda(hidden_states, std::move(qkv), decay_projection_a_weight, decay_projection_b_weight,
                       beta_projection_weight, output_gate_projection_weight, output_norm_weight,
                       output_projection_weight, conv1d_weight, conv_state, checkpoint_state, replay_u, replay_k,

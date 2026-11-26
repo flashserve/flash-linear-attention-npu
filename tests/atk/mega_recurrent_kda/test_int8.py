@@ -22,7 +22,7 @@ def quantized_weights(host, args, explicit):
     w = (w / sw).round().clamp(-127, 127).to(torch.int8)
     device = args["hidden_states"].device
     cols = w.shape[1]
-    packed = w.reshape(448, 16, cols // 32, 32).permute(2, 0, 1, 3).contiguous().to(device)
+    packed = w.reshape(w.shape[0] // 16, 16, cols // 32, 32).permute(2, 0, 1, 3).contiguous().to(device)
     if explicit:
         args["qkv_projection_weight"] = packed
     else:
@@ -39,7 +39,8 @@ def quantized_weights(host, args, explicit):
 def model_qkv(hidden, packed, channel_scale):
     from aclnn_error_probe import _CallContext, runtime
 
-    codes, sx = torch_npu.npu_dynamic_quant(hidden.reshape(-1, 7168))
+    h = hidden.shape[-1]
+    codes, sx = torch_npu.npu_dynamic_quant(hidden.reshape(-1, h))
     out = torch.empty((len(codes), channel_scale.numel()), device=codes.device, dtype=torch.bfloat16)
     args = _CallContext(runtime())
     api = ctypes.CDLL("libopapi.so")
@@ -54,7 +55,7 @@ def model_qkv(hidden, packed, channel_scale):
         def nd(t, name):
             return args.tensor(t, name, acl_format_override=2, storage_shape_override=t.shape)
 
-        weight = args.tensor(packed.view(7168, -1), "weight", acl_format_override=29,
+        weight = args.tensor(packed.view(h, -1), "weight", acl_format_override=29,
                              storage_shape_override=packed.shape)
         descriptors = [nd(codes, "x"), weight, nd(sx, "token_scale"), nd(channel_scale, "channel_scale"), nd(out, "out")]
         status = query(*descriptors[:4], None, None, None, None, None, False, False, 0, descriptors[-1],
@@ -73,6 +74,8 @@ def model_qkv(hidden, packed, channel_scale):
 @pytest.mark.parametrize("lengths,heads,layout,dtype,explicit", [
     ([4] * 8, 6, "TH", torch.int32, True),
     ([4] * 8, 6, "BSH", torch.int32, False),
+    ([2] * 4, 31, "TH", torch.int32, True),
+    ([1] * 8, 40, "BSH", torch.int32, False),
     ([63, 2], 1, "TH", torch.int64, True),
     ([1, 65, 7], 2, "TH", torch.int32, False),
     ([3] * 23, 3, "BSH", torch.int32, True),
@@ -87,15 +90,21 @@ def test_int8_qkv(lengths, heads, layout, dtype, explicit):
     check_int8_qkv(lengths, heads, layout, dtype, explicit)
 
 
+@pytest.mark.parametrize("hidden,lengths", [(4096, [4, 4]), (4160, [63, 2]), (32, [2]), (32, [193]), (12320, [2]),
+                                            (7168, [1])])
+def test_hidden_width(hidden, lengths):
+    check_int8_qkv(lengths, 1, "TH", torch.int32, True, hidden=hidden)
+
+
 def test_int8_long_sequence_scale_rounding():
     check_int8_qkv([193], 6, "TH", torch.int64, False, check_scale_order=True)
 
 
-def check_int8_qkv(lengths, heads, layout, dtype, explicit, check_scale_order=False):
+def check_int8_qkv(lengths, heads, layout, dtype, explicit, check_scale_order=False, hidden=7168):
     from fla_npu.ops.ascendc import npu_mega_recurrent_kda, npu_mega_recurrent_kda_metadata
 
     model = (len(lengths), heads) == (8, 6) and layout == "TH"
-    host = build_inputs(dict(name="int8", lengths=lengths, heads=heads, layout=layout, conv="flat",
+    host = build_inputs(dict(name="int8", hidden=hidden, lengths=lengths, heads=heads, layout=layout, conv="flat",
                              slots=567 if model else len(lengths) + 1, seed=43))
     if model:
         host["state_indices"] = torch.linspace(0, 566, 8).round().int().flip([0])
@@ -107,7 +116,7 @@ def check_int8_qkv(lengths, heads, layout, dtype, explicit, check_scale_order=Fa
     if layout == "TH" and explicit:
         args["metadata"] = npu_mega_recurrent_kda_metadata(args["cu_seqlens"], sum(lengths))
     for step in range(2 if model else 1):
-        x = host["hidden_states"].reshape(-1, 7168)
+        x = host["hidden_states"].reshape(-1, hidden)
         if step:
             x.neg_()
             host["conv_num_accepted_tokens"] = torch.tensor(lengths, dtype=torch.int32)
@@ -135,8 +144,8 @@ def check_int8_qkv(lengths, heads, layout, dtype, explicit, check_scale_order=Fa
             rows, cols = torch.where(stored != projected)
             assert rows.numel() <= 1, f"unexpected number of QKV rounding differences: {rows.numel()}"
             if len(rows):
-                codes, token_scale = torch_npu.npu_dynamic_quant(args["hidden_states"].reshape(-1, 7168))
-                weights = packed.cpu().permute(1, 2, 0, 3).reshape(7168, -1)
+                codes, token_scale = torch_npu.npu_dynamic_quant(args["hidden_states"].reshape(-1, hidden))
+                weights = packed.cpu().permute(1, 2, 0, 3).reshape(hidden, -1)
                 dots = (codes.cpu()[rows].int() * weights[:, cols].T.int()).sum(dim=1, dtype=torch.int32).float()
                 sx = token_scale.cpu()[rows].float()
                 sw = args["qkv_projection_weight_scale"].cpu()[cols].float()

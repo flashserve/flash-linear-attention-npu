@@ -8,7 +8,14 @@ constexpr uint32_t kSlotBytes = 20992;
 constexpr uint32_t kSliceRows = 16;
 constexpr uint32_t kHeadDim = 128;
 constexpr uint32_t kGlobalRows = 64;
-constexpr uint32_t kHiddenWidth = 7168;
+CATLASS_DEVICE uint32_t OutputPanels(uint32_t hidden, uint32_t tile)
+{
+    return (hidden - 1) / tile + 1;
+}
+CATLASS_DEVICE uint32_t PanelWidth(uint32_t hidden, uint32_t start, uint32_t tile)
+{
+    return hidden - start < tile ? hidden - start : tile;
+}
 constexpr uint32_t kFreeSlotFlagBase = 2;
 constexpr uint32_t kReadySlotFlagBase = 4;
 enum class Plane : uint32_t {
@@ -30,7 +37,7 @@ struct MegaParams {
     GM_ADDR gateWeight;
     GM_ADDR betaWeight;
     GM_ADDR decayRing;
-    uint32_t rows, heads;
+    uint32_t rows, heads, hidden;
     RecurrenceArgs recurrence{};
 };
 
@@ -90,7 +97,7 @@ public:
         if constexpr (MxQkv && SpansTile) {
             const uint64_t planeColumns = 4u * p.heads * 128 + (p.heads + 15) / 16 * 16;
             const uint32_t tail = p.rows % 64;
-            if (p.rows >= 64 && uint64_t(p.rows) >= uint64_t(p.recurrence.batch) * 16 && planeColumns <= kHiddenWidth &&
+            if (p.rows >= 64 && uint64_t(p.rows) >= uint64_t(p.recurrence.batch) * 16 && planeColumns <= p.hidden &&
                 p.recurrence.output != p.hiddenStates) {
                 const uint32_t capacity = TileCapacity(p.heads);
                 Recurrence rec;
@@ -114,7 +121,7 @@ public:
                 if (fits && tail) {
                     const uint32_t padded = (tail + 15) / 16 * 16, width = p.heads * kHeadDim;
                     const uint64_t projectedWords = uint64_t(padded) * planeColumns;
-                    if (projectedWords > uint64_t(tail) * kHiddenWidth) {
+                    if (projectedWords > uint64_t(tail) * p.hidden) {
                         const uint32_t active =
                             rec.owner(p.recurrence, p.rows - 1) - rec.owner(p.recurrence, p.rows - tail) + 1;
                         const uint64_t liveRows = tail > active * 9 ? tail : active * 9;
@@ -159,8 +166,8 @@ private:
         for (uint32_t first = 0; first < p.rows; first += 64) {
             const uint32_t rows = p.rows - first < 64 ? p.rows - first : 64, padded = (rows + 15) / 16 * 16;
             Params frame = p;
-            frame.hiddenStates += uint64_t(first) * kHiddenWidth * 2;
-            frame.recurrence.output += uint64_t(first) * kHiddenWidth * 2;
+            frame.hiddenStates += uint64_t(first) * p.hidden * 2;
+            frame.recurrence.output += uint64_t(first) * p.hidden * 2;
             frame.rows = rows;
             frame.recurrence.staged = 3;
             frame.firstWaveReady = false;
@@ -168,7 +175,7 @@ private:
             const uint64_t planeWords = uint64_t(padded) * (4 * width + (p.heads + 15) / 16 * 16);
             // A short tail can place its padded projection planes above gated/history in the same workspace slab.
             GM_ADDR planes =
-                planeWords <= uint64_t(rows) * kHiddenWidth ? frame.recurrence.output : carry - planeWords * sizeof(Bf);
+                planeWords <= uint64_t(rows) * p.hidden ? frame.recurrence.output : carry - planeWords * sizeof(Bf);
             if ASCEND_IS_AIC {
                 ProjectHeadWave<1>(frame, planes, padded, 0, 1, id, groups, false, true);
             }
@@ -222,9 +229,9 @@ private:
             }
             AscendC::SyncAll<false>();
             if ASCEND_IS_AIC {
-                for (uint32_t panel = id; panel < kHiddenWidth / 256; panel += groups) {
+                for (uint32_t panel = id; panel < OutputPanels(p.hidden, 256); panel += groups) {
                     MatmulToGm<256, 256, 64>(gated, a.outWeight, frame.recurrence.output, 0, panel * 256, 0,
-                                             panel * 256, kHiddenWidth, rows, width, 256);
+                                             panel * 256, p.hidden, rows, width, PanelWidth(p.hidden, panel * 256, 256));
                 }
             }
             AscendC::SyncAll<false>();
@@ -298,7 +305,7 @@ private:
                         if constexpr (!MxQkv) {
                             for (uint32_t i = 0; i < 3; ++i) {
                                 Matmul(p.hiddenStates, p.qkvWeight, first + r, (head + i * p.heads) * kHeadDim,
-                                       valid, kHeadDim, kHiddenWidth, LocalTile(phase, static_cast<Plane>(i)));
+                                       valid, kHeadDim, p.hidden, LocalTile(phase, static_cast<Plane>(i)));
                             }
                         }
                     }
@@ -306,9 +313,9 @@ private:
                     if ASCEND_IS_AIC {
                         Matmul(p.decayRing, p.decayBWeight, r, col, valid, kHeadDim, 128,
                                LocalTile(phase, Plane::Decay));
-                        Matmul(p.hiddenStates, p.gateWeight, first + r, col, valid, kHeadDim, kHiddenWidth,
+                        Matmul(p.hiddenStates, p.gateWeight, first + r, col, valid, kHeadDim, p.hidden,
                                LocalTile(phase, Plane::Gate));
-                        Matmul(p.hiddenStates, p.betaWeight, first + r, head, valid, 1, kHiddenWidth,
+                        Matmul(p.hiddenStates, p.betaWeight, first + r, head, valid, 1, p.hidden,
                                LocalTile(phase, Plane::Beta));
                         NotifyReady(phase);
                     }
@@ -329,10 +336,10 @@ private:
             SyncCores();
             if (wholeSequences) {
                 if ASCEND_IS_AIC {
-                    for (uint32_t panel = group; panel < kHiddenWidth / 256; panel += groups) {
+                    for (uint32_t panel = group; panel < OutputPanels(p.hidden, 256); panel += groups) {
                         MatmulToGm<256, 256, 64, 128>(gated, p.recurrence.outWeight, p.recurrence.output, 0,
-                                                      panel * 256, first, panel * 256, kHiddenWidth, rows,
-                                                      p.heads * 128, 256);
+                                                      panel * 256, first, panel * 256, p.hidden, rows,
+                                                      p.heads * 128, PanelWidth(p.hidden, panel * 256, 256));
                     }
                 }
             } else {
@@ -503,7 +510,7 @@ private:
                 WaitFree(phase);
             }
             if ASCEND_IS_AIC {
-                Matmul(p.hiddenStates, p.decayAWeight, first + start, 0, valid, 128, kHiddenWidth, local);
+                Matmul(p.hiddenStates, p.decayAWeight, first + start, 0, valid, 128, p.hidden, local);
             }
             if ASCEND_IS_AIC {
                 NotifyReady(phase);
@@ -519,7 +526,7 @@ private:
     CATLASS_DEVICE void ProjectOutputTiles(const Params &p, GM_ADDR gated, uint32_t first, uint32_t rows,
                                            uint32_t group, uint32_t groups, uint32_t &phase)
     {
-        constexpr uint32_t cols = kHiddenWidth / kHeadDim;
+        const uint32_t cols = OutputPanels(p.hidden, kHeadDim);
         constexpr uint32_t outputRows = 64;
         uint32_t slices = (rows + outputRows - 1) / outputRows;
         for (uint32_t task = group; task < slices * cols; task += groups) {
@@ -528,12 +535,12 @@ private:
             auto tile = LocalTile(phase, Plane::Q);
             if ASCEND_IS_AIC {
                 WaitFree(phase);
-                Matmul<64>(gated, p.recurrence.outWeight, r, col, valid, kHeadDim, p.heads * kHeadDim, tile);
+                Matmul<64>(gated, p.recurrence.outWeight, r, col, valid, PanelWidth(p.hidden, col, kHeadDim), p.heads * kHeadDim, tile);
                 NotifyReady(phase);
             }
             if ASCEND_IS_AIV {
                 WaitReady(phase);
-                StoreTile(p.recurrence.output, first + r, col, kHiddenWidth, valid, kHeadDim, tile);
+                StoreTile(p.recurrence.output, first + r, col, p.hidden, valid, PanelWidth(p.hidden, col, kHeadDim), tile);
                 NotifyFree(phase);
             }
             phase ^= 1;
@@ -542,18 +549,18 @@ private:
     template <int TileM, int TileN, int L0K, uint32_t ExtraHead = 0>
     CATLASS_DEVICE void StreamOutput(const Params &p, GM_ADDR gated, uint32_t id, uint32_t groups)
     {
-        constexpr uint32_t panels = kHiddenWidth / TileN;
+        const uint32_t panels = OutputPanels(p.hidden, TileN);
         const uint32_t width = p.heads * kHeadDim;
         if (id < panels) {
             MatmulToGm<TileN, 128, L0K, TileM, true, ExtraHead>(
                 gated, p.recurrence.outWeight, p.recurrence.output, 0, id * TileN, 0, id * TileN,
-                kHiddenWidth, p.rows, width, TileN);
+                p.hidden, p.rows, width, PanelWidth(p.hidden, id * TileN, TileN));
         } else {
             AscendC::SyncAll<false>();
         }
         for (uint32_t j = id + groups; j < panels; j += groups) {
             MatmulToGm<TileN, 256, L0K, TileM>(gated, p.recurrence.outWeight, p.recurrence.output, 0, j * TileN, 0,
-                                               j * TileN, kHiddenWidth, p.rows, width, TileN);
+                                               j * TileN, p.hidden, p.rows, width, PanelWidth(p.hidden, j * TileN, TileN));
         }
     }
     // Each worker produces and consumes the same row range, so decay-B need not wait for Q/K/V.
@@ -568,7 +575,7 @@ private:
         }
         const uint32_t width = p.heads * kHeadDim;
         MatmulToGm<128, 384, 64, 80>(p.hiddenStates, p.decayAWeight, p.decayRing, first, 0, first, 0, 128, end - first,
-                                     kHiddenWidth);
+                                     p.hidden);
         AscendC::PipeBarrier<PIPE_ALL>();
         for (uint32_t col = 0; col < width; col += 256) {
             const uint32_t count = width - col < 256 ? width - col : 256;
@@ -679,13 +686,13 @@ private:
                                planes + uint64_t((kind == 3 ? 4 : kind) - SkippedPlanes) * planeRows * width * 2;
             if (p.rows > 256 && p.rows <= 288) {
                 MatmulToGm<128, 256, 32, 288>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
-                                              p.rows, kHiddenWidth, n);
+                                              p.rows, p.hidden, n);
             } else if (p.rows <= 160 && n <= 96) {
                 MatmulToGm<96, 384, 96, 160>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
-                                             p.rows, kHiddenWidth, n);
+                                             p.rows, p.hidden, n);
             } else {
                 MatmulToGm<128, 256, 64>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride, p.rows,
-                                         kHiddenWidth, n);
+                                         p.hidden, n);
             }
             cursor += n;
         }
@@ -733,14 +740,14 @@ private:
                     }
                 } else if (!overlap && tick == waves + 1) {
                     if (p.rows > 256 && p.rows <= 288) {
-                        for (uint32_t j = id; j < kHiddenWidth / 128; j += groups) {
+                        for (uint32_t j = id; j < OutputPanels(p.hidden, 128); j += groups) {
                             MatmulToGm<128, 256, 32, 288>(gated, p.recurrence.outWeight, p.recurrence.output, 0,
-                                                          j * 128, 0, j * 128, kHiddenWidth, p.rows, width, 128);
+                                                          j * 128, 0, j * 128, p.hidden, p.rows, width, PanelWidth(p.hidden, j * 128, 128));
                         }
                     } else {
-                        for (uint32_t panel = id; panel < kHiddenWidth / 256; panel += groups) {
+                        for (uint32_t panel = id; panel < OutputPanels(p.hidden, 256); panel += groups) {
                             MatmulToGm<256, 256, 64>(gated, p.recurrence.outWeight, p.recurrence.output, 0, panel * 256,
-                                                     0, panel * 256, kHiddenWidth, p.rows, width, 256);
+                                                     0, panel * 256, p.hidden, p.rows, width, PanelWidth(p.hidden, panel * 256, 256));
                         }
                     }
                 }
@@ -808,7 +815,7 @@ private:
                 // A frame keeps gated and decay-A in workspace. Its future output can hold the six projection planes.
                 // Account for 16-row projection padding. A shorter tail can always use the original workspace.
                 if (a.output == p.hiddenStates ||
-                    planeColumns * (workspaceRows + 15) > kHiddenWidth * uint64_t(workspaceRows)) {
+                    planeColumns * (workspaceRows + 15) > p.hidden * uint64_t(workspaceRows)) {
                     return false;
                 }
                 const uint32_t available = bytes / (2 * (128 + width)) / 16 * 16;
@@ -832,13 +839,13 @@ private:
             }
             const uint32_t padded = (rows + 15) / 16 * 16;
             Params frame = p;
-            frame.hiddenStates = p.hiddenStates + uint64_t(first) * kHiddenWidth * sizeof(Bf);
-            frame.recurrence.output = a.output + uint64_t(first) * kHiddenWidth * sizeof(Bf);
+            frame.hiddenStates = p.hiddenStates + uint64_t(first) * p.hidden * sizeof(Bf);
+            frame.recurrence.output = a.output + uint64_t(first) * p.hidden * sizeof(Bf);
             frame.rows = rows;
             frame.recurrence.staged = 3;
             frame.firstWaveReady = first == 0 && p.firstWaveReady;
             Waves single{rows, padded, padded, 1, padded, padded};
-            const bool planesFit = uint64_t(padded) * planeColumns <= uint64_t(rows) * kHiddenWidth;
+            const bool planesFit = uint64_t(padded) * planeColumns <= uint64_t(rows) * p.hidden;
             if constexpr (MxQkv && SpansTile) {
                 if (compact) {
                     RunHeadPipeline<2>(frame, single, id, groups, false, first, true);
@@ -858,9 +865,9 @@ private:
         constexpr uint32_t firstKind = MxQkv ? 3 : 0;
         uint32_t span = p.recurrence.staged == 3 ? 128 : 64;
         auto shape = PlanWaves(p.rows);
-        if (useDecayGemv(p.rows)) {
+        if (useDecayGemv(p.rows, p.hidden)) {
             if ASCEND_IS_AIV {
-                shortDecayA(resource_, p.hiddenStates, p.decayAWeight, p.decayRing, p.rows, id, 2 * groups);
+                shortDecayA(resource_, p.hiddenStates, p.decayAWeight, p.decayRing, p.rows, id, 2 * groups, p.hidden);
             }
             AscendC::SyncAll<false>();
         }
@@ -870,7 +877,7 @@ private:
             return;
         }
         if (p.recurrence.staged == 3 && shape.count == 1 && p.heads >= 2) {
-            RunHeadPipeline(p, shape, id, groups, useDecayGemv(p.rows));
+            RunHeadPipeline(p, shape, id, groups, useDecayGemv(p.rows, p.hidden));
             return;
         }
         uint32_t tiles = span == 128 ? shape.count : (p.rows - 1) / span + 1, width = p.heads * 128,
@@ -912,7 +919,7 @@ private:
                         if (n > 160) {
                             n = 160;
                         }
-                        if (kind == 4 && useDecayGemv(p.rows)) {
+                        if (kind == 4 && useDecayGemv(p.rows, p.hidden)) {
                             cursor += n;
                             continue;
                         }
@@ -923,7 +930,7 @@ private:
                         GM_ADDR dest =
                             kind == 4 ? p.decayRing : planes + uint64_t(kind == 3 ? 4 : kind) * planeRows * width * 2;
                         MatmulToGm<160, 256, 64>(p.hiddenStates, weight, dest, first, weightCol, 0, col, stride, m,
-                                                 kHiddenWidth, n);
+                                                 p.hidden, n);
                         cursor += n;
                     }
                     // Only Cube workers consume decay-A. The following loads are issued by MTE2.
@@ -939,9 +946,9 @@ private:
                     uint32_t limit = span == 128 && !tile ? shape.firstRows : span,
                              m = p.rows - first < limit ? p.rows - first : limit;
                     GM_ADDR ready = gated + uint64_t(tile % 2) * firstCap * width * 2;
-                    for (uint32_t panel = id; panel < kHiddenWidth / 256; panel += groups) {
+                    for (uint32_t panel = id; panel < OutputPanels(p.hidden, 256); panel += groups) {
                         MatmulToGm<256, 256, 64>(ready, p.recurrence.outWeight, p.recurrence.output, 0, panel * 256,
-                                                 first, panel * 256, kHiddenWidth, m, width, 256);
+                                                 first, panel * 256, p.hidden, m, width, PanelWidth(p.hidden, panel * 256, 256));
                     }
                 }
             }

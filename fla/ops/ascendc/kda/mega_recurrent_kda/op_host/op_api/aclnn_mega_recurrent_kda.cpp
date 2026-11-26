@@ -122,7 +122,7 @@ aclnnStatus BuildSequencePlan(const aclTensor *hidden_states, const aclIntArray 
 {
     const auto &hidden = hidden_states->GetViewShape();
     const int64_t rank = hidden.GetDimNum();
-    if ((rank != 2 && rank != 3) || hidden.GetDim(rank - 1) != 7168 || !state_indices || !conv_num_accepted_tokens) {
+    if ((rank != 2 && rank != 3) || hidden.GetDim(rank - 1) <= 0 || !state_indices || !conv_num_accepted_tokens) {
         return ACLNN_ERR_PARAM_INVALID;
     }
     const auto batch = state_indices->Size();
@@ -185,7 +185,7 @@ aclnnStatus BuildDevicePlan(const aclTensor *hidden, const aclTensor *ids, const
     }
     const auto &dims = hidden->GetViewShape();
     const auto rank = dims.GetDimNum();
-    if ((rank != 2 && rank != 3) || dims.GetDim(rank - 1) != 7168 || !ids) {
+    if ((rank != 2 && rank != 3) || dims.GetDim(rank - 1) <= 0 || !ids) {
         return ACLNN_ERR_PARAM_INVALID;
     }
     const int64_t batch = ids->Numel();
@@ -353,6 +353,13 @@ GetWorkspaceSize(const aclTensor *hidden_states, const aclTensor *qkv_projection
             if (tensor && !IsDisjointFromOutput(tensor, outBegin, outEnd)) return ACLNN_ERR_PARAM_INVALID;
         }
     }
+    const auto &inputShape = hidden_states->GetViewShape();
+    const auto rank = inputShape.GetDimNum();
+    if (rank != 2 && rank != 3) return ACLNN_ERR_PARAM_INVALID;
+    const int64_t hidden = inputShape.GetDim(rank - 1);
+    if (hidden <= 0 || hidden > INT32_MAX || (int8Qkv && hidden % 32) || (weightScale && !int8Qkv && hidden % 64)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (int8Qkv) {
         const auto soc = GetCurrentPlatformInfo().GetSocVersion();
         const auto &view = qkv_projection_weight->GetViewShape();
@@ -363,8 +370,8 @@ GetWorkspaceSize(const aclTensor *hidden_states, const aclTensor *qkv_projection
             return ACLNN_ERR_PARAM_INVALID;
         }
         const int64_t cols = replay.GetDim(1) * 384;
-        if (view.GetDimNum() != 2 || view.GetDim(0) != 7168 || view.GetDim(1) != cols ||
-            storage.GetDimNum() != 4 || storage.GetDim(0) != cols / 32 || storage.GetDim(1) != 448 ||
+        if (view.GetDimNum() != 2 || view.GetDim(0) != hidden || view.GetDim(1) != cols ||
+            storage.GetDimNum() != 4 || storage.GetDim(0) != cols / 32 || storage.GetDim(1) != hidden / 16 ||
             storage.GetDim(2) != 16 || storage.GetDim(3) != 32 ||
             qkv_projection_weight->GetStorageFormat() != op::Format::FORMAT_FRACTAL_NZ ||
             !IsVector(weightScale, DataType::DT_BF16, cols) || weightScale->GetStorageFormat() != op::Format::FORMAT_ND ||
@@ -372,7 +379,7 @@ GetWorkspaceSize(const aclTensor *hidden_states, const aclTensor *qkv_projection
     } else if (weightScale) {
         const auto &view = qkv_projection_weight->GetViewShape();
         if (GetCurrentPlatformInfo().GetSocVersion() != SocVersion::ASCEND950 || (mxAlg != 0 && mxAlg != 1) ||
-            view.GetDimNum() != 3 || view.GetDim(0) != 1 || view.GetDim(1) != 7168 ||
+            view.GetDimNum() != 3 || view.GetDim(0) != 1 || view.GetDim(1) != hidden ||
             replay_u->GetViewShape().GetDimNum() != 4 ||
             view.GetDim(2) / 384 != replay_u->GetViewShape().GetDim(1) || view.GetDim(2) % 384 ||
             qkv_projection_weight->GetStorageFormat() != op::Format::FORMAT_FRACTAL_NZ ||
@@ -385,8 +392,8 @@ GetWorkspaceSize(const aclTensor *hidden_states, const aclTensor *qkv_projection
         const auto &groups = weightScale->GetViewShape();
         const int64_t cols = view.GetDim(2);
         if (storage.GetDimNum() != 5 || storage.GetDim(0) != 1 || storage.GetDim(1) != cols / 32 ||
-            storage.GetDim(2) != 448 || storage.GetDim(3) != 16 || storage.GetDim(4) != 32 ||
-            groups.GetDimNum() != 4 || groups.GetDim(0) != 1 || groups.GetDim(1) != 112 ||
+            storage.GetDim(2) != hidden / 16 || storage.GetDim(3) != 16 || storage.GetDim(4) != 32 ||
+            groups.GetDimNum() != 4 || groups.GetDim(0) != 1 || groups.GetDim(1) != hidden / 64 ||
             groups.GetDim(2) != cols || groups.GetDim(3) != 2) {
             return ACLNN_ERR_PARAM_INVALID;
         }

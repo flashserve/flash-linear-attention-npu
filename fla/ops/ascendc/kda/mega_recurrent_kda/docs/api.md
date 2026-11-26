@@ -1,6 +1,6 @@
 # MegaRecurrentKda 接口
 
-Atlas A2/A3 和 Ascend 950 共用的推理接口。固定隐藏维 H=7168，head 维 D=128，head 数 N 由权重和状态形状确定。令 P=N×D，B 为序列数，T 为 token 总数。
+Atlas A2/A3 和 Ascend 950 共用的推理接口。隐藏维 H 取自 hidden_states 的最后一维。BF16 支持正整数 H（int32 范围），INT8 和 MXFP8 路径分别要求 H 为 32 和 64 的倍数。head 维 D=128，head 数 N 由权重和状态形状确定。令 P=N×D，B 为序列数，T 为 token 总数。
 
 ```python
 out, conv_state, replay_u, replay_k, replay_decay = npu_mega_recurrent_kda(
@@ -66,7 +66,7 @@ BSH 和 TH 均使用设备上的状态索引和已接受 token 数。TH 支持�
 
 ## Atlas A2/A3 INT8 QKV 投影
 
-向同一 Python 入口传入 INT8 `qkv_projection_weight` 和 BF16 `qkv_projection_weight_scale[3P]`。权重的列顺序为 Q、K、V。支持逻辑形状 `[7168,3P]` 的 FRACTAL_NZ 张量，也支持模型已经打包好的连续四维张量 `[3P/32,448,16,32]`。通道 scale 与列一一对应。`qkv_scale_alg` 沿用默认值 0。
+向同一 Python 入口传入 INT8 `qkv_projection_weight` 和 BF16 `qkv_projection_weight_scale[3P]`。权重的列顺序为 Q、K、V。支持逻辑形状 `[H,3P]` 的 FRACTAL_NZ 张量，也支持模型已经打包好的连续四维张量 `[3P/32,H/16,16,32]`。通道 scale 与列一一对应。`qkv_scale_alg` 沿用默认值 0。
 
 融合 kernel 从原始 BF16 hidden states 读取每个 token，动态量化为 INT8，使用 INT32 累加，再以 FP32 token scale 和通道 scale 反量化到 BF16，送入四抽头因果卷积。两级 decay、beta 和输出 gate 仍读取原始 BF16 输入。BSH、TH 和跨层 metadata 的用法与上节相同。C++ 使用 `aclnnMegaRecurrentKdaInt8GetWorkspaceSize` 和 `aclnnMegaRecurrentKdaInt8`。
 

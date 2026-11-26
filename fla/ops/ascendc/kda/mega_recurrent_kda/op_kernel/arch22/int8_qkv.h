@@ -18,7 +18,6 @@ using Mmad = Catlass::Gemm::Block::BlockMmadTla<Policy,
 // one DMA block to its scale, and the remaining bytes to a wave of INT32 sums.
 // When the unused tail of the QKV buffer fits all sums, one wave suffices.
 static_assert(kArch22UbBytes == Arch::UB_SIZE, "Atlas A2 UB size must match host tiling");
-static_assert(kHidden * 16 <= Arch::UB_SIZE, "INT8 row scratch exceeds UB capacity");
 template <typename T> CATLASS_DEVICE GlobalTensor<T> Global(GM_ADDR ptr)
 {
     GlobalTensor<T> tensor;
@@ -32,23 +31,34 @@ CATLASS_DEVICE void QuantizeRows(const V2Params &p, const LocalTensor<uint8_t> &
     auto codes = Global<int8_t>(p.out);
     auto tokenScale = Global<float>(scales);
     auto bf = ub.ReinterpretCast<bfloat16_t>();
-    auto x = ub[kHidden * 2].ReinterpretCast<float>();
-    auto work = ub[kHidden * 6].ReinterpretCast<float>();
-    auto reduced = ub[kHidden * 10].ReinterpretCast<float>();
+    constexpr uint32_t maxChunk = kArch22UbBytes / 16;
+    const uint32_t chunk = p.hidden < maxChunk ? p.hidden : maxChunk;
+    auto x = ub[chunk * 2].ReinterpretCast<float>();
+    auto work = ub[chunk * 6].ReinterpretCast<float>();
+    auto reduced = ub[chunk * 10].ReinterpretCast<float>();
     auto ints = work.ReinterpretCast<int32_t>();
     auto fp16 = bf.ReinterpretCast<half>();
     auto bytes = reduced.ReinterpretCast<int8_t>();
     for (uint32_t row = GetBlockIdx(); row < p.tokens; row += p.aivNum) {
-        uint64_t offset = uint64_t(row) * kHidden;
-        DataCopy(bf, input[offset], kHidden);
-        PipeBarrier<PIPE_ALL>();
-        Cast(x, bf, RoundMode::CAST_NONE, kHidden);
-        PipeBarrier<PIPE_V>();
-        Abs(work, x, kHidden);
-        PipeBarrier<PIPE_V>();
-        ReduceMax(reduced, work, ub[kHidden * 12].ReinterpretCast<float>(), kHidden, false);
-        PipeBarrier<PIPE_ALL>();
-        const float maximum = reduced.GetValue(0);
+        const uint64_t offset = uint64_t(row) * p.hidden;
+        float maximum = 0.f;
+        for (uint32_t col = 0; col < p.hidden; col += chunk) {
+            const uint32_t count = p.hidden - col < chunk ? p.hidden - col : chunk;
+            DataCopy(bf, input[offset + col], count);
+            PipeBarrier<PIPE_ALL>();
+            Cast(x, bf, RoundMode::CAST_NONE, count);
+            PipeBarrier<PIPE_V>();
+            Abs(work, x, count);
+            PipeBarrier<PIPE_V>();
+            ReduceMax(reduced, work, ub[chunk * 12].ReinterpretCast<float>(), count, false);
+            PipeBarrier<PIPE_ALL>();
+            const float localMax = reduced.GetValue(0);
+            maximum = maximum < localMax ? localMax : maximum;
+        }
+        if (chunk < p.hidden) {
+            reduced.SetValue(0, maximum);
+            PipeBarrier<PIPE_ALL>();
+        }
         // DynamicQuantV2 uses Vector Div for the multiplier and a separately
         // rounded multiplication by 1/127 for the returned scale.
         Duplicate(work, 127.0f, 8);
@@ -60,22 +70,31 @@ CATLASS_DEVICE void QuantizeRows(const V2Params &p, const LocalTensor<uint8_t> &
         PipeBarrier<PIPE_ALL>();
         DataCopy(tokenScale[uint64_t(row) * 8], work, 8);
         PipeBarrier<PIPE_ALL>();
-        Muls(x, x, multiplier, kHidden);
-        PipeBarrier<PIPE_V>();
-        Cast(ints, x, RoundMode::CAST_RINT, kHidden);
-        PipeBarrier<PIPE_V>();
-        Cast(x, ints, RoundMode::CAST_NONE, kHidden);
-        PipeBarrier<PIPE_V>();
-        Cast(fp16, x, RoundMode::CAST_NONE, kHidden);
-        PipeBarrier<PIPE_V>();
-        Cast(bytes, fp16, RoundMode::CAST_RINT, kHidden);
-        PipeBarrier<PIPE_ALL>();
-        DataCopy(codes[offset], bytes, kHidden);
-        PipeBarrier<PIPE_ALL>();
+        for (uint32_t col = 0; col < p.hidden; col += chunk) {
+            const uint32_t count = p.hidden - col < chunk ? p.hidden - col : chunk;
+            if (chunk < p.hidden) {
+                DataCopy(bf, input[offset + col], count);
+                PipeBarrier<PIPE_ALL>();
+                Cast(x, bf, RoundMode::CAST_NONE, count);
+                PipeBarrier<PIPE_V>();
+            }
+            Muls(x, x, multiplier, count);
+            PipeBarrier<PIPE_V>();
+            Cast(ints, x, RoundMode::CAST_RINT, count);
+            PipeBarrier<PIPE_V>();
+            Cast(x, ints, RoundMode::CAST_NONE, count);
+            PipeBarrier<PIPE_V>();
+            Cast(fp16, x, RoundMode::CAST_NONE, count);
+            PipeBarrier<PIPE_V>();
+            Cast(bytes, fp16, RoundMode::CAST_RINT, count);
+            PipeBarrier<PIPE_ALL>();
+            DataCopy(codes[offset + col], bytes, count);
+            PipeBarrier<PIPE_ALL>();
+        }
     }
 }
 
-template <bool splitSums>
+template <bool splitSums, bool bypassQkvL2>
 CATLASS_DEVICE void Multiply(Catlass::Arch::Resource<Arch> &resource, const V2Params &p, GM_ADDR sums,
                              uint32_t colBase, uint32_t width, GM_ADDR extraSums)
 {
@@ -84,22 +103,25 @@ CATLASS_DEVICE void Multiply(Catlass::Arch::Resource<Arch> &resource, const V2Pa
     for (uint32_t job = GetBlockIdx(); job < p.tiles * panels; job += p.aicNum) {
         uint32_t row = job / panels * kTileRows, col = job % panels * kNW;
         uint32_t rows = p.tokens - row < kTileRows ? p.tokens - row : kTileRows;
-        auto a = Global<int8_t>(p.out + uint64_t(row) * kHidden);
-        auto b = Global<int8_t>(p.qkvWeight + uint64_t(colBase + col) * kHidden);
+        auto a = Global<int8_t>(p.out + uint64_t(row) * p.hidden);
+        auto b = Global<int8_t>(p.qkvWeight + uint64_t(colBase + col) * p.hidden);
+        if constexpr (bypassQkvL2) {
+            b.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        }
         GM_ADDR buffer = sums;
         uint32_t stride = width;
         uint32_t sumCol = col;
         if constexpr (splitSums) {
-            const bool second = col >= kInt8SumColumns;
+            const bool second = col >= Int8SumColumns(p.hidden);
             buffer = second ? extraSums : sums;
-            stride = second ? width - kInt8SumColumns : kInt8SumColumns;
-            sumCol = second ? col - kInt8SumColumns : col;
+            stride = second ? width - Int8SumColumns(p.hidden) : Int8SumColumns(p.hidden);
+            sumCol = second ? col - Int8SumColumns(p.hidden) : col;
         }
         auto c = Global<int32_t>(buffer + (uint64_t(row) * stride + sumCol) * sizeof(int32_t));
-        auto ta = tla::MakeTensor(a, tla::MakeLayout<int8_t, Row>(rows, kHidden), Catlass::Arch::PositionGM{});
-        auto tb = tla::MakeTensor(b, tla::MakeLayout<int8_t, Nz>(kHidden, kNW), Catlass::Arch::PositionGM{});
+        auto ta = tla::MakeTensor(a, tla::MakeLayout<int8_t, Row>(rows, p.hidden), Catlass::Arch::PositionGM{});
+        auto tb = tla::MakeTensor(b, tla::MakeLayout<int8_t, Nz>(p.hidden, kNW), Catlass::Arch::PositionGM{});
         auto tc = tla::MakeTensor(c, KdaGemm::MakeLayoutC(rows, kNW, stride), Catlass::Arch::PositionGM{});
-        multiply(ta, tb, tc, Catlass::GemmCoord(rows, kNW, kHidden));
+        multiply(ta, tb, tc, Catlass::GemmCoord(rows, kNW, p.hidden));
     }
     PipeBarrier<PIPE_ALL>();
 }
@@ -122,10 +144,10 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
     PipeBarrier<PIPE_V>();
     for (uint32_t row = GetBlockIdx(); row < p.tokens; row += p.aivNum) {
         if constexpr (splitSums) {
-            const uint32_t rest = width - kInt8SumColumns;
+            const uint32_t rest = width - Int8SumColumns(p.hidden);
             auto second = Global<int32_t>(extraSums);
-            DataCopy(i32, accum[uint64_t(row) * kInt8SumColumns], kInt8SumColumns);
-            DataCopy(i32[kInt8SumColumns], second[uint64_t(row) * rest], rest);
+            DataCopy(i32, accum[uint64_t(row) * Int8SumColumns(p.hidden)], Int8SumColumns(p.hidden));
+            DataCopy(i32[Int8SumColumns(p.hidden)], second[uint64_t(row) * rest], rest);
         } else {
             DataCopy(i32, accum[uint64_t(row) * width], width);
         }
@@ -144,11 +166,11 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
 }
 } // namespace Int8Qkv
 
-template <bool splitSums>
+template <bool splitSums, bool bypassQkvL2>
 CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary, GM_ADDR extraSums)
 {
     using namespace AscendC;
-    GM_ADDR scales = p.out + uint64_t(p.tokens) * kHidden;
+    GM_ADDR scales = p.out + uint64_t(p.tokens) * p.hidden;
     GM_ADDR sums = scales + uint64_t(p.tokens) * kInt8ScaleBytes;
     const uint32_t columns = 3 * p.p;
     uint32_t wave = columns;
@@ -156,7 +178,14 @@ CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary, GM_
         const uint64_t qkvRows = uint64_t(p.slotsPR) * kTileRows;
         const uint64_t available = (qkvRows - p.tokens) * columns * sizeof(bfloat16_t);
         const uint64_t required = uint64_t(p.tokens) * columns * sizeof(int32_t);
-        wave = kInt8SumColumns;
+        wave = Int8SumColumns(p.hidden);
+        if (!wave) {
+            // Before auxiliary projection the adjacent decay and gate slabs hold one INT32 panel.
+            wave = kNW;
+            sums = p.wDecayRaw;
+        }
+        const uint32_t ubColumns = Int8Qkv::Arch::UB_SIZE / kInt8DequantBytesPerColumn / kNW * kNW;
+        wave = wave < ubColumns ? wave : ubColumns;
         if (columns > wave && columns <= Int8Qkv::Arch::UB_SIZE / kInt8DequantBytesPerColumn && required <= available) {
             sums = p.wQkv + uint64_t(p.tokens) * columns * sizeof(bfloat16_t);
             wave = columns;
@@ -177,7 +206,7 @@ CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary, GM_
         uint32_t left = 3 * p.p - col;
         uint32_t width = left < wave ? left : wave;
         if ASCEND_IS_AIC {
-            Int8Qkv::Multiply<splitSums>(resource, p, sums, col, width, extraSums);
+            Int8Qkv::Multiply<splitSums, bypassQkvL2>(resource, p, sums, col, width, extraSums);
         }
         SyncAll<false>();
         if ASCEND_IS_AIC {

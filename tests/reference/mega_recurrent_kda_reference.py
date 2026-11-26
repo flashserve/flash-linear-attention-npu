@@ -65,8 +65,9 @@ def validate_mega_recurrent_kda_inputs(
 
     if hidden_states.ndim not in (2, 3):
         raise ValueError("hidden_states must be [B,S,H] or [T,H]")
-    if hidden_states.shape[-1] != 7168:
-        raise ValueError("hidden_states last dimension must be H=7168")
+    hidden = hidden_states.shape[-1]
+    if not 0 < hidden <= 2**31 - 1:
+        raise ValueError("H must be a positive int32 dimension")
     if hidden_states.dtype != torch.bfloat16 or not hidden_states.is_contiguous():
         raise ValueError("hidden_states must be contiguous BF16")
 
@@ -115,26 +116,26 @@ def validate_mega_recurrent_kda_inputs(
     if qkv_projection_weight_scale is None:
         if qkv_scale_alg != 0:
             raise ValueError("qkv_scale_alg requires MXFP8 QKV")
-        qkv = (qkv_projection_weight, (cols, 7168), torch.bfloat16)
+        qkv = (qkv_projection_weight, (cols, hidden), torch.bfloat16)
     else:
         sw = qkv_projection_weight_scale
-        if qkv_scale_alg not in (0, 1) or sw.shape != (1, 112, cols, 2) or not sw.is_contiguous():
+        if hidden % 64 or qkv_scale_alg not in (0, 1) or sw.shape != (1, hidden // 64, cols, 2) or not sw.is_contiguous():
             raise ValueError("invalid QKV scale shape or algorithm")
         if sw.dtype not in (torch.uint8, torch.float8_e8m0fnu):
             raise ValueError("expected paired E8M0 scale bytes")
-        qkv = (qkv_projection_weight, (1, 7168, cols), torch.float8_e4m3fn)
+        qkv = (qkv_projection_weight, (1, hidden, cols), torch.float8_e4m3fn)
     expected_weights = (
         qkv,
-        (decay_projection_a_weight, (dim, 7168), torch.bfloat16),
+        (decay_projection_a_weight, (dim, hidden), torch.bfloat16),
         (decay_projection_b_weight, (projection_width, dim), torch.bfloat16),
-        (beta_projection_weight, (heads, 7168), torch.bfloat16),
+        (beta_projection_weight, (heads, hidden), torch.bfloat16),
         (
             output_gate_projection_weight,
-            (projection_width, 7168),
+            (projection_width, hidden),
             torch.bfloat16,
         ),
         (output_norm_weight, (dim,), torch.float32),
-        (output_projection_weight, (7168, projection_width), torch.bfloat16),
+        (output_projection_weight, (hidden, projection_width), torch.bfloat16),
     )
     for tensor, shape, dtype in expected_weights:
         if tuple(tensor.shape) != shape or tensor.dtype != dtype:
@@ -270,10 +271,10 @@ def _mx_qkv(x, weight, weight_scale, algorithm):
     codes = scaled.float().to(torch.float8_e4m3fn)
     activation = (codes.float() * factor.float().unsqueeze(-1)).reshape_as(x)
     # Two consecutive 32-element K groups share the final pair dimension.
-    sw = weight_scale.view(torch.uint8)[0].transpose(1, 2).reshape(224, -1)
+    sw = weight_scale.view(torch.uint8)[0].transpose(1, 2).reshape(x.shape[-1] // 32, -1)
     scales = torch.exp2(sw.float() - 127)
-    decoded = weight[0].float().reshape(224, 32, -1) * scales[:, None, :]
-    return (activation @ decoded.reshape(7168, -1)).bfloat16().float()
+    decoded = weight[0].float().reshape(x.shape[-1] // 32, 32, -1) * scales[:, None, :]
+    return (activation @ decoded.reshape(x.shape[-1], -1)).bfloat16().float()
 
 
 def mega_recurrent_kda_golden(
@@ -332,7 +333,7 @@ def mega_recurrent_kda_golden(
         qkv_scale_alg,
     )
 
-    hidden_width = 7168
+    hidden_width = hidden_states.shape[-1]
     dim = 128
     heads = beta_projection_weight.shape[0]
     projection_width = heads * dim
@@ -493,10 +494,10 @@ def mega_recurrent_kda_golden(
     )
 
 
-def _make_case(batch, sequence, heads, block_num=4, conv_weight_shape="flat", accepted=None, seed=0):
+def _make_case(batch, sequence, heads, block_num=4, conv_weight_shape="flat", accepted=None, seed=0, hidden=7168):
     """Build one deterministic uniform-length case plus its BSH/TH input views."""
     torch.manual_seed(seed)
-    dim, hidden = 128, 7168
+    dim = 128
     projection_width = heads * dim
     conv_length = sequence + 2
     total_tokens = batch * sequence
