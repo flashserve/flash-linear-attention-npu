@@ -52,6 +52,7 @@ jobs:
         env:
           CI_IMAGE: ${{ matrix.image }}
           CI_REQUIRE_PRELOADED_IMAGE: 'true'
+          CI_REQUIRE_HEALTHY_NPU: ${{ matrix.platform == 'a5' && 'true' || 'false' }}
           CI_CACHE_ROOT: /home/huangjunzhe/ci/cache_root
           CI_NPU_LOCK_DIR: /home/huangjunzhe/ci/tmp/npu-locks
           CI_CONTAINER_NAME: kda-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}

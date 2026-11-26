@@ -3,6 +3,7 @@ import argparse
 from datetime import date, datetime, timedelta, timezone
 from importlib.metadata import version
 import json
+import os
 from pathlib import Path
 import sys
 from time import monotonic
@@ -62,6 +63,12 @@ def main():
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--cpu-threads", type=int, default=4)
     args = parser.parse_args()
+    if args.cpu_threads < 1:
+        parser.error("--cpu-threads must be positive")
+    # PyTorch's ARM wheel links a separate OpenBLAS pool. Small batched solves
+    # otherwise start up to one BLAS worker per host core inside each test.
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["OMP_NUM_THREADS"] = str(args.cpu_threads)
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     import torch
     import torch_npu  # noqa: F401
