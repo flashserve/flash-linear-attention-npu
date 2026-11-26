@@ -243,6 +243,15 @@ public:
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
         kDecayWorkspaceOffset = gdnFwdHTilingData->kDecayWorkspaceOffset;
+        if constexpr (std::is_same<ElementFinalState, float>::value) {
+            if (!storeFinalState) {
+                // numSeq and numChunks are consecutive arrays with the same aligned size.
+                const int64_t metadataStride =
+                    gdnFwdHTilingData->numChunksWorkspaceOffset - gdnFwdHTilingData->numSeqWorkspaceOffset;
+                final_state = user + gdnFwdHTilingData->numChunksWorkspaceOffset + metadataStride;
+                storeFinalState = true;
+            }
+        }
         uint64_t denseTaskCount = static_cast<uint64_t>(shapeBatch) * vNumHead;
         useDirectFp32Ub = std::is_same<ElementVWork, float>::value &&
                           !isVariedLen && chunkSize <= 64 &&
