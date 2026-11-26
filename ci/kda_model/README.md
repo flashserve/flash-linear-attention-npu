@@ -10,6 +10,8 @@ A2、A5 各跑 39 条，每条都执行一次前向和一次反向。GitHub Acti
 | bailing-v3-h2 / h4 / h8 | 百灵 V3 | 1 × 131072 | 2 / 4 / 8 |
 | case1 至 case32 | V01 至 V16 的原始 cu_seqlens，每组两个头数 | 1 × 各组末端 token 位置 | 4 / 8 |
 
+CPU 标杆复制自 [examples/chunk_kda.py 的 recurrent_reference 函数](../../examples/chunk_kda.py)。每个 token 沿用原有的状态更新和 attention 输出计算；每条序列到末尾时，把原函数内部的 `[H,V,K]` 状态转为接口要求的 `[H,K,V]`，再按序列堆叠。长序列每 256 个 token 保存一次状态，反向计算时从该状态继续原有递推。
+
 Q/K/V 为 BF16，前向输入为 BNSD，K=V=128，chunk_size=64。保留变长序列边界，初态为空，输出各序列的终态，打开 Q/K 归一化和 kernel 内 gate，反向使用前向保存的中间量。beta 直接给出，损失对 attention 输出施加同一可复现的上游梯度。
 
 **如何判定通过**　CPU FP32 标杆按序列独立计算 attention 输出、终态以及 dq、dk、dv、dbeta、dg。每个张量都检查形状、有限值、逐元素绝对/相对误差和余弦相似度，阈值复用 examples/chunk_kda.py，终态沿用前向输出阈值。任一张量超差或执行异常都会让整批返回非零。CPU 标杆每 256 个 token 保存一次状态，反向分段重算。
