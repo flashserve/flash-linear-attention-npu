@@ -155,13 +155,6 @@ class Smoke(executor_base):
                 out = input_executor.FunctionApi.__call__(self, input_data, True)
             else:
                 out = input_executor.run_npu(spec, input_data)
-        elif op == "chunk_gated_delta_rule_fwd_h" and group.endswith("generated"):
-            spec = json.loads(case.get_input_data_config(name="case_spec").range_values)
-            if cpu:
-                h, v = reference.run_cpu(spec, high)
-                out = (h.transpose(1, 2).contiguous(), v)
-            else:
-                out = reference.run_npu(spec, input_data)
         elif op == "chunk_fwd_h":
             x = input_executor.build_inputs(
                 spec,

@@ -31,7 +31,7 @@ echo "matrix=$(python3 tests/atk/smoke/run.py matrix)" >> "$GITHUB_OUTPUT"
 | `chunk_kda_bwd_prepare` | `chunk_kda_bwd_prepare_a3/` |
 | `recurrent_gated_delta_rule` | `recurrent_gated_delta_rule/rgdn_A5/` |
 
-其余标杆保留上游算子目录名和文件名。`chunk_gated_delta_rule_fwd_h` 的 generated 组和状态用例组分别使用 `executor_chunk_gated_delta_rule_fwd_h.py` 和 `executor_gdn_fwd_h_state.py`。KDA Forward V2 和 GDN 反向整链的导入路径已适配仓内布局。
+其余标杆保留上游算子目录名和文件名。`chunk_gated_delta_rule_fwd_h` 的所有 A5 用例统一使用 `executor_gdn_fwd_h_state.py`。KDA Forward V2 和 GDN 反向整链的导入路径已适配仓内布局。
 
 从 FLA 仓库根目录执行。CI 将 `--op` 和 `--platform` 替换为矩阵值，将 `--device` 替换为容器内分配的逻辑卡号。
 

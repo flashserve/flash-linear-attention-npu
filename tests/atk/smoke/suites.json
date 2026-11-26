@@ -246,7 +246,7 @@
     "platform": "A5",
     "group": "chunk_gated_delta_rule_fwd_h-A5-generated",
     "count": 200,
-    "reference": "executor_chunk_gated_delta_rule_fwd_h.py",
+    "reference": "executor_gdn_fwd_h_state.py",
     "output": "native"
   },
   {
