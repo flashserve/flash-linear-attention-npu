@@ -712,16 +712,16 @@ function check_stable_aclnn_abi(){
         return $?
     fi
 
-    local opp_include
-    opp_include=$(find "${BUILD_DIR}" "${BUILD_OUT_DIR}" -type d \
-        -path '*/vendors/fla_npu_transformer/op_api/include/aclnnop' \
-        -print 2>/dev/null | sort | head -n 1)
-    if [[ -z "${opp_include}" ]]; then
-        log "[ERROR] Built OPP aclnn headers were not found for the Stable-ABI gate."
+    local manifest
+    manifest=$(find "${BUILD_DIR}/_CPack_Packages" -type f \
+        -path '*/vendors/fla_npu_transformer/abi_manifest.json' -print 2>/dev/null | sort | head -n 1)
+    if [[ -z "${manifest}" ]]; then
+        log "[ERROR] Staged OPP ABI manifest was not found."
         return 1
     fi
-
-    local include_args=(--opp-include "${opp_include}")
+    local vendor
+    vendor=$(dirname "${manifest}")
+    local include_args=(--vendor "${vendor}" --opp-include "${vendor}/op_api/include/aclnnop")
     local cann_include
     while IFS= read -r cann_include; do
         include_args+=("${cann_include}")
@@ -731,7 +731,7 @@ function check_stable_aclnn_abi(){
         include_args+=(--ops "${OPS_FILTER_VALUE}")
     fi
 
-    log "[INFO] Checking built OPP aclnn headers against Stable-ABI adapters."
+    log "[INFO] Checking built OPP ABI contracts against Stable-ABI adapters."
     python3 "${CURRENT_DIR}/torch_custom/fla_npu/tools/op_abi_validate.py" \
         "${include_args[@]}"
 }

@@ -104,6 +104,58 @@ class WheelOverlayTests(unittest.TestCase):
         src = package(self.root / uuid_name(), kind=kind, exports=["npu_a"], opp={"aclnnDemo": kind} if full else None)
         return wheel(self.root / (uuid_name() + ".whl"), src, scheme=scheme, corrupt=corrupt)
 
+    def test_private_layer_requires_matching_pair_and_rejects_legacy_shadow(self):
+        base = self.base()
+        src = package(self.root / "adapter", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        inner = contract("float", "DemoInner")
+        data = layers.manifest(src)
+        data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+        marker = self.root / "checker-calls"
+        with (src / "_op_abi.py").open("a", encoding="utf-8") as helper:
+            helper.write(f"""
+_check = _validate_exports
+def _validate_exports(exports, signatures):
+    import os
+    with open({str(marker)!r}, 'a') as calls:
+        print(os.getpid(), file=calls)
+    _check(exports, signatures)
+""")
+
+        abi = layers.abi_module(base)
+        provider = layers._vendor(src)
+        public = abi.validated_contracts(provider, require_manifest=True)
+        names = set(public) | set(inner) | {abi.private_stamp(inner)}
+        write_elf_exports(provider / abi.LIBRARY, names)
+        (provider / abi.MANIFEST_NAME).write_text(json.dumps({
+            "schema_version": 1, "files": abi._file_hashes(provider),
+            "contracts": public, "private_contracts": inner}))
+        update = wheel(self.root / "private.whl", src)
+        self.assertEqual(layers.install(base, update)["state"], "active")
+        self.assertFalse(layers.runtime_plan(base)["errors"])
+        self.assertFalse(layers.status(base)[0]["errors"])
+        [checker_pid] = marker.read_text().splitlines()
+        self.assertNotEqual(int(checker_pid), os.getpid())
+
+        data["operators"]["npu_a"]["private_requires"]["DemoInnerGetWorkspaceSize"][1] = "double"
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+        previous = layers.state(base)
+        with self.assertRaisesRegex(RuntimeError, r"DemoInnerGetWorkspaceSize.*parameter 2 .*adapter expects double, OPP provides float"):
+            layers.install(base, wheel(self.root / "changed.whl", src))
+        self.assertEqual(layers.state(base), previous)
+        self.assertEqual(len(marker.read_text().splitlines()), 2)
+
+        legacy = package(self.root / "legacy", opp={"aclnnDemo": "int64"})
+        shadow = layers._vendor(legacy)
+        names = set(contract()) | {"DemoInner"}
+        write_elf_exports(shadow / abi.LIBRARY, names)
+        with mock.patch.object(abi, "exported_symbols", return_value=set(contract())):
+            abi.write_manifest(shadow)
+        self.assertTrue(any("DemoInner" in err for err in abi.compare_overlay_to_base(shadow, provider)))
+        with self.assertRaisesRegex(RuntimeError, "exports DemoInner without an ABI declaration"):
+            layers.install(base, shadow)
+        self.assertEqual(layers.state(base), previous)
+
     def test_full_wheel_changes_abi_and_preserves_base_b_and_files(self):
         base = self.base()
         before = {p.relative_to(base): p.read_bytes() for p in base.rglob("*") if p.is_file()}
@@ -451,9 +503,72 @@ a = npu_a
         from build_layer_manifest import requirements
         operators = requirements()
         self.assertEqual(len(operators), 38)
+        self.assertIn("aclnnRecurrentKdaGetWorkspaceSize", operators["npu_recurrent_kda"]["requires"])
         for name, description in operators.items():
             self.assertTrue(description["dispatch"], name)
             self.assertFalse(any("?" in signature for signature in description["requires"].values()), name)
+
+    def test_scoped_wheel_format_is_independent_of_private_dependencies(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_layer_manifest as builder
+
+        pkg = package(self.root / "mixed-source")
+        ops = {"npu_a": {"requires": contract()},
+               "npu_b": {"requires": {}, "private_requires": contract("float", "DemoInner")}}
+        with mock.patch.object(builder, "requirements", return_value=ops):
+            for selection in ("npu_a", "npu_b", "npu_a,npu_b"):
+                with self.subTest(selection=selection), mock.patch.dict(os.environ, FLA_NPU_OVERLAY_OPS=selection):
+                    builder.write_layer_manifest(pkg)
+                    data = layers.manifest(pkg)
+                    self.assertEqual(data["protocol"], 1)
+                    self.assertEqual(data["exports"], selection.split(","))
+                    self.assertEqual(data["operators"], ops)
+
+    def test_wheel_records_private_macro_calls_and_rejects_unresolved_ones(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_layer_manifest as builder
+
+        api = self.root / "fla/ops/ascendc/demo/op_host/op_api"
+        api.mkdir(parents=True)
+        entries = ("DemoInner", "aclnnDemo_inner")
+        (api / "private_abi.json").write_text(json.dumps({entry: "inner.h" for entry in entries}))
+        prototypes = (
+            "aclnnStatus {entry}GetWorkspaceSize(const aclTensor *x, float scale, "
+            "uint64_t *size, aclOpExecutor **executor);\n"
+            "aclnnStatus {entry}(void *ws, uint64_t size, aclOpExecutor *executor, aclrtStream stream);\n")
+        (api / "inner.h").write_text("".join(prototypes.format(entry=entry) for entry in entries))
+        source = self.root / "launcher"
+        for name in ("fla_npu/_op_abi.py", "tools/op_abi_validate.py"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SETUP / name, source / name)
+        wrappers = source / "fla_npu/ops/ascendc"
+        wrappers.mkdir(parents=True)
+        (wrappers / "__init__.py").write_text('_ASCENDC_OPS = ("npu_demo",)\n')
+        (wrappers / "_stable.py").write_text('def npu_demo(): return _op("npu_demo")()\n')
+        adapter = source / "csrc/src/stable_demo.cpp"
+        adapter.parent.mkdir(parents=True)
+
+        def call(entry):
+            return f'("{entry}", meta, stream, tensor(x), scalar(static_cast<float>(scale)));'
+
+        with mock.patch.object(builder, "ROOT", self.root), mock.patch.object(builder, "SOURCE", source):
+            for entry in entries:
+                for gap in ("", " ", "\n", " /* note */\n  "):
+                    with self.subTest(entry=entry, gap=gap):
+                        adapter.write_text("FLA_STABLE_EXEC" + gap + call(entry))
+                        result = builder.requirements()["npu_demo"]
+                        self.assertEqual(result["private_requires"], contract("float", entry))
+                        self.assertEqual(result["requires"], {})
+            # A real public header for the prefix must not introduce an unused dependency.
+            (api / "aclnn_demo.h").write_text(prototypes.format(entry="aclnnDemo"))
+            adapter.write_text("FLA_STABLE_EXEC" + call("aclnnDemo_inner"))
+            self.assertEqual(builder.requirements()["npu_demo"]["requires"], {})
+            adapter.write_text("FLA_STABLE_EXEC " + call("DemoInner").replace("(scale)", "(scale) + (0.0)"))
+            with self.assertRaisesRegex(RuntimeError, r"DemoInner.*param 1: unresolved argument type"):
+                builder.requirements()
+            adapter.write_text("FLA_STABLE_EXEC " + call("DemoInner").replace('"DemoInner"', "api_name"))
+            with self.assertRaisesRegex(ValueError, r"stable_demo.cpp:1: cannot parse FLA_STABLE_EXEC"):
+                builder.requirements()
 
     def test_installed_cli_wheel_install_status_remove_without_root_import(self):
         site = self.root / "cli"
@@ -537,6 +652,45 @@ a = npu_a
         output = self.summary_cli_install(base, self.update(), FLA_NPU_OVERLAY_VENDOR="")
         self.assertIn("combination: active", output)
         self.assertIn("selection for a new process: base", output)
+
+    def test_candidate_checker_error_reports_reason_and_preserves_selection(self):
+        base = self.summary_cli_base()
+        src = package(self.root / "candidate", exports=["npu_a"], opp={"aclnnDemo": "int64"})
+        data = layers.manifest(src)
+        inner = contract("float", "DemoInner")
+        del inner["DemoInner"]
+        data["operators"]["npu_a"] = {"requires": {}, "private_requires": inner}
+        (src / layers.MANIFEST).write_text(json.dumps(data))
+        for existing_overlay in (False, True):
+            with self.subTest(existing_overlay=existing_overlay):
+                if existing_overlay:
+                    layers.install(base, self.update())
+                    (src / "_op_abi.py").write_text('raise ValueError("unsupported checker configuration")')
+                previous = layers.state(base)
+                plan = layers.runtime_plan(base)
+                retained = list(layers.storage(base).glob("*"))
+                candidate = wheel(self.root / "candidate.whl", src)
+                result = subprocess.run(
+                    [sys.executable, "-m", "fla_npu_opp_manage", "--overlay", "--source", str(candidate)],
+                    env=dict(os.environ, PYTHONPATH=str(base.parent)), cwd=self.root,
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("candidate.whl", result.stderr)
+                self.assertIn("_op_abi.py", result.stderr)
+                if existing_overlay:
+                    self.assertIn("ValueError: unsupported checker configuration", result.stderr)
+                else:
+                    self.assertIn("npu_a", result.stderr)
+                    self.assertIn("Missing phase-two export DemoInner", result.stderr)
+                self.assertEqual(layers.state(base), previous)
+                self.assertEqual(layers.runtime_plan(base), plan)
+                self.assertCountEqual(layers.storage(base).glob("*"), retained)
+
+        # An adapter-only wheel is rejected before running its private ABI checker.
+        (layers._vendor(src) / layers.LIBRARY).unlink()
+        with self.assertRaisesRegex(RuntimeError, "requires an embedded OPP"):
+            layers.install(base, wheel(self.root / "adapter-only.whl", src))
+        self.assertEqual(layers.state(base), previous)
 
     def test_cli_rejects_both_artifacts_on_base_without_opp(self):
         base = self.summary_cli_base(full=False)

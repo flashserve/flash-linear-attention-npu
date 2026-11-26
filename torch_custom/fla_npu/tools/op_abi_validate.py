@@ -66,10 +66,54 @@ def parse_headers(include_dir: Path, wanted: set[str]) -> dict[str, list[str]]:
     return {s: list(kinds) for s, kinds in signatures.items()}
 
 
-_EXEC_CALL = re.compile(r"FLA_STABLE_EXEC\(\s*\"(\w+)\"\s*,(.*?)\)\s*;", re.S)
+# Skip quoted tokens so parentheses, commas and macro names inside them are data.
+_CPP_QUOTED = r"""(?:R"(?P<delim>[^\s()\\]{0,16})\(.*?\)(?P=delim)"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')"""
+_EXEC_TOKEN = re.compile(_CPP_QUOTED + r"|\bFLA_STABLE_EXEC\b\s*", re.S)
+_CALL_TOKEN = re.compile(_CPP_QUOTED + r"|[(),]", re.S)
+_SCALAR_TYPES = {
+    "bool": "bool", "float": "float", "double": "double",
+    "int32_t": "int32", "int64_t": "int64", "uint32_t": "uint32",
+    "uint64_t": "uint64", "size_t": "uint64",  # supported Linux hosts are LP64
+}
+
+
+def _call_arguments(text: str, opening: int) -> tuple[list[str], int]:
+    """Return top-level arguments and the offset after the matching ')'."""
+    if text[opening:opening + 1] != "(":
+        return [], -1
+    start = opening + 1
+    depth = 0
+    args = []
+    for token in _CALL_TOKEN.finditer(text, start):
+        value = token.group()
+        if value == "(":
+            depth += 1
+        elif value == ")" and depth:
+            depth -= 1
+        elif not depth and value in (",", ")"):
+            args.append(text[start:token.start()].strip())
+            if value == ")":
+                return args, token.end()
+            start = token.end()
+    return [], -1
+
+
+def _exec_calls(source: Path, text: str):
+    for token in _EXEC_TOKEN.finditer(text):
+        if not token.group().startswith("FLA_STABLE_EXEC"):
+            continue
+        args, end = _call_arguments(text, token.end())
+        symbol = re.fullmatch(r'"([A-Za-z_]\w*)"', args[0]) if args else None
+        if end < 0 or len(args) < 3 or symbol is None:
+            line = text.count("\n", 0, token.start()) + 1
+            raise ValueError(f"{source}:{line}: cannot parse FLA_STABLE_EXEC; "
+                             "expected a literal ABI name, metadata and stream")
+        yield token.start(), symbol[1], args[3:]
+
 
 _TENSOR_HOLDERS = {
     "tensor",
+    "TensorArg",
     "optional_tensor",
     "out_tensor",
     "nd_tensor",
@@ -148,50 +192,54 @@ def _enclosing_params(text: str, position: int) -> dict[str, str]:
 
 def _scalar_kind(expression: str, params: dict[str, str]) -> str:
     expression = expression.strip()
-    declared = params.get(expression, "")
-    for token, kind in (("bool", "bool"), ("double", "double"),
-                        ("float", "float"), ("int64_t", "int64"),
-                        ("size_t", "int64"), ("int32_t", "int32")):
-        if token in declared:
-            return kind
-    cast = re.match(r"(?:static_cast\s*<\s*|[\(])(\w+_t|bool|double|float)",
-                    expression)
+    declared = re.sub(r"\b(?:const|volatile)\b", "", params.get(expression, "")).strip()
+    if declared in _SCALAR_TYPES:
+        return _SCALAR_TYPES[declared]
+    # Only a cast enclosing the whole operand determines the final ABI type.
+    # A trailing arithmetic operation may promote float back to double.
+    cast = re.match(r"static_cast\s*<\s*(\w+)\s*>\s*\(", expression)
     if cast:
-        return {"int64_t": "int64", "int32_t": "int32", "size_t": "int64",
-                "bool": "bool", "double": "double", "float": "float"}.get(
-                    cast.group(1), WILDCARD)
-    if re.fullmatch(r"true|false", expression):
+        _, end = _call_arguments(expression, cast.end() - 1)
+        if end == len(expression):
+            return _SCALAR_TYPES.get(cast[1], WILDCARD)
+        return WILDCARD
+    c_cast = re.fullmatch(r"\(\s*(\w+)\s*\)\s*([A-Za-z_]\w*|[-+]?\d+(?:\.\d*)?)", expression)
+    if c_cast:
+        return _SCALAR_TYPES.get(c_cast[1], WILDCARD)
+    if expression in ("true", "false"):
         return "bool"
-    if re.fullmatch(r"[-+]?\d+", expression):
-        return "int64"
-    if re.fullmatch(r"[-+]?[\d.]+(?:[eE][-+]?\d+)?[fF]?", expression):
-        return "double"
+    if re.fullmatch(r"[-+]?(?:0|[1-9][0-9]{0,18})", expression):
+        # C++ chooses the decimal literal's type before applying a unary sign.
+        magnitude = abs(int(expression))
+        if magnitude < 2**31:
+            return "int32"
+        if magnitude < 2**63:
+            return "int64"
+    if re.fullmatch(r"[-+]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?"
+                    r"|[0-9]+[eE][-+]?[0-9]+)[fF]?", expression):
+        return "float" if expression.endswith(("f", "F")) else "double"
     return WILDCARD
 
 
-def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
-    """symbol -> (file, argument kinds) for every FLA_STABLE_EXEC call."""
-
-    calls: dict[str, tuple[Path, list[str]]] = {}
+def adapter_call_sites(src_dir: Path):
+    """Yield each literal FLA_STABLE_EXEC call, including repeated uses of a symbol."""
     for source in sorted(src_dir.glob("stable_*.cpp")):
         text = strip_comments(source.read_text(encoding="utf-8", errors="replace"))
-        for match in _EXEC_CALL.finditer(text):
-            symbol, arguments = match.group(1), match.group(2)
-            # The api string is outside the capture, so the list starts at the
-            # workspace meta and the stream.
-            args = split_params(arguments)[2:]
-            # The enclosing definition is how `scalar(name)` learns the
-            # parameter's declared type.
-            owner = _enclosing_params(text, match.start())
+        for position, symbol, args in _exec_calls(source, text):
+            owner = _enclosing_params(text, position)
             kinds: list[str] = []
             for argument in args:
-                call = re.match(r"(\w+)\s*\((.*)\)\s*$", argument, re.S)
+                call = re.match(r"(\w+)\s*\(", argument)
                 if not call:
                     kinds.append(WILDCARD)
                     continue
-                callee, inner = call.group(1), call.group(2)
+                operands, end = _call_arguments(argument, call.end() - 1)
+                if end != len(argument):
+                    kinds.append(WILDCARD)
+                    continue
+                callee = call[1]
                 if callee == "scalar":
-                    kinds.append(_scalar_kind(inner, owner))
+                    kinds.append(_scalar_kind(operands[0], owner) if len(operands) == 1 else WILDCARD)
                 elif callee in {"cstr", "CStrArg"}:
                     kinds.append("char_ptr")
                 elif callee == "int_array":
@@ -200,8 +248,11 @@ def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
                     kinds.append(TENSOR)
                 else:
                     kinds.append(WILDCARD)
-            calls[symbol] = (source, kinds)
-    return calls
+            yield symbol, (source, kinds)
+
+
+def adapter_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
+    return dict(adapter_call_sites(src_dir))
 
 
 def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
@@ -215,7 +266,7 @@ def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     for source in sorted(src_dir.glob("stable_*.cpp")):
         text = strip_comments(source.read_text(encoding="utf-8"))
         # Classify actual macro calls, not mentions in comments or messages.
-        if _EXEC_CALL.search(text):
+        if next(_exec_calls(source, text), None) is not None:
             continue
         symbol = _SYMBOL_RE.search(text)
         call = _HAND_WRITTEN_CALL.search(text)
@@ -237,11 +288,14 @@ def hand_written_calls(src_dir: Path) -> dict[str, tuple[Path, list[str]]]:
     return calls
 
 
-def compare(expected: list[str], actual: list[str]) -> list[str]:
+def compare(expected: list[str], actual: list[str], *, strict=False) -> list[str]:
     problems: list[str] = []
     if len(expected) != len(actual):
         problems.append(
             f"parameter count {len(actual)} != header {len(expected)}")
+    if strict:
+        problems.extend(f"param {index}: unresolved argument type"
+                        for index, kind in enumerate(actual) if kind == WILDCARD)
     for index, (want, got) in enumerate(zip(expected, actual)):
         if WILDCARD in (want, got) or want == got:
             continue
@@ -283,6 +337,7 @@ def main() -> int:
                         help="one or more op_api/include/aclnnop directories: "
                              "the vendor OPP's, and CANN's for the built-in "
                              "operators (FastGelu)")
+    parser.add_argument("--vendor", type=Path, help="staged vendor with verified public/private ABI")
     parser.add_argument("--src-dir", default=str(SRC_DIR))
     parser.add_argument(
         "--ops",
@@ -293,7 +348,8 @@ def main() -> int:
     parser.add_argument("--json", default="")
     args = parser.parse_args()
 
-    adapters = adapter_calls(Path(args.src_dir))
+    sites = list(adapter_call_sites(Path(args.src_dir)))
+    adapters = dict(sites)
     adapters.update(hand_written_calls(Path(args.src_dir)))
     adapters = filter_adapters(adapters, args.ops)
     wanted = set(adapters)
@@ -302,6 +358,17 @@ def main() -> int:
     for include_dir in args.opp_include:
         for symbol, kinds in parse_headers(Path(include_dir), wanted).items():
             headers.setdefault(symbol, kinds)
+
+    private = set()
+    if args.vendor:
+        public, internal = _abi.validated_contract_groups(args.vendor, require_manifest=True)
+        contracts = {**public, **internal}
+        for symbol in wanted:
+            workspace = symbol + "GetWorkspaceSize"
+            if workspace in contracts:
+                headers[symbol] = list(contracts[workspace][:-2])
+                if workspace in internal:
+                    private.add(symbol)
 
     report: dict[str, dict] = {}
     failures = 0
@@ -317,8 +384,18 @@ def main() -> int:
                 "call_site": kinds}
             if symbol not in KNOWN_HEADER_GAPS:
                 failures += 1
+                print(f"adapter {symbol} ({source_name}): no declared ABI prototype")
             continue
-        problems = compare(headers[symbol], kinds)
+        if symbol in private:
+            problems = []
+            matching = [site for callee, site in sites if callee == symbol]
+            for file, arguments in matching or [(source, kinds)]:
+                issues = compare(headers[symbol], arguments, strict=True)
+                if issues and not problems:
+                    source_name, kinds = file.name, arguments
+                problems.extend(f"{file.name}: {issue}" for issue in issues)
+        else:
+            problems = compare(headers[symbol], kinds)
         report[f"adapter:{symbol}"] = {
             "source": source_name,
             "status": "ok" if not problems else "mismatch",

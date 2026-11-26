@@ -130,6 +130,8 @@ function(gen_aclnn_with_opdef)
   gen_aclnn_classify(${OPHOST_NAME}_opdef_aclnn_exclude_obj aclnnExc "${opbuild_out_srcs}" "${opbuild_out_headers}"
     opbuild_out_srcs opbuild_out_headers)
 
+  get_property(private_headers GLOBAL PROPERTY FLA_PRIVATE_HEADERS)
+  list(REMOVE_ITEM opbuild_out_headers ${private_headers})
   set(filtered_opbuild_out_headers)
   foreach(header_file ${opbuild_out_headers})
     set(skip_this_header FALSE)
@@ -173,6 +175,8 @@ function(gen_aclnn_with_opdef)
     file(GLOB matching_file "${OPS_TRANSFORMER_DIR}/mc2/*/op_api/aclnn_*.h")
     list(APPEND mc2_aclnn_master_headers ${matching_file})
   endif()
+
+  list(REMOVE_ITEM mc2_aclnn_master_headers ${private_headers})
 
   # 将头文件安装到packages/vendors/vendor_name/op_api/include
   if (NOT ENABLE_BUILT_IN)

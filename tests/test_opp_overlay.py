@@ -46,7 +46,7 @@ def _write_aclnn_header(vendor: Path, scalar_type: str, *, symbol: str = "aclnnD
     )
     write_elf_exports(vendor / ABI["LIBRARY"], {symbol, symbol + "GetWorkspaceSize"})
     with mock.patch.dict(ABI["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
+        "exported_symbols": ABI["elf_exported_symbols"]
     }):
         ABI["write_manifest"](vendor)
 

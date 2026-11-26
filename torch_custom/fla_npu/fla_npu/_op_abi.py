@@ -1,4 +1,4 @@
-"""Pure helpers for comparing public aclnn contracts between OPP vendors."""
+"""Build and verify public and launcher-private two-phase OPP contracts."""
 
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ _BASE_TYPES = {
 }
 _POINTER_KINDS = {"aclTensor*": TENSOR, "aclIntArray*": INT_ARRAY,
                   "aclScalar*": ACL_SCALAR, "char*": "char_ptr"}
-_FUNCTION = re.compile(r"aclnnStatus\s+(aclnn\w+)\s*\((.*?)\)\s*;", re.S)
+_FUNCTION = re.compile(r"\baclnnStatus\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*;", re.S | re.ASCII)
+_PRIVATE_STAMP = "fla_private_abi_sha256_"
 _WORKSPACE_TAIL = ("uint64*", "executor**")
 _EXECUTE_SIGNATURE = ("void*", "uint64", "executor*", "stream")
 MANIFEST_NAME = "abi_manifest.json"
@@ -120,18 +121,64 @@ def parameter_kind(param: str) -> str:
 
 
 def public_prototypes(include_dir: Path, wanted: set[str] | None = None) -> dict[str, tuple[str, ...]]:
-    signatures: dict[str, tuple[str, ...]] = {}
-    for header in sorted(include_dir.glob("aclnn_*.h")):
+    return header_prototypes(sorted(include_dir.glob("aclnn_*.h")), wanted, public=True)
+
+
+def header_prototypes(headers, wanted=None, *, public=False):
+    signatures = {}
+    for header in headers:
         text = strip_comments(header.read_text(encoding="utf-8"))
         for match in _FUNCTION.finditer(text):
             symbol = match[1]
+            if public and not symbol.startswith("aclnn"):
+                continue
             if wanted is not None and symbol not in wanted:
                 continue
             signature = tuple(parameter_kind(p) for p in split_params(match[2]))
             if symbol in signatures and signatures[symbol] != signature:
-                raise RuntimeError(f"Conflicting public prototypes for {symbol}")
+                raise RuntimeError(f"Conflicting prototypes for {symbol}")
             signatures[symbol] = signature
     return signatures
+
+
+def private_headers(declaration: Path) -> dict[str, Path]:
+    """Each entry binds one launcher base name to its own source header."""
+    entries = json.loads(declaration.read_text(encoding="utf-8"))
+    if not isinstance(entries, dict) or not entries:
+        raise ValueError(f"Expected private ABI entry-to-header mapping in {declaration}")
+    result = {}
+    for entry, filename in entries.items():
+        if (not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", entry)
+                or entry.endswith("GetWorkspaceSize") or entry.startswith(_PRIVATE_STAMP)
+                or not isinstance(filename, str) or Path(filename).is_absolute()):
+            raise ValueError(f"Invalid private ABI declaration for {entry!r} in {declaration}")
+        header = (declaration.parent / filename).resolve()
+        if not header.is_relative_to(declaration.parent.resolve()) or not header.is_file():
+            raise ValueError(f"Missing or external private ABI header: {header}")
+        result[entry] = header
+    return result
+
+
+def private_contracts(declarations) -> dict[str, tuple[str, ...]]:
+    contracts = {}
+    for declaration in declarations:
+        for entry, header in private_headers(declaration).items():
+            pair = {entry, entry + "GetWorkspaceSize"}
+            signatures = header_prototypes([header], pair)
+            if signatures.keys() != pair:
+                raise ValueError(f"{header}: missing private prototype(s) {sorted(pair - signatures.keys())}")
+            if pair.intersection(contracts):
+                raise ValueError(f"Duplicate private ABI entry {entry} in {declaration}")
+            _validate_exports(pair, signatures)
+            contracts.update(signatures)
+    return contracts
+
+
+def private_stamp(contracts) -> str:
+    # A symbol in the library independently binds the complete private inventory
+    # and its types. Readers can verify an installed OPP without source headers.
+    payload = json.dumps(contracts, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return _PRIVATE_STAMP + hashlib.sha256(payload).hexdigest()
 
 
 def parse_aclnn_signatures(include_dir: Path, wanted: set[str] | None = None) -> dict[str, tuple[str, ...]]:
@@ -152,21 +199,23 @@ def vendor_aclnn_signatures(vendor_dir: Path) -> dict[str, tuple[str, ...]]:
     return parse_aclnn_signatures(vendor_dir / "op_api" / "include" / "aclnnop")
 
 
-def exported_symbols(library: Path) -> set[str]:
+def exported_symbols(library: Path, wanted=()) -> set[str]:
     """Build-time only: inspect ELF without executing any vendor code."""
     result = subprocess.run(["nm", "-D", "--defined-only", "--format=posix", str(library)],
                             check=True, capture_output=True, text=True)
-    return {line.split()[0].split("@", 1)[0] for line in result.stdout.splitlines()
-            if line.startswith("aclnn")}
+    names = (line.split()[0].split("@", 1)[0] for line in result.stdout.splitlines() if line.strip())
+    return {name for name in names if name.startswith(("aclnn", _PRIVATE_STAMP)) or name in wanted}
 
 
-def elf_exported_symbols(library: Path) -> set[str]:
+def elf_exported_symbols(library: Path, wanted=()) -> set[str]:
     """Read defined public ACLNN symbols without loading ELF or invoking nm.
 
     The dynamic symbol table is independent of the JSON contract list, so
     deleting a complete interface from that list cannot hide an ABI conflict.
     Both ELF classes and byte orders are accepted; invalid tables fail closed.
     """
+    extra_names = {name.encode("ascii") for name in wanted}
+    stamp_prefix = _PRIVATE_STAMP.encode("ascii")
     data = library.read_bytes()
 
     def fail():
@@ -224,7 +273,7 @@ def elf_exported_symbols(library: Path) -> set[str]:
             if end < 0:
                 fail()
             name = strings[name_offset:end]
-            if name.startswith(b"aclnn"):
+            if name.startswith((b"aclnn", stamp_prefix)) or name in extra_names:
                 try:
                     exports.add(name.decode("ascii").split("@", 1)[0])
                 except UnicodeDecodeError:
@@ -234,9 +283,9 @@ def elf_exported_symbols(library: Path) -> set[str]:
     return exports
 
 
-def _file_hashes(vendor: Path) -> dict[str, str]:
+def _file_hashes(vendor: Path, *, private=False) -> dict[str, str]:
     paths = [vendor / LIBRARY, *sorted((vendor / INCLUDE).glob("aclnn_*.h"))]
-    if len(paths) < 2:
+    if len(paths) < 2 and not private:
         raise RuntimeError(f"Missing public aclnn headers under {vendor / INCLUDE}")
     hashes = {}
     for path in paths:
@@ -275,14 +324,28 @@ def _validate_exports(exports: set[str], contracts: dict[str, tuple[str, ...]]) 
         raise RuntimeError(f"Unpaired aclnn exports: {sorted(exports - workspaces - executions)}")
 
 
-def write_manifest(vendor: Path) -> Path:
+def _check_stamp(exports, private):
+    stamps = {s for s in exports if s.startswith(_PRIVATE_STAMP)}
+    if stamps != ({private_stamp(private)} if private else set()):
+        raise RuntimeError("Private ABI declarations do not match the compiled library")
+    return exports - stamps
+
+
+def write_manifest(vendor: Path, declarations=()) -> Path:
     vendor = vendor.resolve()
-    hashes = _file_hashes(vendor)
+    private = private_contracts(declarations)
+    hashes = _file_hashes(vendor, private=bool(private))
     contracts = _contracts(vendor)
-    exports = exported_symbols(vendor / LIBRARY)
-    _validate_exports(exports, contracts)
+    exports = _check_stamp(exported_symbols(vendor / LIBRARY, private), private)
+    if contracts.keys() & private.keys():
+        raise RuntimeError("A private ABI entry also has a public prototype")
+    if not private.keys() <= exports:
+        raise RuntimeError(f"Missing private ABI exports: {sorted(private.keys() - exports)}")
+    _validate_exports(exports, {**contracts, **private})
     data = {"schema_version": 1, "files": hashes,
-            "contracts": {s: list(contracts[s]) for s in sorted(exports)}}
+            "contracts": {s: list(contracts[s]) for s in sorted(exports - private.keys())}}
+    if private:
+        data["private_contracts"] = private
     target = vendor / MANIFEST_NAME
     temporary = target.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -290,7 +353,8 @@ def write_manifest(vendor: Path) -> Path:
     return target
 
 
-def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tuple[str, ...]]:
+def validated_contract_groups(vendor: Path, *, require_manifest: bool):
+    """Return verified (public, private) contracts, including old public-only OPPs."""
     path = vendor / MANIFEST_NAME
     if not path.is_file():
         if require_manifest:
@@ -301,11 +365,21 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
             raise RuntimeError(f"No base public aclnn contracts under {vendor}")
         exports = elf_exported_symbols(vendor / LIBRARY)
         _validate_exports(exports, contracts)
-        return {symbol: contracts[symbol] for symbol in exports}
+        return {symbol: contracts[symbol] for symbol in exports}, {}
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise RuntimeError(f"Invalid ABI manifest object: {path}")
-    if data.get("schema_version") != 1 or data.get("files") != _file_hashes(vendor):
+    version = data.get("schema_version")
+    if version != 1:
+        raise RuntimeError(f"Unsupported OPP ABI manifest version {version!r}: {path}")
+    private = data.get("private_contracts", {})
+    if (not isinstance(private, dict)
+            or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol)
+                   or not isinstance(sig, list) or not all(isinstance(k, str) for k in sig)
+                   for symbol, sig in private.items())):
+        raise RuntimeError(f"Invalid private ABI contracts in {path}")
+    private = {s: tuple(sig) for s, sig in private.items()}
+    if data.get("files") != _file_hashes(vendor, private=bool(private)):
         raise RuntimeError(f"Stale or invalid ABI manifest: {path} (library/header hashes differ)")
     actual = _contracts(vendor)
     recorded = data.get("contracts")
@@ -315,17 +389,26 @@ def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tu
     ):
         raise RuntimeError(f"Invalid ABI contracts in {path}")
     contracts = {s: tuple(v) for s, v in recorded.items()}
+    if private.keys() & (actual.keys() | contracts.keys()):
+        raise RuntimeError(f"Public/private ABI collision: {path}")
+    public = contracts
+    contracts = {**public, **private}
     _validate_exports(set(contracts), contracts)
-    exports = elf_exported_symbols(vendor / LIBRARY)
+    exports = _check_stamp(elf_exported_symbols(vendor / LIBRARY, private), private)
     if set(contracts) != exports:
         raise RuntimeError(
             f"Incomplete ABI manifest: {path}; "
             f"missing exports={sorted(exports - contracts.keys())}, "
             f"unexported contracts={sorted(contracts.keys() - exports)}"
         )
-    if any(actual.get(s) != sig for s, sig in contracts.items()):
+    if any(actual.get(s) != sig for s, sig in public.items()):
         raise RuntimeError(f"ABI manifest disagrees with public headers: {path}")
-    return contracts
+    return public, private
+
+
+def validated_contracts(vendor: Path, *, require_manifest: bool) -> dict[str, tuple[str, ...]]:
+    public, private = validated_contract_groups(vendor, require_manifest=require_manifest)
+    return {**public, **private}
 
 
 def compare_overlay_to_base(overlay_dir: Path, base_dir: Path) -> list[str]:
@@ -340,19 +423,20 @@ def compare_overlay_to_base(overlay_dir: Path, base_dir: Path) -> list[str]:
 
 def compare_overlays_to_base(overlay_dirs: list[Path], base_dir: Path) -> list[str]:
     """Allow additions, but require one ABI per symbol across the active stack."""
-    try:
-        base = validated_contracts(base_dir, require_manifest=False)
-    except (OSError, ValueError, RuntimeError) as exc:
-        return [str(exc)]
-    seen = {symbol: (signature, base_dir.name) for symbol, signature in base.items()}
-    problems: list[str] = []
-    for vendor in overlay_dirs:
+    seen = {}
+    verified = {}
+    private_names = set()
+    problems = []
+    for vendor in [base_dir, *overlay_dirs]:
         try:
-            overlay = validated_contracts(vendor, require_manifest=True)
+            public, private = validated_contract_groups(vendor, require_manifest=vendor != base_dir)
         except (OSError, ValueError, RuntimeError) as exc:
             problems.append(f"{vendor.name}: {exc}")
             continue
-        for symbol, signature in sorted(overlay.items()):
+        contracts = {**public, **private}
+        verified[vendor] = contracts
+        private_names.update(private)
+        for symbol, signature in sorted(contracts.items()):
             if symbol in seen:
                 previous, owner = seen[symbol]
                 if previous != signature:
@@ -361,10 +445,39 @@ def compare_overlays_to_base(overlay_dirs: list[Path], base_dir: Path) -> list[s
                     )
             else:
                 seen[symbol] = (signature, vendor.name)
+    # A legacy library may physically export an Inner name without a contract.
+    # Only a higher-priority such library can shadow a verified provider.
+    needed = set(verified.get(base_dir, {})) & private_names
+    for vendor in reversed(overlay_dirs):
+        if vendor not in verified:
+            continue
+        unknown = needed - verified[vendor].keys()
+        if unknown:
+            try:
+                shadowed = elf_exported_symbols(vendor / LIBRARY, unknown) & unknown
+            except (OSError, ValueError, RuntimeError) as exc:
+                problems.append(f"{vendor.name}: {exc}")
+            else:
+                if shadowed:
+                    problems.append(f"{vendor.name}: undeclared private ABI exports {sorted(shadowed)}")
+        needed.update(private_names & verified[vendor].keys())
     return problems
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a vendor ABI manifest before packaging")
-    parser.add_argument("--write-manifest", required=True, type=Path)
-    print(write_manifest(parser.parse_args().write_manifest))
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--write-manifest", type=Path)
+    action.add_argument("--write-stamp-source", type=Path)
+    action.add_argument("--list-private-headers", type=Path)
+    parser.add_argument("--private-declarations", nargs="*", type=Path, default=[])
+    args = parser.parse_args()
+    if args.list_private_headers:
+        print(";".join(str(p) for p in private_headers(args.list_private_headers).values()))
+    elif args.write_stamp_source:
+        stamp = private_stamp(private_contracts(args.private_declarations))
+        args.write_stamp_source.write_text(
+            f'extern "C" __attribute__((visibility("default"))) void {stamp}() {{}}\n',
+            encoding="utf-8")
+    else:
+        print(write_manifest(args.write_manifest, args.private_declarations))

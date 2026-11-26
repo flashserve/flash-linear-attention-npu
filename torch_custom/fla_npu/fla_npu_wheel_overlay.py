@@ -20,6 +20,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import uuid
 import zipfile
@@ -193,15 +194,16 @@ def environment_vendors(package):
     return [p for p in [*overlays, _vendor(package)] if p is not None]
 
 
-def manifest(package):
+def manifest(package, *, abi_package=None):
     data = _json(package / MANIFEST)
     if not isinstance(data, dict) or data.get("protocol") != 1:
-        raise RuntimeError("Wheel lacks layer protocol 1; rebuild its Python/Stable adapter package")
+        raise RuntimeError("Unsupported wheel layer protocol; rebuild its Python/Stable adapter package")
     exports, operators = data.get("exports"), data.get("operators")
     if (not isinstance(exports, list) or not exports or not all(isinstance(v, str) for v in exports)
             or len(exports) != len(set(exports))
             or not isinstance(operators, dict) or set(exports) - operators.keys()):
         raise RuntimeError("Invalid wheel layer operator inventory")
+    abi = None
     for name, value in operators.items():
         if (not re.fullmatch(r"npu_[a-z0-9_]+", name) or not isinstance(value, dict)
                 or not isinstance(value.get("requires"), dict)):
@@ -209,6 +211,21 @@ def manifest(package):
         for symbol, signature in value["requires"].items():
             if not re.fullmatch(r"aclnn\w+", symbol) or not isinstance(signature, list) or not all(isinstance(v, str) for v in signature):
                 raise RuntimeError("Invalid wheel layer ACLNN contract")
+        if "private_requires" in value:
+            private = value["private_requires"]
+            if (not isinstance(private, dict) or not private
+                    or private.keys() & value["requires"].keys()
+                    or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s)
+                           or not isinstance(sig, list) or not all(isinstance(k, str) for k in sig)
+                           for s, sig in private.items())):
+                raise RuntimeError(f"{name}: invalid wheel layer private ABI requirements")
+            signatures = {s: tuple(sig) for s, sig in private.items()}
+            if abi is None:
+                abi = abi_module(abi_package or package)
+            try:
+                abi._validate_exports(set(signatures), signatures)
+            except Exception as exc:
+                raise RuntimeError(f"{name}: {type(exc).__name__}: {exc}") from exc
     assignments = {}
     for node in ast.parse((package / STAMP).read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
@@ -247,7 +264,8 @@ def resolve(package, layer, *, source_label=None):
     adapters, overlay_vendors = component_vendors(package, layer)
     exports, adapter_layers, groups = set(), [], []
     for adapter in adapters:
-        update = manifest(adapter / PACKAGE)
+        # Installed adapters supply contracts as data. Only install runs their checker.
+        update = manifest(adapter / PACKAGE, abi_package=package)
         if base.get("tier") != update.get("tier"):
             raise RuntimeError("Wheel layer and base target different NPU products")
         # A later wheel only replaces the public entries it declares. Hidden
@@ -266,11 +284,23 @@ def resolve(package, layer, *, source_label=None):
     if not vendors:
         errors.append("No usable OPP vendor in the selected installation")
     groups.append(("base", base, set(base["operators"]) - exports))
+    private_symbols = {s for _, data, names in groups for name in names
+                       for s in data["operators"][name].get("private_requires", {})}
+    # A legacy vendor can export an undeclared private symbol. dlsym would pick
+    # it first, so a later, compatible manifest cannot satisfy that binding.
+    provided = {p: set(contracts[str(p)]) for p in vendors}
+    if private_symbols:
+        for p in vendors:
+            unknown = private_symbols - provided[p]
+            if unknown:
+                provided[p].update(abi.elf_exported_symbols(p / LIBRARY, unknown) & unknown)
     for owner, data, names in groups:
         required = {}
         for name in sorted(names):
-            for symbol, expected in data["operators"][name]["requires"].items():
-                chosen = next((p for p in vendors if symbol in contracts[str(p)]), None)
+            op = data["operators"][name]
+            dependencies = {**op["requires"], **op.get("private_requires", {})}
+            for symbol, expected in dependencies.items():
+                chosen = next((p for p in vendors if symbol in provided[p]), None)
                 if owner == "base" and chosen not in overlay_vendors:
                     # This update does not change the existing binding. Do not
                     # turn installation into an unrelated full-base ABI audit.
@@ -282,6 +312,9 @@ def resolve(package, layer, *, source_label=None):
                 required[symbol] = expected
                 if chosen is None:
                     errors.append(f"{owner}/{name}: missing OPP symbol {symbol}")
+                    continue
+                if symbol not in contracts[str(chosen)]:
+                    errors.append(f"{owner}/{name}: {chosen} exports {symbol} without an ABI declaration")
                     continue
                 actual = contracts[str(chosen)][symbol]
                 if tuple(expected) != actual:
@@ -353,13 +386,26 @@ def extract_wheel(wheel, destination):
     package = destination / PACKAGE
     if _vendor(package) is None:
         raise RuntimeError(f"{wheel.name}: wheel overlay requires an embedded OPP ({LIBRARY})")
-    manifest(package)
+    data = _json(package / MANIFEST)
+    operators = data.get("operators") if isinstance(data, dict) else None
+    if not isinstance(operators, dict):
+        raise RuntimeError(f"{wheel.name}: invalid wheel layer operator inventory")
+    if not any(isinstance(op, dict) and "private_requires" in op for op in operators.values()):
+        # Public-only manifests are validated by resolve() before commit.
+        return
+    # Run the candidate checker once, after RECORD verification and before commit.
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-X", "utf8", str(Path(__file__).resolve()),
+         "--check-candidate", str(package.resolve()), STAMP, LAUNCHER],
+        capture_output=True, encoding="utf-8", errors="replace")
+    if result.returncode or result.stdout.splitlines()[-1:] != ["ABI check complete"]:
+        detail = result.stderr.strip() or f"checker exited with code {result.returncode} before completing"
+        raise RuntimeError(f"{wheel.name}: candidate ABI check (_op_abi.py) failed: {detail}")
 
 
 def validate_wheel_environment(archive):
     from email.parser import Parser
     import importlib.metadata
-    import sys
     try:
         from packaging.requirements import Requirement
         from packaging.specifiers import SpecifierSet
@@ -559,6 +605,17 @@ def shell_environment(package):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Prepare wheel layer paths for manual source")
-    parser.add_argument("--shell-env", type=Path, required=True)
-    print(shell_environment(parser.parse_args().shell_env.resolve()))
+    parser = argparse.ArgumentParser(description="Wheel overlay manager helpers")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--shell-env", type=Path)
+    mode.add_argument("--check-candidate", nargs=3, metavar=("PACKAGE_DIR", "STAMP", "LAUNCHER"))
+    args = parser.parse_args()
+    if args.check_candidate:
+        directory, STAMP, LAUNCHER = args.check_candidate
+        try:
+            manifest(Path(directory))
+        except (Exception, SystemExit) as exc:
+            sys.exit(f"{type(exc).__name__}: {exc}")
+        print("ABI check complete")
+    else:
+        print(shell_environment(args.shell_env.resolve()))

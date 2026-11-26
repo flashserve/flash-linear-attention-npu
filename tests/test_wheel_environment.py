@@ -133,7 +133,7 @@ def _write_aclnn_header(vendor_dir: Path, scalar_type: str, *, symbol: str = "ac
     abi = runpy.run_path(str(OP_ABI_SOURCE))
     write_elf_exports(vendor_dir / abi["LIBRARY"], {symbol, symbol + "GetWorkspaceSize"})
     with mock.patch.dict(abi["write_manifest"].__globals__, {
-        "exported_symbols": lambda _: {symbol, symbol + "GetWorkspaceSize"}
+        "exported_symbols": abi["elf_exported_symbols"]
     }):
         abi["write_manifest"](vendor_dir)
 

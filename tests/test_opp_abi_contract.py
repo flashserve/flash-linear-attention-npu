@@ -36,6 +36,44 @@ def vendor(path, scalar="double", exports=None, *, name="Demo"):
 
 
 class ContractTest(unittest.TestCase):
+    def test_private_only_contract_has_no_installed_headers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "vendor"
+            entry = "ExampleInner"
+            declaration = root / "private_abi.json"
+            declaration.write_text(json.dumps({entry: "inner.h"}))
+            (root / "inner.h").write_text(
+                "aclnnStatus ExampleInnerGetWorkspaceSize(float scale, uint64_t *size, aclOpExecutor **exec);"
+                "aclnnStatus ExampleInner(void *ws, uint64_t size, aclOpExecutor *exec, aclrtStream stream);")
+            declared = abi.private_contracts([declaration])
+            library = provider / abi.LIBRARY
+            symbols = set(declared) | {abi.private_stamp(declared)}
+            write_elf_exports(library, symbols)
+            with mock.patch.object(abi, "exported_symbols", return_value=symbols):
+                manifest = abi.write_manifest(provider, [declaration])
+            self.assertFalse((provider / abi.INCLUDE).exists())
+            self.assertEqual(abi.validated_contract_groups(provider, require_manifest=True), ({}, declared))
+            with mock.patch.object(abi, "exported_symbols", return_value=symbols - {entry}):
+                with self.assertRaisesRegex(RuntimeError, "Missing private ABI exports"):
+                    abi.write_manifest(provider, [declaration])
+            data = json.loads(manifest.read_text())
+            self.assertEqual(data["schema_version"], 1)
+            data["private_contracts"][entry + "GetWorkspaceSize"][0] = "double"
+            manifest.write_text(json.dumps(data))
+            with self.assertRaisesRegex(RuntimeError, "compiled library"):
+                abi.validated_contracts(provider, require_manifest=True)
+
+    def test_private_entry_requires_a_complete_declared_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            declaration = directory / "private_abi.json"
+            declaration.write_text('{"DemoInner": "private.h"}')
+            (directory / "private.h").write_text(
+                "aclnnStatus DemoInner(void *ws, uint64_t size, aclOpExecutor *exec, aclrtStream stream);")
+            with self.assertRaisesRegex(ValueError, "DemoInnerGetWorkspaceSize"):
+                abi.private_contracts([declaration])
+
     def test_elf_reader_supports_classes_and_byte_orders(self):
         for bits in (32, 64):
             for byteorder in ("<", ">"):

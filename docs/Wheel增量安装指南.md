@@ -126,6 +126,8 @@ wheel 包显示 `artifact=wheel`。在新进程运行相同输入的算子用例
 
 ## 4. 如何构建这两类包
 
+在全新环境中，用同一套工具构建并安装基础 wheel、增量 wheel 和 `.run`。公开算子与 Inner 算子使用同一清单格式，均可按算子构建。例如只更新 `chunk_fwd_o` 时，即使源码还包含 GDN，也可以将下面两个变量都设为 `chunk_fwd_o`。
+
 以下以 A2 的 `chunk_fwd_o` 为例。将算子名换成实际更新对象；
 目标 SoC 可选 `ascend910b`（A2）、`ascend910_93`（A3）或 `ascend950`（A5），
 使用本机 Host 架构及对应的构建环境。
@@ -157,6 +159,8 @@ FLA_NPU_OVERLAY_OPS=chunk_fwd_o python scripts/build_wheel.py
 | 所有受影响入口的两阶段符号与签名匹配 | 成功，提交新组合 | 本次组合 |
 | 包内容不完整、缺少依赖、签名不匹配或文件校验失败 | 非零退出并显示原因 | 上次成功组合，首次安装失败时从 base 继续 |
 | 移除全部增量 | 清空选中组合 | base |
+
+含私有 ABI 的 wheel 也必须内嵌 OPP。安装器校验 wheel 的 `RECORD` 并确认有 OPP 后，在子进程中用候选 wheel 自带的 `_op_abi.py` 检查两阶段声明，再核对实际生效的 OPP。任一步失败均按上表处理。请只安装可信来源的 wheel。
 
 升级时沿用旧状态中的 `active`，忽略旧 `pending`。旧候选需要重新提交安装。
 
