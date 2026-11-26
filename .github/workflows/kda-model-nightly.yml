@@ -1,0 +1,65 @@
+name: KDA model nightly
+on:
+  schedule:
+    - cron: '30 22 * * *'  # 06:30 Asia/Shanghai
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Beijing wheel and sampling date (YYYY-MM-DD); default is the run date'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      day: ${{ steps.plan.outputs.day }}
+    steps:
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPLAY_DATE: ${{ inputs.date }}
+        run: |
+          set -eu
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          day=${REPLAY_DATE:-$(TZ=Asia/Shanghai date -d "$created" +%F)}
+          [[ "$day" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && $(date -d "$day" +%F) == "$day" ]]
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: a2
+            labels: '["self-hosted","linux","arm64","npu","flash-linear-attention-npu"]'
+            image: fla-npu-ci:9.1.0-910b
+          - platform: a5
+            labels: '["self-hosted","linux","npu","ascend950","flash-linear-attention-npu-a5"]'
+            image: fla-npu-ci:9.1.0-950
+    runs-on: ${{ fromJSON(matrix.labels) }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run all 39 cases on assigned device
+        env:
+          CI_IMAGE: ${{ matrix.image }}
+          CI_REQUIRE_PRELOADED_IMAGE: 'true'
+          CI_CACHE_ROOT: /home/huangjunzhe/ci/cache_root
+          CI_NPU_LOCK_DIR: /home/huangjunzhe/ci/tmp/npu-locks
+          CI_CONTAINER_NAME: kda-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          CI_CONTAINER_COMMAND: bash ci/kda_model/nightly.sh ${{ matrix.platform }} ${{ needs.plan.outputs.day }}
+        run: bash ci/run_ci_container.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kda-${{ matrix.platform }}
+          path: kda-${{ matrix.platform }}.json
+          if-no-files-found: warn
