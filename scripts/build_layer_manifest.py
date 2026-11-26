@@ -30,7 +30,7 @@ def literals(path):
     return result
 
 
-def requirements():
+def requirements(package: Path | None = None):
     abi = load_abi()
     headers = {k: list(v) for k, v in abi.KNOWN_CONTRACTS.items()}
     for directory in sorted({p.parent for p in (ROOT / "fla/ops/ascendc").rglob("aclnn_*.h")}):
@@ -38,6 +38,12 @@ def requirements():
             if symbol in headers and headers[symbol] != list(signature):
                 raise RuntimeError(f"Conflicting ACLNN headers for {symbol}")
             headers[symbol] = list(signature)
+    if package is not None:
+        for vendor in sorted((package / "opp/vendors").glob("*")):
+            if (vendor / abi.INNER_INCLUDE).is_dir():
+                for symbol, signature in abi.validated_contracts(vendor, require_manifest=True).items():
+                    if symbol.startswith("aclnnInner"):
+                        headers[symbol] = list(signature)
     spec = importlib.util.spec_from_file_location("_layer_calls", SOURCE / "tools/op_abi_validate.py")
     validator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(validator)
@@ -97,7 +103,7 @@ def requirements():
 def write_layer_manifest(package: Path):
     from fla_npu_artifacts import get_tier
 
-    ops = requirements()
+    ops = requirements(package)
     raw = os.environ.get("FLA_NPU_OVERLAY_OPS", "").strip()
     selected = sorted({n if n.startswith("npu_") else "npu_" + n
                        for value in raw.split(",") if (n := value.strip())}) if raw else sorted(ops)

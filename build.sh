@@ -712,16 +712,15 @@ function check_stable_aclnn_abi(){
         return $?
     fi
 
-    local opp_include
-    opp_include=$(find "${BUILD_DIR}" "${BUILD_OUT_DIR}" -type d \
-        -path '*/vendors/fla_npu_transformer/op_api/include/aclnnop' \
-        -print 2>/dev/null | sort | head -n 1)
-    if [[ -z "${opp_include}" ]]; then
-        log "[ERROR] Built OPP aclnn headers were not found for the Stable-ABI gate."
+    local op_api
+    op_api=$(find "${BUILD_DIR}/_CPack_Packages" -type d \
+        -path '*/vendors/fla_npu_transformer/op_api' -print 2>/dev/null | sort | head -n 1)
+    if [[ -z "${op_api}" ]]; then
+        log "[ERROR] Staged OPP op_api directory was not found for the Stable-ABI gate."
         return 1
     fi
 
-    local include_args=(--opp-include "${opp_include}")
+    local include_args=(--opp-include "${op_api}/include/aclnnop" "${op_api}/abi/inner")
     local cann_include
     while IFS= read -r cann_include; do
         include_args+=("${cann_include}")
