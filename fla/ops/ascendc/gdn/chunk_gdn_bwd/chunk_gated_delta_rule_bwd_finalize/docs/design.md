@@ -1417,6 +1417,19 @@ TilingKey 由 g/beta 存储类型、norm、sigmoid、exp2 和 `ENABLE_MHA_OWNER`
 BT/V 的四种几何在同一设备入口内选择。owner=true 仅用于主矩阵 BF16、K128、BT64、V128、HK=HV；
 其余规格使用 owner=false 模板。
 
+布局由 kernel 入口读取 `tilingData.layout` 后统一选择 BNSD/BSND 编译期实例，再传播到 DQ、WY
+及 QK 尾处理的私有模板。AIC/AIV 使用同一个选择，热循环中的地址、stride 和搬运分支由
+`if constexpr` 消除。该选择独立于原 32 个 TilingKey，不改变 tiling data ABI、任务映射、数值
+运算、workspace 公式和 ready/free 顺序；arch35 沿用现有路径。两种布局均按自身数据布局选择，
+所有支持的 shape 复用相同实例规则。
+
+BNSD 分支直接复用已有的行基地址：DQ 的 q/k 读地址与同任务 dq/dk 写地址一致，
+提前计算一次并复用，避免在 `QkOffset` 中再次计算固定长度 batch 商及 HK/HV 换算；
+WY 的 K/V 读与 dv 写使用任务已算出的 `keyBase_` / `valueBase_`，走原连续行拷贝。
+BSND 保留公开张量的跨 head 行步长和对应地址公式，两者用 `if constexpr (IS_BSND)` 选择。
+复用保持原有 64 位行基地址，不额外把 `task.*Bos + rowOffset_` 截断为 32 位；
+涉及的输入输出元素、有效行、拷贝字节数、ping-pong 索引及事件顺序保持一致。
+
 令 `N=totalChunkNum`、`R=HV/HK`、`C=blockDim=min(AIC 可用数,N)`、`S=B*HV*T`、`Q=B*HK*T*K`。
 定长 `N=B*ceil(T/BT)`，task 映射为 `b=task/chunkNumForT`、`ci=task%chunkNumForT`、
 `start=ci*BT`；变长 `B=1`、`N=len(chunk_indices)/2`，从 `(seq,localChunk)` 得到
@@ -1634,3 +1647,13 @@ subnormal、NaN/Inf 和 sigmoid 饱和端点单独验证，不由有限值精度
 实际测试入口、标准和结果见 [ATK README](../../../../../../../tests/atk/chunk_gated_delta_rule_bwd_finalize/README.md)。
 完整有效 chunk 的 FLOP 上界：DQ 为 `2*HV*(3*BT*K*V + BT^2*(V+3*K))`，
 WY 为 `2*HV*(5*BT^2*K + 2*BT^2*V + 2*BT^3)`；KKT 共享可减少重复项。
+
+### 6.6 私有 tiling 常量传播
+
+`A2FinalizeRun` 保持内联，在入口已确定的布局与 V/BT 几何实例中创建私有 tiling 副本，
+将 `layout`、`V`、`chunkSize` 赋为当前模板参数。Host 支持 BNSD/BSND、V128/256、BT64/128；
+owner 分支使用既有 V128/BT64。三个字段与该实例的合法输入值一致，其余字段原样复制。
+下游 workspace 选择、输出复用以及 DQ/WY helper 因此能够继续传播这些常量。
+
+该副本只用于当前内核实例，公开 tiling ABI、TilingKey、Host workspace 计算、同步事件及
+跨阶段生命周期均沿用现有合同。所有支持的 shape 使用相同实例规则，地址计算保持 64 位。

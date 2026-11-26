@@ -83,7 +83,7 @@ template <class BlockMmadPart1_, // dv @ h^T -> dw
           class BlockMmadPart5_, // v @ dh -> dk
           class BlockMmadPart6_, // ds @ k -> dq
           class BlockMmadPart7_, // ds^T @ q -> dk
-          bool WIDE_SCHEDULE = true>
+          bool WIDE_SCHEDULE = true, bool IS_BSND = false>
 class ChunkBwdDqkwgTla {
 public:
     using BlockMmadPart1 = BlockMmadPart1_;
@@ -247,7 +247,7 @@ public:
         }
 
         // Layout 创建
-        const uint64_t qkStride = (params.layout == GDN::FinalizeLayout::BSND) ? params.HK * params.K : params.K;
+        const uint64_t qkStride = IS_BSND ? params.HK * params.K : params.K;
         // gmV is vNew from FwdH and always remains head-major.
         auto layoutBTxK = LayoutRowMajor::MakeLayout<ElementA>(params.BT, qkStride);
         auto layoutKxBT = LayoutColMajor::MakeLayout<ElementA>(qkStride, params.BT);
@@ -269,6 +269,9 @@ public:
         // cube WaitCredit 总次数 == L (==4M); 与 vector 端预置 N + SetCredit L 对应, 末尾余 N 信用 (无害)。
         // 现按 chunk-group-major 组织: 外层按 G 个 chunk 一组, 组内 A->B->C->D 连着做 (组的输入在 L2 内复用)。
 
+        // P3: seq 元数据缓存（同序列相邻 loop 省 2 次 GM 标量读）。
+        DqkwgSeqCache dqSeqCache{0, 0, 0, false};
+
         // ========== A_cube: dw = dv @ h^T, 然后 mm5 = q @ k^T ==========
         for (ScheduleIndex taskIdx = coreIdx; taskIdx < taskCount; taskIdx += coreNum) {
             uint32_t loopIdx;
@@ -286,7 +289,7 @@ public:
             }
             const uint32_t workspaceHeadBase = workspaceHeads < params.HV ? hBegin : 0;
             GetChunkOffset(cuSeqlensTensor, chunkIndicesTensor, params.B, params.HV, params.T, params.BT,
-                            loopIdx, bos, eos, params.isVarLen);
+                            loopIdx, bos, eos, params.isVarLen, &dqSeqCache);
             uint32_t actual_chunk_len = eos - bos;
             uint32_t bIdx = loopIdx / scheduleNumChunks;
             uint32_t chunkIdx = loopIdx % scheduleNumChunks;
@@ -336,7 +339,7 @@ public:
                     }
                     // GVA: q/k 为 HK 头; hv_idx=h -> hk_idx=h/n_ratio, 并把 HV-based bos 修正为 HK-based
                     uint32_t hk_idx = h / scheduleRatio;
-                    uint64_t qkOffset = (params.layout == GDN::FinalizeLayout::BSND)
+                    uint64_t qkOffset = IS_BSND
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm3Offset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
@@ -409,7 +412,7 @@ public:
                     // GVA: k 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
-                    uint64_t kOffset = (params.layout == GDN::FinalizeLayout::BSND)
+                    uint64_t kOffset = IS_BSND
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm6Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT, params.K);
@@ -458,7 +461,7 @@ public:
                     // GVA: q 为 HK 头
                     uint32_t hk_idx = h / scheduleRatio;
                     uint64_t dsOffset = DqkwgBtbElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT);
-                    uint64_t qOffset = (params.layout == GDN::FinalizeLayout::BSND)
+                    uint64_t qOffset = IS_BSND
                         ? (batchToken * params.HK + hk_idx) * params.K
                         : (static_cast<uint64_t>(hk_idx) * params.T + bos_hk) * params.K;
                     uint64_t mm7Offset = DqkwgBtxKElemOffset(coreIdx, h - workspaceHeadBase, workspaceHeads, params.BT, params.K);
@@ -490,7 +493,7 @@ public:
 /**
  * Cube Process 类 (AIC 端入口)
  */
-template <typename DataType, typename GType>
+template <typename DataType, typename GType, bool IS_BSND = false>
 class ChunkBwdDqkwgCubeProcess {
 public:
     __aicore__ inline ChunkBwdDqkwgCubeProcess(GM_ADDR q, GM_ADDR k, GM_ADDR v, GM_ADDR h, GM_ADDR do_, GM_ADDR dh,
@@ -546,8 +549,8 @@ private:
     uint64_t wsDsTempOffset;
 };
 
-template <typename DataType, typename GType>
-__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const ChunkBwdDqkwgTilingData &tiling)
+template <typename DataType, typename GType, bool IS_BSND>
+__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, IS_BSND>::Init(const ChunkBwdDqkwgTilingData &tiling)
 {
     layout_ = tiling.layout;
     B = tiling.B;
@@ -570,9 +573,9 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Init(const Chu
     wsDsTempOffset = tiling.wsDsTempOffset;
 }
 
-template <typename DataType, typename GType>
+template <typename DataType, typename GType, bool IS_BSND>
 template <bool WIDE_SCHEDULE>
-__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
+__aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType, IS_BSND>::Process()
 {
     using namespace Catlass;
     using namespace Catlass::Gemm;
@@ -624,7 +627,7 @@ __aicore__ inline void ChunkBwdDqkwgCubeProcess<DataType, GType>::Process()
                                                           DataType, void, TileCopyPart7Tiled>;
     using MatmulKernelTiled =
         Kernel::ChunkBwdDqkwgTla<BlockMmadPart1Tiled, BlockMmadPart2Tiled, BlockMmadPart3Tiled, BlockMmadPart4Tiled,
-                                 BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled, WIDE_SCHEDULE>;
+                                 BlockMmadPart5Tiled, BlockMmadPart6Tiled, BlockMmadPart7Tiled, WIDE_SCHEDULE, IS_BSND>;
 
     MatmulKernelTiled kernel;
     typename MatmulKernelTiled::Params params(ptrQ, ptrK, ptrV, ptrH, ptrDo, ptrDh, ptrDv, ptrCuSeqLen,

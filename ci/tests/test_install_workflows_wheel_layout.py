@@ -17,7 +17,6 @@ import sys
 import tempfile
 import unittest
 import zipfile
-from functools import partial
 from pathlib import Path
 from unittest import mock
 
@@ -227,7 +226,7 @@ class ManagedRunWorkflowTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.checker = runpy.run_path(str(CHECKER))
-        self.base = package(self.root / "site/fla_npu")  # Real skeleton metadata.
+        self.base = package(self.root / "site/fla_npu", opp={"aclnnDemo": "int64", "aclnnOther": "int64"})
         (self.base / "__init__.py").write_text("")
         shutil.copyfile(SETUP / "fla_npu_wheel_overlay.py", self.base.parent / "fla_npu_wheel_overlay.py")
         source = package(self.root / "source", opp={"aclnnDemo": "int64"})
@@ -235,47 +234,40 @@ class ManagedRunWorkflowTest(unittest.TestCase):
         self.info = self.base.parent / DIST_INFO
         self.info.mkdir()
         self.record = self.info / "RECORD"
-        self.record.write_text("")  # Skeleton has no OPP payload yet.
+        self.record.touch()
+        finalizer = REPO_ROOT / "scripts/package/ops_transformer/scripts/finalize_wheel_opp.py"
+        runpy.run_path(str(finalizer))["_refresh_record"](self.base)
         self.env = os.environ.copy()
         self.env.update(PYTHONPATH=str(self.base.parent), PYTHONDONTWRITEBYTECODE="1",
                         FLA_NPU_DISABLE_PTH="1")  # The fixture supplies metadata, not a startup hook.
         self.env.pop("FLA_NPU_OVERLAY_VENDOR", None)
         self.env.pop("ASCEND_CUSTOM_OPP_PATH", None)
 
-    def test_active_skeleton_uses_layer_without_changing_base_record(self):
+    def test_run_overlays_embedded_opp_without_changing_base_record(self):
         before = self.checker["_base_snapshot"](self.base)
         self.layers.install(self.base, self.source_vendor)
         vendors = self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
-        self.assertEqual(len(vendors), 1)
+        self.assertEqual(len(vendors), 2)
+        self.assertEqual(vendors[-1], self.layers._vendor(self.base))
         self.checker["_assert_record_covers_opp"](self.base, managed=True)
         self.checker["_assert_base_unchanged"](self.base, before)
         with mock.patch.object(self.checker["subprocess"], "check_output", return_value=""):
             self.checker["_assert_opp_layout"](self.base, require_runtime=True, vendors=vendors)
-        with self.assertRaisesRegex(AssertionError, "missing packaged op_api"):
             self.checker["_assert_opp_layout"](self.base, require_runtime=True)
 
-    def test_pending_is_not_mistaken_for_successful_install(self):
+    def test_incompatible_install_preserves_selected_run(self):
         from tests.test_wheel_overlay import package
-        source = package(self.root / "incompatible", opp={"aclnnDemo": "bool"})
-        subprocess = self.checker["subprocess"]
-        # Run the real child process; capture stderr to verify why it failed.
-        capture_stderr = partial(subprocess.check_output, stderr=subprocess.PIPE)
+        bad = package(self.root / "bad", opp={"aclnnDemo": "bool"}) / "opp/vendors"
         for previous_active in (False, True):
             with self.subTest(previous_active=previous_active):
                 if previous_active:
-                    result = self.layers.install(self.base, self.source_vendor)
-                    self.assertEqual(result["state"], "active")
-                active_before = self.layers.state(self.base).get("active")
-                result = self.layers.install(self.base, source / "opp/vendors" / self.layers.BASE)
-                self.assertEqual(result["state"], "pending")
-                state = self.layers.state(self.base)
-                self.assertEqual(state["pending"], Path(result["path"]).name)
-                self.assertEqual(state.get("active"), active_before)
-                with mock.patch.object(subprocess, "check_output", wraps=capture_stderr):
-                    with self.assertRaises(subprocess.CalledProcessError) as error:
-                        self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
-                self.assertIn("Run installation must activate, not just return success",
-                              error.exception.stderr)
+                    self.layers.install(self.base, self.source_vendor)
+                before = self.layers.state(self.base)
+                with self.assertRaisesRegex(RuntimeError, "base/npu_a"):
+                    self.layers.install(self.base, bad)
+                self.assertEqual(self.layers.state(self.base), before)
+                if previous_active:
+                    self.checker["_active_run_vendors"](Path(sys.executable), self.env, self.root)
 
     def test_repeat_compares_payload_not_snapshot_identity(self):
         first = self.layers.install(self.base, self.source_vendor)
@@ -302,12 +294,12 @@ class ManagedRunWorkflowTest(unittest.TestCase):
 
     def test_record_cannot_absorb_manager_payload(self):
         self.layers.install(self.base, self.source_vendor)
-        self.record.write_text("fla_npu/opp/.overlay.lock,,\n")
+        self.record.write_text(self.record.read_text() + "fla_npu/opp/.overlay.lock,,\n")
         with self.assertRaisesRegex(AssertionError, "must not be added"):
             self.checker["_assert_record_covers_opp"](self.base, managed=True)
 
     def test_record_still_rejects_deleted_base_payload(self):
-        self.record.write_text("fla_npu/opp/missing.bin,sha256=x,1\n")
+        self.record.write_text(self.record.read_text() + "fla_npu/opp/missing.bin,sha256=x,1\n")
         with self.assertRaisesRegex(AssertionError, "references missing"):
             self.checker["_assert_record_covers_opp"](self.base, managed=True)
 
@@ -353,26 +345,25 @@ build_torch_custom() { echo WHEEL_BUILD_REACHED; }
         self.assertIn("WHEEL_BUILD_REACHED", result.stdout)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell required")
-    def test_ci_configuration_accepts_skeleton_and_preserves_full_base_fallback(self):
-        from tests.test_wheel_overlay import vendor
-        for full in (False, True):
-            with self.subTest(full=full):
-                if full:
-                    vendor(self.base, {"aclnnDemo": "int64", "aclnnOther": "int64"})
-                self.layers.install(self.base, self.source_vendor)
-                result = self.build_adapter_ci()
-                self.assertEqual(result.returncode, 0, result.stderr)
-                values = json.loads(result.stdout.splitlines()[-1])
-                vendors = self.layers.runtime_plan(self.base)["vendors"]
-                # The full-base iteration installs a second OPP and retains the first.
-                self.assertEqual(len(vendors), 3 if full else 1)
-                self.assertEqual(values["ASCEND_CUSTOM_OPP_PATH"], os.pathsep.join(vendors))
-                self.assertEqual(values["FLA_NPU_OP_API_LIBS"], os.pathsep.join(
-                    str(Path(p) / self.layers.LIBRARY) for p in vendors))
+    def test_ci_configuration_requires_embedded_opp_even_with_active_run(self):
+        self.layers.install(self.base, self.source_vendor)
+        result = self.build_adapter_ci()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        values = json.loads(result.stdout.splitlines()[-1])
+        vendors = self.layers.runtime_plan(self.base)["vendors"]
+        self.assertEqual(len(vendors), 2)
+        self.assertEqual(values["ASCEND_CUSTOM_OPP_PATH"], os.pathsep.join(vendors))
+        self.assertEqual(values["FLA_NPU_OP_API_LIBS"], os.pathsep.join(
+            str(Path(p) / self.layers.LIBRARY) for p in vendors))
+
+        (self.layers._vendor(self.base) / self.layers.LIBRARY).unlink()
+        result = self.build_adapter_ci()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("base wheel with embedded OPP", result.stderr)
+        self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell required")
-    def test_ci_configuration_rejects_pending_or_disabled_update(self):
-        from tests.test_wheel_overlay import package
+    def test_ci_configuration_rejects_disabled_update(self):
         self.layers.install(self.base, self.source_vendor)
         # A valid CANN vendor must not mask an installed wheel's readiness error.
         self.env["ASCEND_OPP_PATH"] = str(self.source_vendor.parents[1])
@@ -380,14 +371,6 @@ build_torch_custom() { echo WHEEL_BUILD_REACHED; }
         result = self.build_adapter_ci()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Selected OPP is missing or disabled", result.stderr)
-        self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
-        self.env.pop("FLA_NPU_OVERLAY_VENDOR")
-        bad = package(self.root / "bad", opp={"aclnnDemo": "bool"})
-        self.layers.install(self.base, bad / "opp/vendors" / self.layers.BASE)
-        result = self.build_adapter_ci()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Requested OPP is pending; CI must not test an older active/base version",
-                      result.stderr)
         self.assertNotIn("WHEEL_BUILD_REACHED", result.stdout)
 
 

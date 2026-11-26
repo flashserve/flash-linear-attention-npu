@@ -513,11 +513,19 @@ validate_build_options()
 
 
 class FlaNpuBuildPy(_build_py):
+    user_options = _build_py.user_options + [
+        ("opp-run=", None, "embed an already built .run package"),
+    ]
+
+    def initialize_options(self):
+        super().initialize_options()
+        self.opp_run = None
+
     def run(self):
         global _EXTERNAL_BUILD_DONE, _RUN_PACKAGE
         if not _EXTERNAL_BUILD_DONE:
             _check_build_environment()
-            _RUN_PACKAGE = _build_run_package()
+            _RUN_PACKAGE = Path(self.opp_run).resolve() if self.opp_run else _build_run_package()
             _build_stable_inplace()
             _EXTERNAL_BUILD_DONE = True
 

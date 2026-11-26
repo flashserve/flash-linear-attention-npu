@@ -83,7 +83,8 @@ namespace Catlass::Gemm::Kernel {
 template<
     typename INPUT_TYPE,
     typename G_TYPE,
-    typename WORKSPACE_TYPE
+    typename WORKSPACE_TYPE,
+    bool OutputTokenFirst = false
 >
 class GDNFwdOKernel {
 public:
@@ -566,6 +567,7 @@ public:
             uint32_t coreNum = AscendC::GetBlockNum();
             uint32_t subBlockIdx = AscendC::GetSubBlockIdx();
             uint32_t subBlockNum = AscendC::GetSubBlockNum();
+            const uint32_t outputStride = OutputTokenFirst ? vNumHead * vHeadDim : vHeadDim;
 
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[0]);
             Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[1]);
@@ -613,14 +615,22 @@ public:
                     Arch::CrossCoreWaitFlag(vecBlockScheduler.cube3Done[streamId]);
                     GDNFwdOOffsets& vec2Offsets = vecBlockScheduler.GetVec2Offsets();
                     int64_t vec2OffsetO = vec2Offsets.ovOffset;
+                    if constexpr (OutputTokenFirst) {
+                        // gOffset is the BHT row of this chunk, including the packed-sequence start.
+                        const int64_t batch = vec2Offsets.batchIdx;
+                        const int64_t head = vec2Offsets.headIdx;
+                        const int64_t token = vec2Offsets.gOffset - (batch * vNumHead + head) * seqlen;
+                        vec2OffsetO = ((batch * seqlen + token) * vNumHead + head) * vHeadDim +
+                                      vec2Offsets.vBlockOffset;
+                    }
                     int64_t vec2OffsetG = vec2Offsets.gOffset;
                     int64_t vec2OffsetVWork = vec2Offsets.hvWorkOffset;
                     int64_t vec2OffsetHWork = vec2Offsets.hvWorkOffset;
                     EpilogueGDNFwdOOutput epilogueGDNFwdOOutput(resource);
-                    epilogueGDNFwdOOutput(
+                    epilogueGDNFwdOOutput.template operator()<OutputTokenFirst>(
                         gmO[vec2OffsetO],
                         gmG[vec2OffsetG], gmVWorkspace[vec2OffsetVWork], gmHWorkspace[vec2OffsetHWork],
-                        scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, vHeadDim, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
+                        scale, vec2Offsets.blockTokens, kHeadDim, vec2Offsets.vBlockDim, outputStride, pingpongFlag, vec2Offsets.batchIdx, vec2Offsets.headIdx, vec2Offsets.chunkIdx
                     );
                     Arch::CrossCoreSetFlag<0x2, PIPE_MTE3>(vecBlockScheduler.vec2Done[streamId]);
                 }

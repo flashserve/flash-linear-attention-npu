@@ -208,7 +208,7 @@ experimental 不另建一套 overlay 协议、管理器、优先级、状态文�
 通用管理器增加 `configure_layout(...)` 路径配置，默认正式行为不变。实验 wheel 打包同一份
 `fla_npu_wheel_overlay.py`，由实验目录内的 `_layers.py` 配置包名、vendor、launcher 和 stamp 路径。
 `fla_npu_experimental_manage` 只负责参数转发，不导入算子包或 NPU，也不另建安装状态机。
-制品提供主干协议 1 的 layer 元数据和 ABI 清单，安装、pending/active、移除与恢复均调用通用管理器。
+制品提供主干协议 1 的 layer 元数据和 ABI 清单，安装校验、原子切换、移除与恢复均调用通用管理器。
 
 运行前 source 实验 base 的 `set_env.bash`，按通用选择设置 OPP 顺序。首次导入读取一次选择，
 首次装载校验 ABI、launcher 指纹及 ACLNN 符号来源，并将 OPP 库路径显式传给公共 runtime。
@@ -288,7 +288,7 @@ SoC 使用 `--soc`；若同时透传 `-c/--compute-unit`，必须与 `--soc` 的
 
 | 安装命令 | 安装目标 | OPP 更新行为 |
 | --- | --- | --- |
-| `python -m fla_npu_experimental_manage --source /absolute/update.whl` | 当前实验 base 的增量组件目录 | 不因 wheel 版本相同跳过；按通用兼容性检查激活或进入 pending，base 文件不变 |
+| `python -m fla_npu_experimental_manage --source /absolute/update.whl` | 当前实验 base 的增量组件目录 | 不因 wheel 版本相同跳过；通过兼容性检查后激活，失败返回非零，base 文件不变 |
 | `python -m pip install --no-deps /absolute/update.whl` | 当前 Python 环境的实验 base wheel | OPP 内容变化产生不同版本，安装新 base 及其 OPP；完全同内容、同版本可跳过 |
 | `python -m pip install --force-reinstall --no-deps /absolute/update.whl` | 当前 Python 环境的实验 base wheel | 强制重新安装指定制品，包括其中的 OPP |
 

@@ -21,6 +21,7 @@ QUIET="y"
 INSTALL_FOR_ALL="n"
 WHEEL_INSTALL="y"
 MODE_SET="n"
+run_archive=""
 
 
 while true
@@ -53,6 +54,11 @@ do
     ;;
     --install-for-all)
         INSTALL_FOR_ALL="y"
+        shift
+    ;;
+    --*.run)
+        # makeself passes the invoked archive as --<archive> before user options.
+        run_archive="${1#--}"
         shift
     ;;
     --*)
@@ -123,10 +129,10 @@ install_wheel_opp_package() {
     local status
     python_bin=$(get_python_bin)
     log "[INFO] Install this run package incrementally; preserve the base wheel and its other operators."
-    "${python_bin}" -m fla_npu_opp_manage --overlay --source "${src_vendor}"
+    _FLA_NPU_RUN_ARCHIVE="${run_archive}" "${python_bin}" -m fla_npu_opp_manage --overlay --source "${src_vendor}"
     status=$?
     if [ "${status}" -ne 0 ]; then
-        log "[ERROR] Incremental installation failed. A wheel with fla_npu_opp_manage is required; the base was not overwritten."
+        log "[ERROR] Incremental installation failed for ${run_archive:-${src_vendor}}; the base was not overwritten."
         exit "${status}"
     fi
     log "[INFO] Installation completed; see the reported activation state. Restart Python processes before use."

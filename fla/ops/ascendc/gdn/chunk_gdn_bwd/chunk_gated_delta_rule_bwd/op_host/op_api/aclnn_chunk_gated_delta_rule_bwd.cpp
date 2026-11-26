@@ -545,16 +545,9 @@ aclnnStatus CheckParams(const Params &params, ShapeInfo &info)
             "K and V must both be 128");
         return ACLNN_ERR_PARAM_INVALID;
     }
-    const bool isAscend950 = IsAscend950();
-    if (info.hv % info.hk != 0 || info.hv / info.hk > (isAscend950 ? kA5PublishedMaxG : 4)) {
-        if (isAscend950) {
-            const std::string actual = "HK=" + std::to_string(info.hk) + ", HV=" + std::to_string(info.hv);
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual, "integer in [1, 16] on A5");
-        } else {
-            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                OP_NAME, "HK,HV", std::to_string(info.hk) + "," + std::to_string(info.hv),
-                "HV/HK must be an integer in [1, 4]");
-        }
+    if (info.hv % info.hk != 0 || info.hv / info.hk > kA5PublishedMaxG) {
+        const std::string actual = "HK=" + std::to_string(info.hk) + ", HV=" + std::to_string(info.hv);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual, "integer in [1, 16]");
         return ACLNN_ERR_PARAM_INVALID;
     }
     {

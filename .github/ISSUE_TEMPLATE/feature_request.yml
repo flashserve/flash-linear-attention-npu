@@ -4,6 +4,31 @@ title: "[Feature]: "
 labels:
   - enhancement
 body:
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: 问题类型
+      options:
+        - enhancement
+      description: 功能或改进需求，提交后自动添加 enhancement 标签。
+    validations:
+      required: true
+  - type: dropdown
+    id: target_branches
+    attributes:
+      label: 目标分支
+      description: 选择希望实现需求的目标分支，至少一项，可多选。提交后自动添加同名标签。
+      multiple: true
+      options:
+        - main
+        - v26.11.0
+        - v26.10.0
+        - v26.9.1
+        - v26.9.0
+        - v26.6.0
+        - v26.1.0
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |

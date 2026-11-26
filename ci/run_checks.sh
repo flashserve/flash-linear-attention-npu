@@ -152,18 +152,19 @@ write_docs_only_reports() {
             --reason "documentation-only change; compilation and tests are not required"
     done
     python3 ci/manage_npu_ci_stage_report.py --output "$stage_report_file" finalize
-    ACCURACY_REPORT_FILE="$accuracy_report_file" python3 - <<'PY'
+    ACCURACY_REPORT_FILE="$accuracy_report_file" STAGE_REPORT_FILE="$stage_report_file" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 path = Path(os.environ["ACCURACY_REPORT_FILE"])
+stage_report = json.loads(Path(os.environ["STAGE_REPORT_FILE"]).read_text(encoding="utf-8"))
 payload = {
     "schema": "gdr-accuracy-report-v1",
     "complete": True,
     "status": "skipped",
     "classification": "docs-only",
-    "metadata": {},
+    "metadata": stage_report["metadata"],
     "summary": {
         "total": 0,
         "passed": 0,
@@ -445,7 +446,7 @@ build_torch_custom() {
         return
     fi
     cleanup_installed_fla_npu_python_packages
-    (cd torch_custom/fla_npu && bash build.sh)
+    (cd torch_custom/fla_npu && FLA_NPU_SOC="$ci_soc" bash build.sh)
     torch_custom_built=true
 }
 
@@ -474,11 +475,12 @@ check_standalone_torch_custom_wheel_layout() {
     local target_dir="$check_dir/site"
     local run_file
 
-    echo "[CI] Checking standalone torch_custom wheel plus run package OPP layout"
+    echo "[CI] Checking that an adapter-only base rejects incremental installation"
     rm -rf "$check_dir"
     mkdir -p "$dist_dir" "$target_dir"
 
-    (cd torch_custom/fla_npu && python3 setup.py bdist_wheel --dist-dir "$dist_dir")
+    (cd torch_custom/fla_npu && FLA_NPU_SOC="$ci_soc" python3 setup.py build --build-base "$check_dir/build" \
+        bdist_wheel --dist-dir "$dist_dir")
 
     shopt -s nullglob
     local wheels=("$dist_dir"/flash_linear_attention_npu*.whl)
@@ -504,6 +506,8 @@ required = [
 missing = [str(path.relative_to(package_dir)) for path in required if not path.exists()]
 if missing:
     raise SystemExit("[CI][ERROR] Standalone fla_npu wheel is missing OPP skeleton files: " + ", ".join(missing))
+if (package_dir / "opp/vendors/fla_npu_transformer/op_api/lib/libcust_opapi.so").exists():
+    raise SystemExit("[CI][ERROR] Negative test requires a base wheel without embedded OPP")
 print("[CI] Standalone torch_custom wheel OPP skeleton check passed.")
 PY
 
@@ -513,6 +517,14 @@ PY
         --base-mode skeleton \
         --run-package "$run_file" \
         --work-cwd "$repo_dir"
+
+    # The full build produces the OPP-backed wheel in stage 2.
+    if [[ "$change_scope" == "full" ]]; then
+        local full_wheel
+        full_wheel="$(FLA_NPU_SOC="$ci_soc" python3 scripts/fla_npu_artifacts.py wheel-filename)"
+        python3 scripts/check_install_workflows.py --wheel "$repo_dir/dist/$full_wheel" \
+            --run-package "$run_file" --work-cwd "$repo_dir"
+    fi
 }
 
 find_single_run_package() {
@@ -624,8 +636,6 @@ print(Path(spec.origin).resolve().parent)
 PY
 )"
     vendor_dir="${package_dir}/opp/vendors/fla_npu_transformer"
-    # A standalone wheel can have an empty base vendor and an active OPP layer.
-    # Do not test an older active/base composition when the requested run is pending.
     layer_environment="$(python3 - "$package_dir" <<'PY'
 import importlib.util
 import os
@@ -636,8 +646,9 @@ import sys
 package = Path(sys.argv[1]).resolve()
 if importlib.util.find_spec("fla_npu_wheel_overlay") is not None:
     import fla_npu_wheel_overlay as layers
-    if layers.state(package).get("pending"):
-        raise SystemExit("[CI][ERROR] Requested OPP is pending; CI must not test an older active/base version")
+    base = package / "opp/vendors" / layers.BASE / layers.LIBRARY
+    if not base.is_file():
+        raise SystemExit(f"[CI][ERROR] Expected a base wheel with embedded OPP. Missing {base}")
     vendors = layers.environment_vendors(package)
     if vendors is not None:
         if not vendors or not layers.enabled():
@@ -647,9 +658,7 @@ if importlib.util.find_spec("fla_npu_wheel_overlay") is not None:
             if not (vendor / layers.LIBRARY).is_file():
                 raise SystemExit(f"[CI][ERROR] Missing selected OPP library: {vendor}")
         print(layers.shell_environment(package))
-        base = package / "opp/vendors" / layers.BASE / layers.LIBRARY
-        single = base if base.is_file() else vendors[0] / layers.LIBRARY
-        print("export FLA_NPU_OP_API_LIB=" + shlex.quote(str(single)))
+        print("export FLA_NPU_OP_API_LIB=" + shlex.quote(str(base)))
         library_path = os.pathsep.join([str(v / "op_api/lib") for v in vendors]
                                       + [os.environ.get("LD_LIBRARY_PATH", "")])
         print("export LD_LIBRARY_PATH=" + shlex.quote(library_path))
