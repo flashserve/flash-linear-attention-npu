@@ -17,7 +17,7 @@ python3 tests/atk/smoke/run.py matrix --git-range BASE MERGED_HEAD
 python3 tests/atk/smoke/run.py affected --platform A5 --git-range BASE MERGED_HEAD
 ```
 
-`matrix` 省略 `--git-range` 会输出全量清单。新增守护算子时，在 `source_roots.json` 登记独立源码目录，在 `suites.json` 登记用例组和平台。修改清单后运行 `python3 tests/atk/smoke/run.py validate`。
+`matrix` 省略 `--git-range` 会输出全量清单。新增守护算子时，在 `source_roots.json` 登记独立源码目录，在 `suites.json` 登记算子和平台。修改用例后运行 `python3 tests/atk/smoke/run.py validate`。
 
 ## Runner 依赖和结果
 
@@ -29,7 +29,9 @@ A2、A5 的 CI 镜像统一使用 ATK `26.11.11`。镜像构建时按 CPython AB
 
 容器需要已启用 CANN、已安装待测 FLA wheel、torch、torch_npu，以及支持 `cv_fused_double_benchmark` 的 ATK。当前 CI 使用 CANN 9.2.1 和 ATK 26.11.11。A2 的 XLSX 报告读取需要 openpyxl。
 
-每个算子的 CPU 标杆放在 `cases/<算子>/executor_*.py`，A2、A5 共用。每个来源组在 `suites.json` 的 `reference` 字段指定实际文件。公共模块位于 `cases/common/`，算子专用的参考函数和输入生成器随算子存放。运行时直接使用仓内文件。
+每个算子在每个已登记的平台只有一份用例文件，路径为 `cases/<算子>/<A2或A5>/cases.json`。其中每个组的 `cases` 保存 ATK 用例，`count` 是组内条数，`reference` 指定该组使用的 CPU 标杆。不同组可以复用同一个用例编号。例如 [chunk_fwd_o 的 A5 用例](cases/chunk_fwd_o/A5/cases.json)中，普通组和 `mode=opt` 组各有一条 90 号，CI 按各自配置执行并分别记录结果。
+
+每个算子的 CPU 标杆放在 `cases/<算子>/executor_*.py`，A2、A5 共用。公共模块位于 `cases/common/`，算子专用的参考函数和输入生成器随算子存放。运行时直接使用仓内文件。
 
 标杆取自 [work_tool 的固定提交 72d3720](https://gitcode.com/chen-linxin4/work_tool/tree/72d372032214b8866cd6073431b0d478e7744ba5/FLA_ATK)。以下目录映射便于与上游核对。
 

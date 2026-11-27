@@ -50,8 +50,6 @@ class SmokeCacheTest(unittest.TestCase):
         suite = dict(platform="A2", op="probe", group="probe", count=3)
         standard = {"acc": {atk.STANDARD: {}}}
         cases = [dict(id=i, name=f"case-{i}", default_seed=seed, standard=standard) for i, seed in enumerate([1, 2, None])]
-        config = self.root / "suite.json"
-        config.write_text(json.dumps(cases))
         runs = []
 
         def execute(command, **kwargs):
@@ -69,15 +67,33 @@ class SmokeCacheTest(unittest.TestCase):
             (report / "native.json").write_text(json.dumps(rows))
             return subprocess.CompletedProcess(command, 0)
 
-        with patch.object(atk, "cases_for", return_value=cases), patch.object(atk, "case_path", return_value=config), \
-                patch.object(atk.subprocess, "run", side_effect=execute):
+        with patch.object(atk.subprocess, "run", side_effect=execute):
             for attempt in (1, 2):
                 folder = self.root / str(attempt)
                 folder.mkdir()
                 if attempt == 2:
                     cases[1]["default_seed"] = 99
-                atk.run_suite(suite, folder, 0)
+                atk.run_suite(suite, cases, folder, 0)
         self.assertEqual(runs, [[0, 1, 2], [1, 2]])
         reused = json.loads((self.root / "2/probe/cache/report/reused.json").read_bytes())
         self.assertEqual([r["id"] for r in reused], [0])
         self.assertTrue(reused[0]["evidence"]["row"]["cpu_cpu_golden_精度通过"])
+
+    def test_same_case_in_one_platform_file_runs_in_both_modes(self):
+        selected = {"pr51-common-A5-0", "pr51-opt-A5-0"}
+        observed = {}
+        with patch.object(atk.subprocess, "run") as run, patch.object(atk, "check_report"):
+            for suite, cases in atk.groups_for({"op": "chunk_fwd_o", "platform": "A5"}):
+                name = suite["group"]
+                if name in selected:
+                    case = next(c for c in cases if c["id"] == 90)
+                    atk.run_suite(suite, [case], self.root, 0)
+                    command = run.call_args.args[0]
+                    env = run.call_args.kwargs["env"]
+                    self.assertEqual(json.loads(Path(command[command.index("-c") + 1]).read_bytes()), [case])
+                    self.assertEqual(json.loads(env["FLA_ATK_SUITE"]), suite)
+                    observed[name] = case, env.get("CHUNK_FWD_O_A5_OPT")
+        self.assertEqual(set(observed), selected)
+        common, opt = observed["pr51-common-A5-0"], observed["pr51-opt-A5-0"]
+        self.assertEqual(common[0], opt[0])
+        self.assertEqual((common[1], opt[1]), (None, "1"))

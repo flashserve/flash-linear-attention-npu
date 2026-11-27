@@ -43,11 +43,10 @@ def affected_ops(roots, base, head, repo):
 
 
 def case_path(suite):
-    return ROOT / "cases" / suite["op"] / suite["platform"] / (suite["group"] + ".json")
+    return ROOT / "cases" / suite["op"] / suite["platform"] / "cases.json"
 
 
-def cases_for(suite):
-    cases = read(case_path(suite))
+def validate_cases(suite, cases):
     identities = {(case["id"], case["name"]) for case in cases}
     if not cases or len(identities) != len(cases) or len(cases) != suite["count"]:
         raise ValueError(
@@ -61,7 +60,31 @@ def cases_for(suite):
             raise ValueError(
                 f"Unexpected executor or standard in {suite['group']}/{case['id']}"
             )
-    return cases
+
+
+def groups_for(entry):
+    path = case_path(entry)
+    groups = read(path)
+    if not isinstance(groups, list) or not groups:
+        raise ValueError(f"Expected a nonempty list of ATK groups in {path}")
+    seen = set()
+    for group in groups:
+        cases = group.pop("cases")
+        name = group["group"]
+        if not name or Path(name).name != name or name == ".." or name in seen:
+            raise ValueError(f"Invalid or duplicate ATK group {name!r} in {path}")
+        seen.add(name)
+        reference = group["reference"]
+        if (
+            Path(reference).name != reference
+            or not reference.startswith("executor_")
+            or not reference.endswith(".py")
+            or not (path.parent.parent / reference).is_file()
+        ):
+            raise ValueError(f"Invalid or missing reference {reference!r} for {name}")
+        suite = {**group, **entry}
+        validate_cases(suite, cases)
+        yield suite, cases
 
 
 def verify_upstream_checkout(path):
@@ -180,8 +203,7 @@ def check_report(folder, cases, store=None):
         )
 
 
-def run_suite(suite, output, device):
-    cases = cases_for(suite)
+def run_suite(suite, cases, output, device):
     folder = output / suite["group"]
     folder.mkdir()
     cache = ResultCache()
@@ -214,10 +236,9 @@ def run_suite(suite, output, device):
     print(f"[smoke-cache] ATK {suite['group']}: {len(reused)} reused, {len(pending)} to run", flush=True)
     if not pending:
         return
-    config = case_path(suite)
-    if reused:
-        config = folder / "pending.json"
-        config.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf8")
+    # ATK consumes a flat list and one execution configuration per invocation.
+    config = folder / "pending.json"
+    config.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf8")
     env = os.environ.copy()
     for flag in (
         "KDA_ATK_KERNEL_SEMANTICS",
@@ -312,21 +333,11 @@ def main():
     run.add_argument("--group", help="Run a single suite for local reproduction")
     args = parser.parse_args()
     suites = read(ROOT / "suites.json")
-    for suite in suites:
-        name = suite["reference"]
-        if (
-            Path(name).name != name
-            or not name.startswith("executor_")
-            or not name.endswith(".py")
-        ):
-            raise ValueError(f"Invalid reference filename for {suite['group']}: {name}")
-        if not (ROOT / "cases" / suite["op"] / name).is_file():
-            raise ValueError(f"Missing bundled reference for {suite['group']}: {name}")
     indexed = {case_path(s) for s in suites}
     if len(indexed) != len(suites) or indexed != set(
         (ROOT / "cases").glob("*/*/*.json")
     ):
-        raise ValueError("Case files and suites.json must match one-to-one")
+        raise ValueError("Expected one cases.json per operator and platform in suites.json")
     if args.action in ("matrix", "affected"):
         roots = source_roots(suites)
         ops = affected_ops(roots, *args.git_range, ROOT.parents[2]) if args.git_range else roots
@@ -348,14 +359,15 @@ def main():
         )
     elif args.action == "validate":
         source_roots(suites)
-        print(f"{sum(len(cases_for(s)) for s in suites)} cases in {len(suites)} suites")
+        counts = [len(cases) for entry in suites for _, cases in groups_for(entry)]
+        print(f"{sum(counts)} cases in {len(counts)} groups across {len(suites)} platform files")
     else:
         selected = [
-            s
-            for s in suites
-            if s["platform"] == args.platform
-            and s["op"] == args.op
-            and (not args.group or args.group == s["group"])
+            (suite, cases)
+            for entry in suites
+            if entry["platform"] == args.platform and entry["op"] == args.op
+            for suite, cases in groups_for(entry)
+            if not args.group or args.group == suite["group"]
         ]
         if not selected:
             parser.error("No passing cases are registered for this selection")
@@ -367,8 +379,8 @@ def main():
                 prefix=f"{args.op}-{args.platform}-", dir=args.output.resolve()
             )
         )
-        for suite in selected:
-            run_suite(suite, output, args.device)
+        for suite, cases in selected:
+            run_suite(suite, cases, output, args.device)
 
 
 if __name__ == "__main__":
