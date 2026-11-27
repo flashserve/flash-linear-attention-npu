@@ -16,6 +16,7 @@
 #include "causal_conv1d_tiling_utils.h"
 #include "causal_conv1d_tiling_planner.h"
 #include "causal_conv1d_tiling_validation.h"
+#include "platform/platform_ascendc.h"
 #include <string>
 
 namespace optiling {
@@ -78,6 +79,16 @@ static ge::graphStatus CausalConv1dTilingFunc(gert::TilingContext *context)
         fnExecutionPlan = fnHostPlan.executionPlan;
     } else {
         baseDimChoice = ChooseCanonicalUpdateBaseDimChoice(context, tiling->batch, tiling->dim, coreNum);
+        // One four-token spec request with 5120 channels. CCT uses 20 equal 256-channel tasks.
+        if (coreNum >= 20 && batch == 1 && dim == 5120 && tiling->inputMode == 0 && tiling->cuSeqlen == 4 &&
+            tiling->width == 4 && tiling->hasNumAcceptedTokens != 0 &&
+            context->GetInputDesc(X_INDEX)->GetDataType() == ge::DT_BF16 &&
+            platform_ascendc::PlatformAscendC(context->GetPlatformInfo()).GetCurNpuArch() == NpuArch::DAV_3510) {
+            constexpr int64_t kSpecT4ChannelTile = 256;
+            constexpr int64_t kSpecT4ChannelTasks = 5120 / kSpecT4ChannelTile;
+            baseDimChoice = {kSpecT4ChannelTile, kSpecT4ChannelTasks, kSpecT4ChannelTasks};
+            OP_LOGD(context, "CCT reference T4 tiling: channel tile 256, 20 tasks.");
+        }
     }
 
     if (baseDimChoice.baseDim <= 0 || baseDimChoice.baseDimCnt <= 0 || baseDimChoice.gridSize <= 0) {
