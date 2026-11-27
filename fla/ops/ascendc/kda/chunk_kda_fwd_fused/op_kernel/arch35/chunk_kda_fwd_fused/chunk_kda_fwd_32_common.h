@@ -18,6 +18,7 @@ struct KdaFd32TilingData {
     uint64_t hvNumReal;
     uint64_t blockNum;
     uint64_t varlenMode;
+    uint64_t outTokenMajor;
     uint64_t epsilonBits;
     uint64_t gateFlags;
     uint64_t cuData[1025];
