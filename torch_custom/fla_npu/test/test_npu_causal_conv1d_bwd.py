@@ -231,6 +231,49 @@ class TestCausalConv1dBwd(unittest.TestCase):
                 actual_tensor, expected_tensor, rtol=rtol, atol=atol
             )
 
+    @unittest.skipUnless(torch.npu.get_device_name().startswith("Ascend950"), "requires Ascend 950")
+    def test_bf16_silu_grad_matches_split(self):
+        generator = torch.Generator().manual_seed(3)
+        x = torch.randn(9, 256, generator=generator).bfloat16()
+        weight = torch.randn(256, 4, generator=generator).bfloat16().T.contiguous()
+        dy = torch.randn(9, 256, generator=generator).bfloat16().npu()
+        offsets = [0, 2, 5, 9]
+        initial_state = torch.randn(3, 4, 256, generator=generator).bfloat16()
+        y = varlen_preactivation_ref(x, weight, initial_state, offsets).bfloat16().npu()
+        operator = ascendc_ops.causal_conv1d_bwd
+        opt_in = operator.SILU_BF16_GRAD
+        kw = dict(
+            x=x.npu(), weight=weight.npu(), initial_state=initial_state.npu(),
+            query_start_loc=offsets, input_layout="TND",
+        )
+        split = operator(y=None, dy=torch.ops.aten.silu_backward(dy, y), activation=0, **kw)
+        rounded = operator(y=y, dy=dy, activation=opt_in, **kw)
+        self.assertEqual(ascendc_ops.causal_conv1d_bwd.SILU_BF16_GRAD, opt_in)
+        self.assertOutputsClose(rounded, split, rtol=2e-2, atol=2e-3)
+        legacy = operator(y=y, dy=dy, activation=1, **kw)
+        swish = operator(y=y, dy=dy, activation=2, **kw)
+        self.assertOutputsClose(legacy, swish, rtol=0, atol=0)
+        self.assertFalse(torch.equal(legacy[0].cpu(), rounded[0].cpu()))
+
+    @unittest.skipUnless(torch.npu.get_device_name().startswith("Ascend950"), "requires Ascend 950")
+    def test_bf16_silu_grad_negative_tail(self):
+        # Squaring exp(-y) overflows in FP32 at y=-50 while the BF16 gradient is representable.
+        y = torch.full((4, 64), -50.0, dtype=torch.bfloat16, device="npu")
+        dy = torch.ones_like(y)
+        expected = torch.ops.aten.silu_backward(dy, y)
+        operator = ascendc_ops.causal_conv1d_bwd
+        dx = operator(x=dy, y=y, weight=dy[:1], dy=dy, activation=operator.SILU_BF16_GRAD,
+                      query_start_loc=[0, 4], input_layout="TND")[0]
+        self.assertTrue(bool(expected[0, 0].cpu().abs() > 0))
+        self.assertTensorClose(dx, expected, rtol=0, atol=0)
+
+    def test_silu_bf16_grad_rejects_float32(self):
+        x = torch.ones((4, 64), device="npu", dtype=torch.float32)
+        operator = ascendc_ops.causal_conv1d_bwd
+        with self.assertRaises(RuntimeError):
+            operator(x=x, y=x, weight=x[:1], dy=x, activation=operator.SILU_BF16_GRAD,
+                     query_start_loc=[0, 4], input_layout="TND")
+
     def test_fixed_bsh_all_activations_matches_cpu_golden(self):
         batch, seqlen, dim, width = 2, 17, 80, 4
         for dtype in (torch.float16, torch.bfloat16, torch.float32):

@@ -58,6 +58,7 @@ constexpr uint32_t BLOCK_ALIGN_NUM = 8;
 constexpr uint32_t ACTIVATION_NONE = 0;
 constexpr uint32_t ACTIVATION_SILU = 1;
 constexpr uint32_t ACTIVATION_SWISH = 2;
+constexpr uint32_t ACTIVATION_SILU_BF16_GRAD = 3;
 constexpr uint32_t INPUT_LAYOUT_BSND = 0;
 constexpr uint32_t INPUT_LAYOUT_TND = 1;
 constexpr uint32_t INPUT_LAYOUT_BNSD = 2;
@@ -194,6 +195,7 @@ private:
 
     uint32_t B_ = 0, T_ = 0, D_ = 0, W_ = 0;
     uint32_t activation_ = ACTIVATION_NONE;
+    bool roundSiluGrad_ = false;
     uint32_t hasWeight_ = 1, hasBias_ = 0;
     uint32_t useInitialState_ = 0;
     uint32_t useFinalState_ = 0;
@@ -235,7 +237,8 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::InitTilingData(
 {
     B_ = tilingData->B;       T_ = tilingData->T;
     D_ = tilingData->D;       W_ = tilingData->W;
-    activation_ = tilingData->activation;
+    roundSiluGrad_ = tilingData->activation == ACTIVATION_SILU_BF16_GRAD;
+    activation_ = roundSiluGrad_ ? ACTIVATION_SILU : tilingData->activation;
     hasWeight_ = tilingData->hasWeight;
     hasBias_ = tilingData->hasBias;
     useInitialState_ = tilingData->useInitialState;
@@ -1017,26 +1020,29 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     LocalTensor<float> dyLocal, LocalTensor<float> yLocal, uint32_t count)
 {
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
-    LocalTensor<float> e = sigmoidBuf_.Get<float>();
-    LocalTensor<float> d = tempBuf_.Get<float>();
+    if (!roundSiluGrad_) {
+        LocalTensor<float> e = sigmoidBuf_.Get<float>();
+        LocalTensor<float> d = tempBuf_.Get<float>();
 
-    Muls(e, yLocal, float(-1.0), count);
-    PipeBarrier<PIPE_V>();
-    Exp(e, e, count);
-    PipeBarrier<PIPE_V>();
-    Adds(d, e, float(1.0), count);
-    PipeBarrier<PIPE_V>();
-    Mul(e, e, yLocal, count);
-    PipeBarrier<PIPE_V>();
-    Add(e, d, e, count);
-    PipeBarrier<PIPE_V>();
-    Mul(d, d, d, count);
-    PipeBarrier<PIPE_V>();
-    Div(d, e, d, count);
-    PipeBarrier<PIPE_V>();
-    Mul(dyLocal, dyLocal, d, count);
-    PipeBarrier<PIPE_V>();
-#else
+        Muls(e, yLocal, float(-1.0), count);
+        PipeBarrier<PIPE_V>();
+        Exp(e, e, count);
+        PipeBarrier<PIPE_V>();
+        Adds(d, e, float(1.0), count);
+        PipeBarrier<PIPE_V>();
+        Mul(e, e, yLocal, count);
+        PipeBarrier<PIPE_V>();
+        Add(e, d, e, count);
+        PipeBarrier<PIPE_V>();
+        Mul(d, d, d, count);
+        PipeBarrier<PIPE_V>();
+        Div(d, e, d, count);
+        PipeBarrier<PIPE_V>();
+        Mul(dyLocal, dyLocal, d, count);
+        PipeBarrier<PIPE_V>();
+        return;
+    }
+#endif
     LocalTensor<float> sigmoidLocal = sigmoidBuf_.Get<float>();
     LocalTensor<float> t = tempBuf_.Get<float>();
 
@@ -1061,6 +1067,16 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ApplySiluBackward(
     PipeBarrier<PIPE_V>();
     Mul(dyLocal, dyLocal, t, count);
     PipeBarrier<PIPE_V>();
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+    if constexpr (IsSameType<inputT, bfloat16_t>::value) {
+        if (roundSiluGrad_) {
+            auto rounded = sigmoidBuf_.Get<bfloat16_t>();
+            Cast(rounded, dyLocal, RoundMode::CAST_RINT, count);
+            PipeBarrier<PIPE_V>();
+            Cast(dyLocal, rounded, RoundMode::CAST_NONE, count);
+            PipeBarrier<PIPE_V>();
+        }
+    }
 #endif
 }
 
@@ -1676,7 +1692,7 @@ __aicore__ inline void CausalConv1dBwdKernel<inputT, calT>::ComputeTileDirectReg
     NsCausalConv1dBwd::ComputeTileDirectRegbase<inputT>(
         xRaw, dyRaw, yRaw, weightBuf_.Get<inputT>(),
         tempBuf_.Get<float>(), dxBuf_.Get<float>(), dwBuf_.Get<float>(), dbBuf_.Get<float>(), dh0Local,
-        BT_, W_, dyRows_, activation_, validRows, useInit, computeDh0, hasBias_, BD_);
+        BT_, W_, dyRows_, roundSiluGrad_ ? ACTIVATION_SILU_BF16_GRAD : activation_, validRows, useInit, computeDh0, hasBias_, BD_);
     PipeBarrier<PIPE_V>();
 #else
     (void)i_t;

@@ -23,10 +23,14 @@ constexpr uint32_t BWD_DIRECT_BD_NARROW = 16;
 constexpr uint32_t BWD_ACTIVATION_NONE = 0;
 constexpr uint32_t BWD_ACTIVATION_SILU = 1;
 constexpr uint32_t BWD_ACTIVATION_SWISH = 2;
+constexpr uint32_t BWD_ACTIVATION_SILU_BF16_GRAD = 3;
 
 constexpr uint32_t BWD_FLAG_OFF = 0;
 
 constexpr uint32_t BWD_TAP_REVERSE_STEP = 1;
+
+constexpr CastTrait BWD_F32_TO_BF16_RINT = {
+    RegLayout::ZERO, SatMode::NO_SAT, MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
 
 constexpr CastTrait B16_TO_F32_ZERO = {
     RegLayout::ZERO,
@@ -96,6 +100,25 @@ __simd_callee__ inline void ApplySiluBackwardOne(
     Mul(dy, dy, onePlusExpNegY, maskF32);
 }
 
+// Avoid overflow in the squared exponential denominator for negative BF16 inputs.
+__simd_callee__ inline void ApplySiluBackwardBf16Grad(
+    RegTensor<float> &dy, RegTensor<float> &y, MaskReg &maskF32)
+{
+    RegTensor<float> sigmoid;
+    RegTensor<float> one;
+    Muls(sigmoid, y, -1.0f, maskF32);
+    Exp(sigmoid, sigmoid, maskF32);
+    Adds(sigmoid, sigmoid, 1.0f, maskF32);
+    Duplicate(one, 1.0f, maskF32);
+    Div(sigmoid, one, sigmoid, maskF32);
+
+    Sub(one, one, sigmoid, maskF32);
+    Mul(one, one, y, maskF32);
+    Adds(one, one, 1.0f, maskF32);
+    Mul(dy, dy, sigmoid, maskF32);
+    Mul(dy, dy, one, maskF32);
+}
+
 __simd_callee__ inline void ApplySiluBackwardPair(
     RegTensor<float> &dyZero, RegTensor<float> &dyOne,
     RegTensor<float> &yZero, RegTensor<float> &yOne, MaskReg &maskF32)
@@ -160,7 +183,7 @@ __simd_callee__ inline void StoreDwSumOne(
     StoreFloatOne(dwAddr + wIdx * BD, old, maskF32);
 }
 
-template <typename T, uint32_t BD = BWD_DIRECT_BD>
+template <typename T, uint32_t BD = BWD_DIRECT_BD, bool ROUND_BF16 = false>
 static __simd_vf__ inline void ComputeActivatedDyB16Vf(
     __ubuf__ T *dyAddr, __ubuf__ T *yAddr, __ubuf__ float *dyActAddr, uint32_t rows)
 {
@@ -172,7 +195,14 @@ static __simd_vf__ inline void ComputeActivatedDyB16Vf(
     for (uint32_t row = 0; row < rows; row++) {
         LoadB16AsFloat<T>(dy, dyAddr + row * BD, maskF32);
         LoadB16AsFloat<T>(y, yAddr + row * BD, maskF32);
-        ApplySiluBackwardOne(dy, y, maskF32);
+        if constexpr (ROUND_BF16) {
+            ApplySiluBackwardBf16Grad(dy, y, maskF32);
+            RegTensor<bfloat16_t> rounded;
+            Cast<bfloat16_t, float, BWD_F32_TO_BF16_RINT>(rounded, dy, maskF32);
+            Cast<float, bfloat16_t, B16_TO_F32_ZERO>(dy, rounded, maskF32);
+        } else {
+            ApplySiluBackwardOne(dy, y, maskF32);
+        }
         StoreFloatOne(dyActAddr + row * BD, dy, maskF32);
     }
 }
@@ -710,8 +740,13 @@ __aicore__ inline void ComputeTileDirectRegbaseBd(
     (void)useInitialState;
     (void)computeDh0;
     if constexpr (std::is_same<T, half>() || std::is_same<T, bfloat16_t>()) {
-        if (activation == BWD_ACTIVATION_SILU || activation == BWD_ACTIVATION_SWISH) {
-            AscendC::VF_CALL<ComputeActivatedDyB16Vf<T, BD>>(dyAddr, yAddr, dyActAddr, dyRows);
+        if (activation == BWD_ACTIVATION_SILU || activation == BWD_ACTIVATION_SWISH ||
+            activation == BWD_ACTIVATION_SILU_BF16_GRAD) {
+            if (activation == BWD_ACTIVATION_SILU_BF16_GRAD) {
+                AscendC::VF_CALL<ComputeActivatedDyB16Vf<T, BD, true>>(dyAddr, yAddr, dyActAddr, dyRows);
+            } else {
+                AscendC::VF_CALL<ComputeActivatedDyB16Vf<T, BD>>(dyAddr, yAddr, dyActAddr, dyRows);
+            }
             AscendC::VF_CALL<ComputeDxActivatedB16Vf<T, BD>>(dyActAddr, weightAddr, dxAddr, rows, width);
             AscendC::VF_CALL<ComputeDwOneActivatedB16Vf<T, BD>>(
                 xAddr, dyActAddr, dwAddr, static_cast<uint16_t>(rows), static_cast<uint16_t>(width));
