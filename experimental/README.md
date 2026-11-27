@@ -123,17 +123,26 @@ RWKV8 返回 `(o, s, sa)`，`chunk_len` 范围为 `[1,4294967295]`。
 python -m fla_npu_experimental_manage --source /absolute/update.whl
 # 只更新 OPP 组件，保留当前适配层。
 python -m fla_npu_experimental_manage --source /absolute/update.run
-# 查看 生效的组件及兼容性问题。
+# 查看已安装的增量组件及兼容性问题。
 python -m fla_npu_experimental_manage --status
-# 仅独立实验模式需要重新 source；双包模式直接启动新进程。
-source /absolute/site-packages/fla_npu_experimental/opp/vendors/fla_npu_experimental_transformer/bin/set_env.bash
-# 临时禁用增量；重新 source 后，新进程只使用 base。
-export FLA_NPU_OVERLAY_VENDOR=''
-# 恢复默认启用策略；重新 source 后，新进程使用 active 增量。
-unset FLA_NPU_OVERLAY_VENDOR
-# 移除增量并恢复 base；执行前退出使用该增量的进程，之后重新 source。
+# 只移除实验增量，恢复实验 base。执行前退出使用该增量的进程。
 python -m fla_npu_experimental_manage --remove-overlay
 ```
+
+每侧的环境变量只选择该侧在新进程中使用的增量。下面假设两侧都已安装并激活增量：
+
+| 正式侧 `FLA_NPU_OVERLAY_VENDOR` | 实验侧 `FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR` | 新进程使用的组件 |
+| --- | --- | --- |
+| 未设置 | 未设置 | 正式增量、实验增量 |
+| 空字符串 | 未设置 | 正式 base、实验增量 |
+| 未设置 | 空字符串 | 正式增量、实验 base |
+| 空字符串 | 空字符串 | 正式 base、实验 base |
+
+例如，`export FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR=''` 只临时停用实验增量，`unset FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR` 恢复按实验管理器记录的状态选择。显式指定实验 vendor 时，冒号分隔的名单中包含 `fla_npu_experimental_overlay_transformer` 即使用已激活的实验增量，否则使用实验 base。
+
+实验选择逻辑由实验 base wheel 提供。从共用变量的环境迁移时，用 pip 更新实验 base wheel，并将脚本中控制实验增量的命令改用 `FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR`。
+
+在启动 Python 前设置变量。双包模式直接启动新进程，独立实验模式先重新 `source` 实验 vendor 的 `bin/set_env.bash`。临时选择保留磁盘上的增量和管理器状态。
 
 管理器支持 `--package-dir` 显式指定目标包目录。增量 wheel 须内嵌 OPP。ABI 不匹配时命令返回非零，并保留上次成功安装的组合。
 

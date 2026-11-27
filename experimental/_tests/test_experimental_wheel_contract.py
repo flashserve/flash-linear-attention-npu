@@ -187,11 +187,24 @@ class WheelContractTest(unittest.TestCase):
         self.assertEqual(result["components"]["adapter"], first_adapter)
         self.assertNotEqual(result["components"]["opp"], first_adapter)
         with patch.dict(os.environ, FLA_NPU_OVERLAY_VENDOR=""):
+            self.assertEqual(self.manager.runtime_plan(self.package)["components"], result["components"])
+        with patch.dict(os.environ, FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR=""):
             self.assertIsNone(self.manager.runtime_plan(self.package))
         self.manager.remove(self.package)
         self.assertIsNone(self.manager.runtime_plan(self.package))
         for path, data in before.items():
             self.assertEqual((self.package / path).read_bytes(), data)
+
+    def test_formal_and_experimental_selectors_are_independent(self):
+        formal = load("formal_fixture", ROOT / "torch_custom/fla_npu/fla_npu_wheel_overlay.py")
+        for formal_value in (None, "", formal.NAME):
+            for experimental_value in (None, "", self.manager.NAME):
+                env = {key: value for key, value in (
+                    ("FLA_NPU_OVERLAY_VENDOR", formal_value),
+                    ("FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR", experimental_value)) if value is not None}
+                with self.subTest(env=env), patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(formal.enabled(), formal_value != "")
+                    self.assertEqual(self.manager.enabled(), experimental_value != "")
 
     def test_runtime_validation_does_not_read_disk_after_configure(self):
         self.loader._CONFIGURATION = (self.root, self.vendor, self.vendor / self.manager.LIBRARY)

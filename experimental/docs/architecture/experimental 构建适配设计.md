@@ -222,7 +222,9 @@ experimental 不另建一套 overlay 协议、管理器、优先级、状态文�
 `fla_npu_experimental_manage` 只负责参数转发，不导入算子包或 NPU，也不另建安装状态机。
 制品提供主干协议 1 的 layer 元数据和 ABI 清单，安装校验、原子切换、移除与恢复均调用通用管理器。
 
-正式与实验 wheel 并排安装时，Python 启动钩子根据两侧的增量状态设置 OPP 路径。显式使用独立实验模式时，运行前 source 实验 base 的 `set_env.bash`。首次导入读取一次选择，
+正式与实验 wheel 并排安装时，Python 启动钩子分别读取两侧的增量状态，再合并选中的 OPP 路径。正式管理器读取 `FLA_NPU_OVERLAY_VENDOR`，实验管理器读取 `FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR`。某侧变量未设置时沿用该侧已激活的增量，设为空字符串时该侧仅使用 base。临时选择只影响新进程，磁盘上的激活记录保留。独立实验模式的 `set_env.bash` 通过实验管理器使用同一个实验变量。
+
+首次导入读取一次选择，
 首次装载校验 ABI、launcher 指纹及 ACLNN 符号来源，并将 OPP 库路径显式传给公共 runtime。
 增量 wheel 的 wrapper 与注册库一起装入独立 namespace；仅增量 `.run` 时继续使用原适配层。
 部分更新时，base 只校验和注册未被覆盖的算子，增量适配层负责被覆盖的算子。

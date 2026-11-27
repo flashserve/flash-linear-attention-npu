@@ -143,6 +143,15 @@ class LoaderTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "environment changed"):
             self.loader.validate_active_environment()
 
+    def test_tracks_only_the_experimental_overlay_selector(self):
+        with mock.patch.dict(os.environ, FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR=""):
+            self.loader.configure()
+            with mock.patch.dict(os.environ, FLA_NPU_OVERLAY_VENDOR="fla_npu_overlay_transformer"):
+                self.loader.validate_active_environment()
+            del os.environ["FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR"]
+            with self.assertRaisesRegex(RuntimeError, "environment changed"):
+                self.loader.validate_active_environment()
+
     def test_rejects_native_stable_launcher(self):
         with mock.patch.object(self.loader, "_mapped_libraries", return_value={Path("/wheel/libfla_npu_stable.so")}):
             with self.assertRaisesRegex(RuntimeError, "Stable launcher"):

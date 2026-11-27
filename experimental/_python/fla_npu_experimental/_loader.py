@@ -155,7 +155,7 @@ def configure():
 def _environment():
     return tuple(os.environ.get(key) for key in (
         "FLA_NPU_DISABLE_PTH", "FLA_NPU_EXPERIMENTAL_OPP_PATH", "ASCEND_CUSTOM_OPP_PATH",
-        "FLA_NPU_OVERLAY_VENDOR"))
+        "FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR"))
 
 
 def validate_active_environment():
