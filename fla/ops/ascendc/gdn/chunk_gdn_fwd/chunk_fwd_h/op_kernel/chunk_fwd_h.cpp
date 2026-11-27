@@ -128,9 +128,7 @@ __global__ __aicore__ void chunk_fwd_h(
         args.tiling.coreBoundCount = 0; // malformed table — uniform partition fallback
     }
     args.tiling.coreBoundsGm = tilingData->coreTaskBounds;
-    args.tiling.gatedTilingOffset = static_cast<uint64_t>(tilingData->gatedTilingOffset);
-    args.tiling.gatedNumSeqOffset = static_cast<uint64_t>(tilingData->gatedNumSeqOffset);
-    args.tiling.gatedNumChunksOffset = static_cast<uint64_t>(tilingData->gatedNumChunksOffset);
+    args.tiling.gatedEngine = static_cast<uint32_t>(tilingData->gatedEngine);
     using Traits = GDN::FwdHKernelTraits<
         D_T_G, V_DIM, USE_GK, USE_EXP2, STATE_FP32, STATE_V_FIRST, STORE_FINAL, DENSE_T16>;
     GDN::RunFwdHTyped<typename Traits::GateT, typename Traits::CompilePolicy,
