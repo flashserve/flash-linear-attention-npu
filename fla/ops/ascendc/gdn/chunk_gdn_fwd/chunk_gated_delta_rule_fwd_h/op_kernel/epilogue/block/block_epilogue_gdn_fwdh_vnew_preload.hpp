@@ -231,9 +231,6 @@ public:
             AscendC::Cast(vNewDecayUbTensor, calcUbTensor[gbrcEffStart*nvActual], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
         } else {
-            // 尾块 m-gbrcRealStart>64 时广播/Mul 的目的区会越过 calc 的 32K（覆写相邻 wsUb 里的 v_new）。
-            // 按 64 行边界拆两段：段A覆盖 [gbrcEffStart,64)（广播恰好 32K），段B从 gUb[gbrcRealStart+64]
-            // （16 对齐）重新广播，两段 calc 用量都不超 32K；g 的 V->MTE2 释放移到段B广播之后。
             uint32_t rowsA = 64 - gbrcEffStart;
             uint32_t rowsB = gbrcEffEnd - 64;
             uint32_t dstShapeA_[2] = {64, nvActual};
