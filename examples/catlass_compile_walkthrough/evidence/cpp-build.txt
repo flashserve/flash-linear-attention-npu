@@ -1,0 +1,24 @@
+Change Dir: 'examples/catlass_compile_walkthrough/build/cpp'
+
+Run Build Command(s): <CONDA_ENV>/lib/python3.12/site-packages/cmake/data/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile -j2
+<CONDA_ENV>/lib/python3.12/site-packages/cmake/data/bin/cmake -Sexamples/catlass_compile_walkthrough/cpp -Bexamples/catlass_compile_walkthrough/build/cpp --check-build-system CMakeFiles/Makefile.cmake 0
+<CONDA_ENV>/lib/python3.12/site-packages/cmake/data/bin/cmake -E cmake_progress_start examples/catlass_compile_walkthrough/build/cpp/CMakeFiles examples/catlass_compile_walkthrough/build/cpp//CMakeFiles/progress.marks
+/usr/bin/gmake  -f CMakeFiles/Makefile2 all
+gmake[1]: Entering directory 'examples/catlass_compile_walkthrough/build/cpp'
+/usr/bin/gmake  -f CMakeFiles/matmul_cpp.dir/build.make CMakeFiles/matmul_cpp.dir/depend
+gmake[2]: Entering directory 'examples/catlass_compile_walkthrough/build/cpp'
+cd examples/catlass_compile_walkthrough/build/cpp && <CONDA_ENV>/lib/python3.12/site-packages/cmake/data/bin/cmake -E cmake_depends "Unix Makefiles" examples/catlass_compile_walkthrough/cpp examples/catlass_compile_walkthrough/cpp examples/catlass_compile_walkthrough/build/cpp examples/catlass_compile_walkthrough/build/cpp examples/catlass_compile_walkthrough/build/cpp/CMakeFiles/matmul_cpp.dir/DependInfo.cmake "--color=" matmul_cpp
+Dependencies file "CMakeFiles/matmul_cpp.dir/matmul.cpp.o.d" is newer than depends file "examples/catlass_compile_walkthrough/build/cpp/CMakeFiles/matmul_cpp.dir/compiler_depend.internal".
+Consolidate compiler generated dependencies of target matmul_cpp
+gmake[2]: Leaving directory 'examples/catlass_compile_walkthrough/build/cpp'
+/usr/bin/gmake  -f CMakeFiles/matmul_cpp.dir/build.make CMakeFiles/matmul_cpp.dir/build
+gmake[2]: Entering directory 'examples/catlass_compile_walkthrough/build/cpp'
+[ 50%] Building ASC object CMakeFiles/matmul_cpp.dir/matmul.cpp.o
+<CANN>/bin/bisheng -DCATLASS_ARCH=2201 -D_GLIBCXX_USE_CXX11_ABI=1 -I<CATLASS_ROOT>/include -I/usr/include/c++/11 -I/usr/include/aarch64-linux-gnu/c++/11 -I/usr/include/c++/11/backward  -std=c++17 -O3 -DNDEBUG --npu-arch=dav-2201 -O2 -save-temps=obj -Wno-macro-redefined -Wno-ignored-attributes -Wno-unused-value -MD -MT CMakeFiles/matmul_cpp.dir/matmul.cpp.o -MF CMakeFiles/matmul_cpp.dir/matmul.cpp.o.d -o CMakeFiles/matmul_cpp.dir/matmul.cpp.o -c --asc-aicore-lang examples/catlass_compile_walkthrough/cpp/matmul.cpp
+[100%] Linking ASC executable matmul_cpp
+<CONDA_ENV>/lib/python3.12/site-packages/cmake/data/bin/cmake -E cmake_link_script CMakeFiles/matmul_cpp.dir/link.txt --verbose=1
+ <CANN>/bin/bisheng -O3 -DNDEBUG CMakeFiles/matmul_cpp.dir/matmul.cpp.o -o matmul_cpp   -L<CANN>/lib64  -L<CANN>/aarch64-linux/devlib  -L/usr/lib/gcc/aarch64-linux-gnu/11  -Wl,-rpath,<CANN>/lib64 -Wl,-rpath,<CANN>/aarch64-linux/devlib -Wl,-rpath,/usr/lib/gcc/aarch64-linux-gnu/11 -lascendc_runtime -lruntime -lprofapi -lmmpa -lascend_dump -lc_sec -lerror_manager -lascendcl -ltiling_api -lnnopbase -lplatform -ldl -lascend_hal -lascendalog -lunified_dlog
+gmake[2]: Leaving directory 'examples/catlass_compile_walkthrough/build/cpp'
+[100%] Built target matmul_cpp
+gmake[1]: Leaving directory 'examples/catlass_compile_walkthrough/build/cpp'
+<CONDA_ENV>/lib/python3.12/site-packages/cmake/data/bin/cmake -E cmake_progress_start examples/catlass_compile_walkthrough/build/cpp/CMakeFiles 0

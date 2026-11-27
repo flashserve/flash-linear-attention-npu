@@ -1,0 +1,26 @@
+[
+  {
+    "case": "zero",
+    "backend": "dsl",
+    "passed": true,
+    "max_abs_error": 0.0,
+    "input_sha256": "66a5077287678e14dbba4943fa526cabb71ce543b910c498748630dbfcc1f637",
+    "output_sha256": "5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef"
+  },
+  {
+    "case": "identity",
+    "backend": "dsl",
+    "passed": true,
+    "max_abs_error": 0.0,
+    "input_sha256": "1916d1cf05949bfdb95b0e9f1bd45280964768fe1cae42abb05e2518f2c128c4",
+    "output_sha256": "4176b2d02c21e5cfc4274c8b24ca33a5bc3f8d701d96e99d3cd0bb52fd9428c3"
+  },
+  {
+    "case": "pattern",
+    "backend": "dsl",
+    "passed": true,
+    "max_abs_error": 0.0,
+    "input_sha256": "4578a402eedecadddd161c85a669251bd517985d658a86d9193545e25f9ed734",
+    "output_sha256": "9eaa0d59ef5fc146c6cdbd26dbe51b6b1b125c82fbb6ebeb8de76ac5142b5bf3"
+  }
+]

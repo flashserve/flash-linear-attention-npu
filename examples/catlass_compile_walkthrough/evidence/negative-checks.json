@@ -1,0 +1,12 @@
+[
+  {
+    "case": "cpp_rejects_truncated_input",
+    "passed": true,
+    "exit_code": 1
+  },
+  {
+    "case": "checker_rejects_corrupted_output",
+    "passed": true,
+    "exit_code": 1
+  }
+]
