@@ -125,6 +125,7 @@ public:
                 stage12Mte3ToMte2_[eventIndex]);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
+        stage14Mte3ToScalar_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_S>();
         stage15VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
@@ -557,13 +558,12 @@ public:
                     streamSlot_ = NextSlot(streamSlot_);
                 }
 
+                // Finish the S14 stores before dispatching the S15 reads or reusing the UB.
+                AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(stage14Mte3ToScalar_);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(stage14Mte3ToScalar_);
                 for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
                 }
-
-                // All partials are visible before local S15 reads and before releasing S13.
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[0]);
                 SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
                 // Only the last window runs S15. The next S0 consumes the events in other windows.
                 if (isLastWindow) {
@@ -711,6 +711,7 @@ public:
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_S>(stage14Mte3ToScalar_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
 
@@ -917,6 +918,7 @@ private:
     AscendC::TEventID mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stage12Mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stateVToMte2_[SLOT_COUNT];
+    AscendC::TEventID stage14Mte3ToScalar_;
     AscendC::TEventID stage15VToMte2_;
     int64_t stateChunkNum_ = 0;
 };

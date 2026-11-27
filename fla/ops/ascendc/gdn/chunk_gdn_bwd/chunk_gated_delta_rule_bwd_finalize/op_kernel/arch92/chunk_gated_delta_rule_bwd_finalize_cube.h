@@ -67,6 +67,7 @@ public:
         Catlass::Arch::Resource<ArchTag> resource;
 
         AscendC::TPipe eventPipe;
+        stage13Mte2ToScalar_ = eventPipe.AllocEventID<AscendC::HardEvent::MTE2_S>();
         // Two resident-event groups and three independent L0 slots.
         for (uint32_t i = 0; i < 6; ++i) {
             MTE1_MTE2Events_[i] = eventPipe.AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
@@ -315,6 +316,7 @@ public:
         for (uint32_t i = 0; i < 3; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::M_FIX>(M_FIXEvents_[i]);
         }
+        eventPipe.ReleaseEventID<AscendC::HardEvent::MTE2_S>(stage13Mte2ToScalar_);
     }
 
 private:
@@ -1383,8 +1385,9 @@ private:
         typename TileCopyDw0::template CopyGmToL1A<decltype(blockGmDs)>{}(tensorL1Ds, blockGmDs);
         typename TileCopyDau::template CopyGmToL1A<decltype(blockGmDoG)>{}(tensorL1DoG, blockGmDoG);
         typename TileCopyDau::template CopyGmToL1A<decltype(blockGmVDecay)>{}(tensorL1VDecay, blockGmVDecay);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[dsEvent]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[dsEvent]);
+        // Finish the resident loads before dispatching the two slices that reuse them.
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(stage13Mte2ToScalar_);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(stage13Mte2ToScalar_);
         // N=64 keeps every L0A/L0B/L0C slot within 16 KiB.
         for (uint32_t nOffset = 0; nOffset < K_SIZE_128; nOffset += 64) {
             constexpr uint32_t nSize = 64;
@@ -1574,6 +1577,7 @@ private:
         return GetWorkspaceHeadOffset(coreIdx_, workspaceGroupRound_, headOffset);
     }
 
+    AscendC::TEventID stage13Mte2ToScalar_;
     AscendC::TEventID MTE1_MTE2Events_[6];
     AscendC::TEventID MTE2_MTE1Events_[6];
     AscendC::TEventID FIX_MTE1Events_[6];
