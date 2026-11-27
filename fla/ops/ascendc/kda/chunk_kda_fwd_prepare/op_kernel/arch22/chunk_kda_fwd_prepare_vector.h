@@ -562,8 +562,9 @@ template<uint32_t Norm,uint32_t Gate,class GateT,class BetaT> class Vector {
         if constexpr(Norm!=0 && Gate!=0) {
             WholeReduceMax(small_,work_[12288],64,2*bands*(bands+1),1,1,8,
                            ReduceOrder::ORDER_ONLY_VALUE);
-            // The following drained Aqk Write has V->MTE3->V ordering, which
-            // also retires this reduction before the second-stage reduction.
+            // Aqk is stored asynchronously. Its V->MTE3 dependency does
+            // not order the next Vector reduction reading small_.
+            PipeBarrier<PIPE_V>();
         }
         // Packed masks were initialized once. The selected FP32 zeros cast
         // to the same +0 BF16 bits as the former per-row Duplicate operations.
