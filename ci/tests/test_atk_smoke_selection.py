@@ -98,4 +98,12 @@ class AtkSmokeSelectionTests(unittest.TestCase):
             git("add", ".")
             git("commit", "-qm", "shared ATK test harness")
             registered = json.loads((SMOKE / "suites.json").read_bytes())
-            self.assertCountEqual(json.loads(select("matrix"))["include"], registered)
+            enabled = [{"op": s["op"], "platform": s["platform"]} for s in registered if s.get("ci_enabled", True)]
+            self.assertCountEqual(json.loads(select("matrix"))["include"], enabled)
+
+            add_file(ROOTS["chunk_kda_bwd_recompute"] + "/op_kernel/recompute.cpp")
+            git("add", ".")
+            git("commit", "-qm", "change only recompute")
+            self.assertEqual(select("affected", "--platform", "A2").splitlines(), ["chunk_kda_bwd_recompute"])
+            self.assertEqual(select("affected", "--platform", "A5"), "")
+            self.assertEqual(json.loads(select("matrix"))["include"], [{"op": "chunk_kda_bwd_recompute", "platform": "A2"}])

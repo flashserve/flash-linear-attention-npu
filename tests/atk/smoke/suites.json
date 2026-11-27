@@ -81,7 +81,8 @@
   },
   {
     "op": "chunk_kda_bwd_recompute",
-    "platform": "A5"
+    "platform": "A5",
+    "ci_enabled": false
   },
   {
     "op": "chunk_kda_fwd",

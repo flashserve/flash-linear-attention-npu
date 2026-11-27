@@ -354,7 +354,7 @@ def main():
         raise ValueError("Expected one cases.json per operator and platform in suites.json")
     if args.action in ("matrix", "affected"):
         roots = source_roots(suites)
-        pairs = {(s["op"], s["platform"]) for s in suites}
+        pairs = {(s["op"], s["platform"]) for s in suites if s.get("ci_enabled", True)}
         if args.git_range:
             pairs = affected_pairs(pairs, roots, *args.git_range, ROOT.parents[2])
         pairs = sorted(pairs)
