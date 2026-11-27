@@ -40,21 +40,32 @@ def main():
     parser.add_argument("--first", required=True, choices=("formal", "experimental"))
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--conflict", help="Expected diagnostic, using prepared conflicting packages")
+    parser.add_argument("--npu-first", action="store_true", help="Run a PyTorch NPU operation before package imports")
     args = parser.parse_args()
     order = ["fla_npu", "fla_npu_experimental"]
     if args.first == "experimental":
         order.reverse()
-    importlib.import_module(order[0])
-    if args.conflict:
-        try:
-            importlib.import_module(order[1])
-        except ImportError as exc:
-            if args.conflict not in str(exc):
-                raise
+    if args.npu_first:
+        import torch
+        import torch_npu  # noqa: F401
+        torch.npu.set_device(args.device)
+        value = torch.ones(4, device=f"npu:{args.device}")
+        (value + value).cpu()
+
+    winner = "fla_npu" if args.npu_first else order[0]
+    enabled = []
+    for name in order:
+        if args.conflict and name != winner:
+            try:
+                importlib.import_module(name)
+            except ImportError as exc:
+                if args.conflict not in str(exc):
+                    raise
+            else:
+                raise AssertionError(f"{name} unexpectedly accepted the conflict")
         else:
-            raise AssertionError("Second import unexpectedly accepted the conflict")
-    else:
-        importlib.import_module(order[1])
+            importlib.import_module(name)
+            enabled.append(name)
 
     import torch
     import torch_npu  # noqa: F401
@@ -62,7 +73,6 @@ def main():
     torch.npu.set_device(device)
     checks = {"fla_npu": check_formal, "fla_npu_experimental": check_experimental}
     with torch.inference_mode():
-        enabled = order[:1] if args.conflict else order
         for name in enabled:
             checks[name](torch, device)
             print(f"{name}: accuracy PASS", flush=True)

@@ -18,7 +18,7 @@ A2 最新补测通过五种增量场景、共 15 条 NPU/CPU reference 对拍；
 构建集合隔离由代码强制；增量安装的 base 归属由开发者保证，不承诺安装器识别或阻断跨集合误装。
 配套的正式、实验 wheel 支持同进程调用。首次并排安装使用 pip，此后各自的增量仍按同集合的 base 管理。通用增量的 ABI、清单和兼容性检查继续生效，安装更新后须启动新进程。
 
-正式 wheel 持有进程级协调逻辑。启动钩子读取两侧已选 vendor 的 ops-info、kernel 配置和 ELF 导出，不导入算子包。双方名称无交集时提前配置两套 CANN 路径；有交集时先不加入任一侧，由第一个导入的包选择自己的 vendor。第二侧在加载 launcher 和注册之前得到含类型、冲突名称和来源的异常。同一侧原有 overlay 的优先级继续生效。每侧独立指定自己的 op_api 路径，保留独立 dispatcher 和 ABI 审计。
+正式 wheel 的启动钩子读取两侧已选 vendor 的 ops-info、kernel 配置和 ELF 导出。双方名称无交集时提前配置两套 CANN 路径。有重名时保留正式 vendor 及其增量的搜索顺序。若实验包先导入且 CANN 尚未加载正式 vendor，进程切换到实验侧路径。首个包导入失败时恢复导入前的路径。若 CANN 已先加载正式 vendor，或另一侧已成功导入，冲突侧在加载 launcher 和注册前得到含冲突名称和来源的异常。各侧使用各自的 op_api 路径、dispatcher 和 ABI 校验。
 
 ## 2. 目录布局
 
@@ -192,7 +192,7 @@ done
 
 先安装正式 wheel，再在同一 Python 环境用 pip 安装面向同一 SoC 的实验 wheel。图中左列是已有文件，右列是新增文件。两个包位于同一个 `site-packages/` 下，即使文件同名（如 `libcust_opapi.so`），其完整路径也各自独立。
 
-初始化 CANN toolkit 后，保留 Python 默认的 `.pth` 启动行为，即可在新进程中按任意顺序导入两个包，无需手动 `source` 实验环境脚本。下半图以两个 wheel 内置的适配层和 OPP 为例。若发现重名，在初始化 NPU 前先导入需要使用的一侧。
+初始化 CANN toolkit 后，保留 Python 默认的 `.pth` 启动行为，即可在新进程中导入两个包，无需手动 `source` 实验环境脚本。下半图以两个 wheel 内置的适配层和 OPP 为例。有重名时，先执行普通 NPU 运算的业务沿用正式 vendor。要选择实验侧，在第一次 NPU 运算前先导入实验包。
 
 ![实验 wheel 在正式包同级新增文件。同一进程中，正式和实验 Python 入口经各自的 dispatcher、launcher 和 vendor 调用 NPU 算子。](assets/wheel-install-and-call.svg)
 

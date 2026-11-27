@@ -21,7 +21,7 @@
 `build.sh` 未传 `--experimental` 时，省略 `--ops` 或使用 `--ops=all` 都只编正式算子。
 显式传入 `--experimental` 后，全选也只编实验算子。当前没有独立的 `--all` 参数。
 
-新版正式 wheel 和实验 wheel 可安装在同一 Python 环境。两个包保留独立的 wrapper、launcher、vendor、增量状态和锁。安装或更新组件后须启动新进程。
+正式 wheel 和实验 wheel 可安装在同一 Python 环境。两个包保留独立的 wrapper、launcher、vendor、增量状态和锁。安装或更新组件后须启动新进程。
 
 ## 构建与安装
 
@@ -88,7 +88,9 @@ from fla_npu.ops.ascendc import npu_recompute_w_u_fwd
 PY
 ```
 
-两种导入顺序均支持。启动钩子检查双方当前选中 vendor 的 CANN opType 和动态库实际导出的 ACLNN 符号。名称无交集时，两套 vendor 在 CANN 初始化前就绪。发现重名时，先导入的一侧取得本进程的使用权，后导入的一侧在加载前报出冲突名称和来源；先导入侧仍可执行。冲突场景应在初始化 NPU 前导入需要使用的一侧。旧正式 wheel 不提供该协作能力。
+启动钩子检查双方当前选中 vendor 的 CANN opType 和动态库导出的 ACLNN 符号。无重名时，两套 vendor 在 CANN 初始化前就绪，两种导入顺序都可以使用。
+
+有重名时，进程启动时保留正式 vendor。若先导入算子包，先导入的一侧取得使用权，后导入侧在加载前报出冲突名称和来源。若业务先执行普通 NPU 运算，CANN 已加载正式 vendor，随后仍可调用正式算子，导入实验侧会报出冲突。此时要使用实验侧，请在新进程里先导入 `fla_npu_experimental`，再初始化 NPU。
 
 首次 pip 安装提供实验适配层和 OPP。后续实验增量使用下文的实验管理入口，正式增量继续由正式管理器管理。仅有正式 wheel 时，实验 `.run` 不能提供新算子的 Python 入口。
 

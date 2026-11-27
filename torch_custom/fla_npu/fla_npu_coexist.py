@@ -59,9 +59,23 @@ class InstalledPair:
 
     def startup(self):
         if self.conflicts:
-            self.prepare(())
+            # A process may initialize CANN without importing either Python package.
+            self.prepare(self.vendors[self.formal])
         else:
             self.prepare([v for root, vendors in self.vendors.items() if root not in self.errors for v in vendors])
+
+    def _loaded_formal_vendor(self):
+        """CANN loads the selected vendor's native libraries when it registers OPP."""
+        maps = Path("/proc/self/maps")
+        if not maps.exists():  # The supported CANN runtime is Linux.
+            return None
+        roots = tuple(str(v) + "/" for v in self.vendors[self.formal])
+        with maps.open(encoding="utf-8", errors="replace") as mappings:
+            for entry in mappings:
+                fields = entry.rstrip("\n").split(maxsplit=5)
+                if len(fields) == 6 and "x" in fields[1] and fields[5].startswith(roots):
+                    return fields[5]
+        return None
 
     @contextmanager
     def activating(self, side):
@@ -71,6 +85,13 @@ class InstalledPair:
                 raise ImportError(f"Cannot enable {side}: {self.errors[side]}")
             if self.conflicts and self.active.difference({side}):
                 raise ImportError("Conflicting operator vendors:\n" + "\n".join(self.conflicts))
+            if self.conflicts and side == self.experimental and not self.active:
+                loaded = self._loaded_formal_vendor()
+                if loaded:
+                    raise ImportError(
+                        f"The formal vendor is already loaded ({loaded}). To use the experimental "
+                        "vendor, import fla_npu_experimental before initializing the NPU in a new process.\n"
+                        "Conflicting operator vendors:\n" + "\n".join(self.conflicts))
             old_path = os.environ.get("ASCEND_CUSTOM_OPP_PATH")
             if self.conflicts:
                 self.prepare(self.vendors[side])

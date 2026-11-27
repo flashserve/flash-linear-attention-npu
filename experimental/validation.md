@@ -11,6 +11,8 @@ experimental 使用手动验证。各次结果按日期和代码基线分别记�
 | 两种导入顺序 | 新进程自动发现两套 vendor。两种顺序分别通过正式算子恒等矩阵对拍、RWKV8 quick 三条 CPU reference 对拍。 |
 | 正式与实验各有增量 | 保留正式 run 增量，实验侧先叠加 wheel，再叠加 run，同一进程的两侧数值通过。 |
 | 仅 opType 冲突、仅 ACLNN 符号冲突 | 临时负例分别重复 CANN 配置中的 opType 或动态库导出。各交换一次导入顺序，四次均拒绝第二侧；异常后第一侧在原进程执行并通过数值对拍。 |
+| 先用 NPU，再导入算子包 | 在 A5 重建正式 wheel。先在 NPU 上执行 PyTorch 加法并拷回 CPU，再导入包。两种重名分别交换导入顺序，四次均保留正式 vendor、拒绝实验侧，正式算子数值通过。全程只导入正式侧时也通过，修复前同一 opType 负例报 `561103`。 |
+| 正式侧已有 run 增量 | 在 opType 重名的环境先用 NPU，再尝试导入实验侧。拒绝实验侧后，正式算子通过对拍，进程映射包含原正式增量的库。仅导入 torch 和 torch_npu、尚未初始化 NPU 时，仍可先导入实验侧。 |
 | 卸载实验侧 | 移除实验增量及实验 wheel 前后，正式文件与原有正式增量状态的 SHA-256 一致；正式算子仍通过对拍。 |
 
 正常组合可在已安装两套配套 wheel 的 A5 环境复验：
@@ -18,6 +20,12 @@ experimental 使用手动验证。各次结果按日期和代码基线分别记�
 ```bash
 python experimental/_tests/coexist.py --first formal --device 0
 python experimental/_tests/coexist.py --first experimental --device 0
+```
+
+准备了仅 `RecomputeWUFwd` 重名的实验 OPP 后，以下命令验证 NPU 已使用正式 vendor 时拒绝实验导入，并在同一进程对拍正式算子：
+
+```bash
+python experimental/_tests/coexist.py --npu-first --first experimental --conflict 'CANN opType RecomputeWUFwd' --device 0
 ```
 
 ## 2026-11-13 增量验证目标与完整制品版本

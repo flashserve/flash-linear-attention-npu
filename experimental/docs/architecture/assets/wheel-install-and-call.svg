@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1000" viewBox="0 0 1080 1000" role="img" aria-labelledby="title desc">
   <title id="title">正式 wheel 与实验 wheel 的安装目录和同进程调用</title>
-  <desc id="desc">两列从左到右展示同一 site-packages 中的文件变化。正式 wheel 已有 fla_npu 和 Python 启动钩子，pip 追加实验 wheel 后新增同级的 fla_npu_experimental 包和独立管理入口。启动钩子检查两个 vendor 的 CANN opType 和 ACLNN 符号。无冲突时，同一进程的两个 Python 入口分别经过各自的 dispatcher、launcher 和 libcust_opapi.so 在 NPU 上执行。重名时仅后导入的一侧启用失败。</desc>
+  <desc id="desc">两列从左到右展示同一 site-packages 中的文件变化。正式 wheel 已有 fla_npu 和 Python 启动钩子，pip 追加实验 wheel 后新增同级的 fla_npu_experimental 包和独立管理入口。启动钩子检查两个 vendor 的 CANN opType 和 ACLNN 符号。无冲突时，同一进程的两个 Python 入口分别经过各自的 dispatcher、launcher 和 libcust_opapi.so 在 NPU 上执行。重名时，先使用 NPU 的业务沿用正式 vendor。先导入算子包则选中该侧，另一侧报出冲突名称。</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M1 1 L8 5 L1 9" fill="none" stroke="#536877" stroke-width="1.5"/>
@@ -63,7 +63,7 @@
   <rect x="24" y="462" width="1032" height="104" rx="10" fill="#f6f8fa" stroke="#c6d1d8"/>
   <text x="44" y="491" class="heading">正式 wheel 的 .pth 启动钩子发现双方 vendor</text>
   <text x="44" y="521" class="body">检查 CANN opType 和 ACLNN 符号。无重名时，在 CANN 初始化前将双方 vendor 加入 ASCEND_CUSTOM_OPP_PATH。</text>
-  <text x="44" y="547" class="body">发现重名时，先导入的一侧可用。后导入的一侧在注册前报错，列出冲突名称。</text>
+  <text x="44" y="547" class="body">有重名时，先用 NPU 则沿用正式侧，先导入算子包则选中该侧。另一侧在注册前报出冲突名称。</text>
   <path d="M540 566V582 M276 582H804" class="guide"/>
   <path d="M276 582V601" class="arrow"/><path d="M804 582V601" class="arrow"/>
 

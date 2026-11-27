@@ -52,10 +52,12 @@ class CoexistTest(unittest.TestCase):
                     first, second = second, first
                 pair = InstalledPair(self.formal, self.experimental, [base], lambda _: [peer])
                 pair.startup()
-                self.assertNotIn(str(base), os.environ["ASCEND_CUSTOM_OPP_PATH"])
+                external = str(self.formal.parent / "external")
+                self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"].split(os.pathsep), [str(base), external])
                 with pair.activating(first):
                     pass
                 selected = os.environ["ASCEND_CUSTOM_OPP_PATH"]
+                self.assertEqual(selected.split(os.pathsep), [str(base if formal_first else peer), external])
                 with self.assertRaises(ImportError) as error:
                     with pair.activating(second):
                         self.fail("conflicting package started loading")
@@ -63,6 +65,21 @@ class CoexistTest(unittest.TestCase):
                 self.assertIn(f"{kind} {name}: {base} and {peer}", str(error.exception))
                 self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"], selected)
                 self.assertEqual(pair.active, {first})
+
+    def test_native_formal_vendor_keeps_selection_before_python_import(self):
+        base = self.vendor(self.formal, "base", "A", "aclnnA")
+        peer = self.vendor(self.experimental, "exp", "A", "aclnnB")
+        pair = InstalledPair(self.formal, self.experimental, [base], lambda _: [peer])
+        pair.startup()
+        previous = os.environ["ASCEND_CUSTOM_OPP_PATH"]
+        with patch.object(pair, "_loaded_formal_vendor", return_value=str(base / "op_proto/lib/proto.so")):
+            with self.assertRaisesRegex(ImportError, "CANN opType A"):
+                with pair.activating(self.experimental):
+                    self.fail("CANN already registered the formal vendor")
+        self.assertEqual(os.environ["ASCEND_CUSTOM_OPP_PATH"], previous)
+        with pair.activating(self.formal):
+            pass
+        self.assertEqual(pair.active, {self.formal})
 
     def test_disjoint_vendors_keep_local_overlay_order(self):
         base = self.vendor(self.formal, "base", "A", "aclnnA")
