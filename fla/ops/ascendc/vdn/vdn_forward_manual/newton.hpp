@@ -173,6 +173,12 @@ public:
         copyOut_(output, l0c_, layout::RowMajor{D, D}, cLayout);
     }
 
+    // The injection is the initial value for both directional scans.
+    CATLASS_DEVICE void StoreAgain(AscendC::GlobalTensor<float> output) {
+        copyOut_(output, l0c_, layout::RowMajor{D,D},
+                 layout::zN::MakeLayoutInL0C(MakeCoord(D,D)));
+    }
+
     CATLASS_DEVICE void DrainStore()
     {
         // FIX -> MTE2 covers Xnext GM feedback, including the GM load itself.

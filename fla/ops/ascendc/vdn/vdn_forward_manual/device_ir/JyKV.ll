@@ -780,7 +780,7 @@ define private void @vmul_2d_float(ptr addrspace(6) %0, ptr addrspace(6) %1, i64
 ; Function Attrs: alwaysinline
 declare dso_local void @_mlir_ciface_vmul_2d_float(ptr, ptr, ptr, ptr) #0
 
-define dso_local void @JyKV14.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(1) %2, ptr addrspace(1) %3, ptr addrspace(1) %4, ptr addrspace(1) %5, ptr addrspace(1) %6, ptr addrspace(1) %7, i32 %8, i32 %9, i32 %10, i32 %11, i32 %12, i32 %13, i64 %virtual_id) #1 {
+define dso_local void @JyKV.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(1) %2, ptr addrspace(1) %3, ptr addrspace(1) %4, ptr addrspace(1) %5, ptr addrspace(1) %6, ptr addrspace(1) %7, i32 %8, i32 %9, i32 %10, i32 %11, i32 %12, i32 %13, i64 %virtual_id) #1 {
   %15 = alloca i64, i64 1, align 8
   store i64 0, ptr %15, align 4
   %16 = mul i32 %11, %12
@@ -1036,7 +1036,8 @@ define dso_local void @JyKV14.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(
   call void @llvm.hivm.SET.FLAG.IMM(i64 1, i64 4, i64 0)
   call void @llvm.hivm.BARRIER(i64 1)
   call void @vand_1d_int32_t(ptr addrspace(6) %94, ptr addrspace(6) %95, i64 0, i64 8192, i64 1, ptr addrspace(6) inttoptr (i64 131328 to ptr addrspace(6)), ptr addrspace(6) inttoptr (i64 131328 to ptr addrspace(6)), i64 0, i64 8192, i64 1, ptr addrspace(6) %98, ptr addrspace(6) %99, i64 0, i64 8192, i64 1, ptr addrspace(6) null, ptr addrspace(6) null, i64 0, i64 0, i64 1)
-  %143 = mul i32 %108, 5670
+  %frame_rows = mul i32 %9, %10
+  %143 = mul i32 %108, %frame_rows
   %144 = mul i32 %110, 405
   %145 = sext i32 %143 to i64
   %146 = sext i32 %144 to i64

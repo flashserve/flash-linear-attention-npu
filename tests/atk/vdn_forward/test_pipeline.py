@@ -16,12 +16,14 @@ class TestVdnPipeline(unittest.TestCase):
         from fla_npu.ops.vdn import _manual
         if not _manual._HAS_KERNEL:
             self.skipTest("requires the CANN 9.2.1 pipeline payload")
-        for frames, heads in ((85, 7), (87, 7), (87, 14)):
+        for frames, heads in ((64, 4), (85, 7), (86, 8), (87, 14), (96, 16)):
             for cores in (20, 24):
                 with self.subTest(frames=frames, heads=heads, cores=cores):
                     conv, *grams = [table.numpy().tobytes() for table in
                                     _manual._tiling("cpu", frames, heads, cores)]
                     self.assertEqual(struct.unpack_from("<4i", conv, 92), (cores // 4, 1, 1, 4))
+                    self.assertEqual(struct.unpack_from("<i", conv, 4)[0], heads * 128)
+                    self.assertEqual(struct.unpack_from("<i", conv, 28)[0], heads * 8)
                     batch = frames * heads
                     per_core = (batch + cores - 1) // cores
                     for table in grams:
@@ -54,7 +56,8 @@ class TestVdnPipeline(unittest.TestCase):
                 torch.use_deterministic_algorithms(True)
                 for f, h, tokens, conv, active in [
                     (85, 7, 405, True, True), (87, 7, 405, False, True),
-                    (87, 14, 405, True, True), (86, 7, 405, False, False),
+                    (87, 14, 405, True, True), (86, 7, 405, False, True),
+                    (86, 8, 405, True, True), (65, 9, 405, True, False), (97, 7, 405, False, False),
                     (85, 7, 404, False, False), (3, 2, 17, False, False),
                 ]:
                     with self.subTest(frames=f, heads=h, tokens=tokens, conv=conv):

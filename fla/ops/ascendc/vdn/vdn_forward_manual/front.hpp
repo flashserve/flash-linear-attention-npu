@@ -118,10 +118,11 @@ __aicore__ inline void Temporal(Addresses g,bool value,int first,int count) {
     else
         JyKey(0,nullptr,nullptr,g.p[Panel],g.p[KTime],g.p[Key]+bytes,g.p[Key]+bytes,g.h,S,first,g.f,count,workers,1,1,GetBlockIdx());
 }
-__aicore__ inline void QueryFeatures(Addresses g){
+__aicore__ inline void QueryFeatures(Addresses g,int first,int count){
     Mark(g,4,0);
     const int workers=GetBlockNum()*GetSubBlockNum();
-    JyQuery(0,nullptr,nullptr,g.p[Q],g.p[Query],g.f,g.h,S,workers,1,1,GetBlockIdx());
+    const int64_t bytes=int64_t(first)*g.h*S*D*sizeof(bfloat16_t);
+    JyQuery(0,nullptr,nullptr,g.p[Q]+bytes,g.p[Query]+bytes,count,g.h,S,workers,1,1,GetBlockIdx());
     Mark(g,4,1);
 }
 #endif
@@ -137,8 +138,13 @@ __aicore__ inline void Spatial(Addresses g,GM_ADDR packed,GM_ADDR filter,int fir
 __aicore__ inline void ConvPipeline(Addresses g) {
     const int frameGroups=GetBlockNum()/4;
     const int split=((g.f/2+frameGroups/2)/frameGroups)*frameGroups;
-    GM_ADDR packedV=g.p[K32];
-    GM_ADDR filterV=packedV+int64_t(g.f)*g.h*S*D*sizeof(bfloat16_t);
+    // The V pack stays live through its second spatial panel. Reuse Query and B32
+    // so K32 can be filled concurrently, before the last V temporal pass.
+    GM_ADDR packedV=g.p[Query];
+    GM_ADDR filterV=g.p[B32];
+    // Keep a small temporal panel alongside the V spatial tail. The remainder
+    // overlaps Gram A once CastKeys has published its two FP32 operands.
+    const int firstValues=(g.f+7)/8;
 #if defined(__DAV_VEC__)
     PackProjection(g,false,g.p[Packed],g.p[Filter]);
 #endif
@@ -150,6 +156,8 @@ __aicore__ inline void ConvPipeline(Addresses g) {
             const bool value=wave>=2, back=wave%2;
             Spatial(g,value?packedV:g.p[Packed],value?filterV:g.p[Filter],
                     back?split:0,back?g.f-split:split);
+        }else{
+            OriginalGramA::Run(g.p[WK32],g.p[K32],g.p[GramA],g.p[GramAT]);
         }
 #else
         if(wave==0){
@@ -162,7 +170,11 @@ __aicore__ inline void ConvPipeline(Addresses g) {
             Unpack(g.p[ConvOut]+bytes,g.p[Panel]+bytes,count,g.h);
             SyncAll<true>();
             const int start=back?split-2:0, end=back?g.f:split-2;
-            Temporal(g,ready>=2,start,end-start);
+            if(ready<2) Temporal(g,false,start,end-start);
+            else if(ready==2){
+                Temporal(g,true,0,firstValues);
+                CastKeys(g);
+            }else Temporal(g,true,firstValues,g.f-firstValues);
         }
 #endif
         SyncAll<false>();
@@ -175,17 +187,29 @@ template<int Version> __aicore__ inline void Prepare(Addresses g){
     SyncAll<false>();
     if(g.conv) {
         ConvPipeline(g);
+#if defined(__DAV_CUBE__)
+        OriginalGramB::Run(g.p[Value],g.p[Key],g.p[B16],g.p[GramBT]);
+#else
+        QueryFeatures(g,0,g.f/2);
+        JyInit(0,nullptr,nullptr,g.p[GramA],g.p[NegativeMatrix],g.p[First],g.f*g.h,
+               GetBlockNum()*GetSubBlockNum(),1,1,GetBlockIdx());
+#endif
+        SyncAll<false>();
+#if defined(__DAV_VEC__)
+        CastB(g);
+#endif
+        SyncAll<false>();
+        return;
     }else{
 #if defined(__DAV_VEC__)
         const int workers=GetBlockNum()*GetSubBlockNum();
         const int id=GetBlockIdx();
-        if(g.h==7) JyKV7(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,workers,1,1,id);
-        else JyKV14(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,workers,1,1,id);
+        JyKV(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,workers,1,1,id);
 #endif
         SyncAll<false>();
     }
 #if defined(__DAV_VEC__)
-    if constexpr(Version<3) QueryFeatures(g);
+    if constexpr(Version<3) QueryFeatures(g,0,g.f);
     Mark(g,2,0);CastKeys(g);Mark(g,2,1);
 #elif defined(__DAV_CUBE__)
     if constexpr(Version>=2){Mark(g,3,0);OriginalGramB::Run(g.p[Value],g.p[Key],g.p[B16],g.p[GramBT]);Mark(g,3,1);}
@@ -195,7 +219,7 @@ template<int Version> __aicore__ inline void Prepare(Addresses g){
     if constexpr(Version<2){Mark(g,3,0);OriginalGramB::Run(g.p[Value],g.p[Key],g.p[B16],g.p[GramBT]);Mark(g,3,1);PipeBarrier<PIPE_ALL>();}
     Mark(g,5,0);OriginalGramA::Run(g.p[WK32],g.p[K32],g.p[GramA],g.p[GramAT]);Mark(g,5,1);
 #elif defined(__DAV_VEC__)
-    if constexpr(Version>=3){QueryFeatures(g);Mark(g,6,0);CastB(g);Mark(g,6,1);}
+    if constexpr(Version>=3){QueryFeatures(g,0,g.f);Mark(g,6,0);CastB(g);Mark(g,6,1);}
 #endif
     SyncAll<false>();
 #if defined(__DAV_VEC__)

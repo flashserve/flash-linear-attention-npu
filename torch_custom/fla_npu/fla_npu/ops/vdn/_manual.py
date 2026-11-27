@@ -19,27 +19,30 @@ def _available():
 
 
 _HAS_KERNEL = _available()
-_GEOMETRIES = {(85, 7), (87, 7), (87, 14)}
 
 
-@lru_cache(maxsize=None)
-def _tiling(device, frames, heads, cores):
+
+@lru_cache(maxsize=16)
+def _tiling(device, frames, heads, cores, stream_key=None):
     tables = []
+    batch = frames * heads
+    channels = heads * 128
+    per_core = (batch + cores - 1) // cores
     for name in ("c", "a", "b"):
-        path = _PACKAGE / "manual_tiling" / f"{name}-{frames}-{heads}.bin"
-        raw = bytearray(path.read_bytes())
-        if cores == 24:
-            if name == "c":
-                # Conv ABI: batch_dim; group_dim stays four.
-                struct.pack_into("<i", raw, 92, cores // 4)
-            else:
-                # Gram ABI: batch_single_core, batch_dim and batch_l1_factor.
-                per_core = (frames * heads + cores - 1) // cores
-                for offset, value in ((76, per_core), (88, cores), (156, per_core)):
-                    struct.pack_into("<i", raw, offset, value)
-        data = torch.frombuffer(raw, dtype=torch.uint8)
-        tables.append(data.to(device))
-    return tables
+        # All supported shapes share the layout, tile dimensions and lookup tables.
+        raw = bytearray((_PACKAGE / "manual_tiling" / f"{name}-85-7.bin").read_bytes())
+        if name == "c":
+            # Batch, input/output channels, packed groups, batch grid and logical groups.
+            fields = ((0, frames), (4, channels), (16, channels), (28, channels // 16),
+                      (92, cores // 4), (156, channels))
+        else:
+            # Flat batch, A/B/C batch strides, matrices per core and L1 batch tile.
+            fields = ((24, batch), (40, batch), (56, batch), (72, batch),
+                      (76, per_core), (88, cores), (156, per_core))
+        for offset, value in fields:
+            struct.pack_into("<i", raw, offset, value)
+        tables.append(torch.frombuffer(raw, dtype=torch.uint8).to(device))
+    return tuple(tables)
 
 
 def _matches(tensor, device, dtype, shape):
@@ -51,9 +54,9 @@ def _matches(tensor, device, dtype, shape):
 def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_silu,
                 fuse_qk_l2norm, short_conv, frame_size, frame_tile, pad_tail, value_first):
     frames, heads, tokens, dim = q.shape
-    if (not _HAS_KERNEL or (frames, heads) not in _GEOMETRIES or (tokens, dim) != (405, 128)
+    if (not _HAS_KERNEL or not (64 <= frames <= 96 and 4 <= heads <= 16) or (tokens, dim) != (405, 128)
             or delta_rule != "newton_schulz" or not (fuse_silu and fuse_qk_l2norm and pad_tail)
-            or frame_tile not in ((32, 64) if heads == 7 else (32,))
+            or frame_tile not in (32, 64) or frame_tile * heads > 512
             or not torch.are_deterministic_algorithms_enabled() or torch.npu.matmul.allow_hf32
             or torch.npu.conv.allow_hf32 or torch.npu.is_current_stream_capturing()
             or "910B" not in torch.npu.get_device_name(q.device)):
@@ -89,6 +92,12 @@ def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_si
     cores = props.cube_core_num
     if cores not in (20, 24) or props.vector_core_num != 2 * cores:
         return None
+    # A small final bmm can tile Gram A along M/K differently from the full batch.
+    # Use the reference frame plan's padded batch size to preserve its FP32 sum order.
+    tail = (frames - 1) % frame_tile + 1
+    padded_tail = 1 << (tail - 1).bit_length()
+    if padded_tail * heads < cores:
+        return None
     return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile,cores)
 
 
@@ -104,8 +113,11 @@ def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores):
         return torch.empty(shape, device=q.device, dtype=torch.float32)
     def matrix():
         return fp(f,h,d,d)
+    # Allocate and reuse each cached table on the same stream, including across LRU evictions.
+    stream = _stable._current_stream_ptr()
+    tables = _tiling(q.device,f,h,cores,stream)
     inputs = [q,k,v,beta,alpha,bounds.contiguous().to(q.device),text_state if text_state is not None else q,
-              *weights.get("k",(q,q)),*weights.get("v",(q,q)),*_tiling(q.device,f,h,cores)]
+              *weights.get("k",(q,q)),*weights.get("v",(q,q)),*tables]
     if weights:
         spatial_shape = (f*h*s*d,)  # flat GM storage for the packed 5HD panel
         workspace = [bf(*spatial_shape),bf(h*8,25,16,16),bf(*spatial_shape),bf(f,h,s,d),bf(5,h*d),bf(5,h*d)]
@@ -115,10 +127,11 @@ def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores):
     workspace.extend([
         bf(f,h,s,d),bf(f,h,s,d),bf(f,h,s,d),fp(f,h,s,d),fp(f,h,s,d),
         matrix(),bf(f,h,d,d),matrix(),matrix(),matrix(),matrix(),
-        fp(d,d),fp(d,d),fp(cores*6*d*d),matrix(),matrix(),
+        fp(d,d),fp(d,d),fp(cores*6*d*d),matrix(),fp(0),
         fp(f+1,h,d,d),fp(f+1,h,d,d),fp(3,f,h,d),fp(f+1,h,d),bf(f,h,d,d),bf(f,h,s,d),
     ])
-    panel = 20 if h == 7 else 44
+    groups = 4 if h <= 8 else 2
+    panel = 4 * ((f + 2 * groups) // (4 * groups))
     _stable._op("npu_vdn_pipeline")(*inputs, *workspace, f, h, panel, ITERATIONS - 1,
-                                   bool(weights), text_state is not None, _stable._current_stream_ptr(), cores)
+                                   bool(weights), text_state is not None, stream, cores)
     return workspace[-1]

@@ -47,8 +47,8 @@ void run(StableIValue* stack, uint64_t inputs, uint64_t outputs) {
   const bool conv = unbox<bool>(stack[BufferCount+4]), seed = unbox<bool>(stack[BufferCount+5]);
   const auto stream = unbox<int64_t>(stack[BufferCount+6]);
   const auto cores = unbox<int64_t>(stack[BufferCount+7]);
-  if ((cores!=20 && cores!=24) || !((f==85 && h==7) || (f==87 && (h==7 || h==14))) ||
-      panel != (h==7 ? 20 : 44) || steps<1 || steps>15)
+  if ((cores!=20 && cores!=24) || f<64 || f>96 || h<4 || h>16 ||
+      panel<1 || panel>f || steps<1 || steps>15)
     throw std::invalid_argument("invalid VDN pipeline geometry");
   constexpr int64_t dim = 128, square = dim*dim;
   const auto fh = f*h, rows = fh*405, features = rows*dim, matrices = fh*square;
@@ -73,6 +73,7 @@ void run(StableIValue* stack, uint64_t inputs, uint64_t outputs) {
     owners->push_back(unbox<Tensor>(stack[i]));
     if (!counts[i]) continue;
     const auto meta = meta_of(owners->back());
+    if (i==Inj && meta.sizes==std::vector<int64_t>{0}) continue;
     if (i==Q) anchor = meta;
     fla_npu_stable::vdn::check_same_npu(anchor,meta);
     bool dense = meta.contiguous;
