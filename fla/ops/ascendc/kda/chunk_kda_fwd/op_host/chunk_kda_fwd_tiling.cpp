@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include "op_common/log/log.h"
 #include "platform/soc_spec.h"
 #include <register/op_impl_registry.h>
 #include "arch35/chunk_kda_fwd_tiling_impl.h"
@@ -84,13 +86,27 @@ bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &i
 {
     const auto qShapePtr = context->GetInputShape(INPUT_Q_IDX);
     const auto vShapePtr = context->GetInputShape(INPUT_V_IDX);
-    if (qShapePtr == nullptr || vShapePtr == nullptr || layout == nullptr) {
+    if (qShapePtr == nullptr || vShapePtr == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "q,v");
         return false;
     }
-    const auto &qShape = qShapePtr->GetStorageShape();
-    const auto &vShape = vShapePtr->GetStorageShape();
+    if (layout == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "layout");
+        return false;
+    }
+    // torch 连续张量透传时 origin/storage 可能退化为 [numel]；合法 rank 优先。
+    const auto &qOrigin = qShapePtr->GetOriginShape();
+    const auto &vOrigin = vShapePtr->GetOriginShape();
+    const bool qOriginValid = qOrigin.GetDimNum() == 3 || qOrigin.GetDimNum() == 4;
+    const bool vOriginValid = vOrigin.GetDimNum() == 3 || vOrigin.GetDimNum() == 4;
+    const auto &qShape = qOriginValid ? qOrigin : qShapePtr->GetStorageShape();
+    const auto &vShape = vOriginValid ? vOrigin : vShapePtr->GetStorageShape();
     info.rank = qShape.GetDimNum();
     if (info.rank != vShape.GetDimNum() || (info.rank != 3 && info.rank != 4)) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "q,v",
+            std::to_string(info.rank) + "," + std::to_string(vShape.GetDimNum()),
+            "q and v must share one rank: 3 for TND/NTD, 4 for BSND/BNSD");
         return false;
     }
 
@@ -122,8 +138,18 @@ bool ResolveShape(gert::TilingContext *context, const char *layout, ShapeInfo &i
         info.kDim = qShape.GetDim(2);
         info.vDim = vShape.GetDim(2);
     }
-    return info.batch > 0 && info.seqlen > 0 && info.qHeads > 0 && info.vHeads > 0 &&
-           info.kDim > 0 && info.vDim > 0 && info.vHeads % info.qHeads == 0;
+    const bool dimsPositive = info.batch > 0 && info.seqlen > 0 && info.qHeads > 0 &&
+                              info.vHeads > 0 && info.kDim > 0 && info.vDim > 0;
+    if (!dimsPositive || info.vHeads % info.qHeads != 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "B,T,HK,HV,K,V",
+            std::to_string(info.batch) + "," + std::to_string(info.seqlen) + "," +
+                std::to_string(info.qHeads) + "," + std::to_string(info.vHeads) + "," +
+                std::to_string(info.kDim) + "," + std::to_string(info.vDim),
+            "all dims must be positive and HV must be divisible by HK");
+        return false;
+    }
+    return true;
 }
 
 bool ResolveSequenceInfo(gert::TilingContext *context, int64_t seqlen, int64_t chunkSize,
@@ -135,17 +161,40 @@ bool ResolveSequenceInfo(gert::TilingContext *context, int64_t seqlen, int64_t c
     seqNum = batch;
     totalChunks = (seqlen + chunkSize - 1) / chunkSize;
     if (!isVarLen) {
-        return totalChunks > 0;
+        if (totalChunks <= 0) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                context->GetNodeName(), "T,chunk_size",
+                std::to_string(seqlen) + "," + std::to_string(chunkSize),
+                "dense mode requires T > 0 and chunk_size > 0");
+            return false;
+        }
+        return true;
     }
 
     seqNum = cuTensor->GetStorageShape().GetDim(0) - 1;
     const int64_t *cu = cuTensor->GetData<int64_t>();
-    if (seqNum <= 0 || cu == nullptr || cu[0] != 0 || cu[seqNum] > seqlen) {
+    if (seqNum <= 0 || cu == nullptr || cu[0] != 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "cu_seqlens",
+            std::string("size=") + std::to_string(cuTensor->GetStorageShape().GetDim(0)) +
+                ",cu[0]=" + (cu == nullptr ? "nullptr" : std::to_string(cu[0])),
+            "cu_seqlens must be non-empty, readable and start with 0");
+        return false;
+    }
+    if (cu[seqNum] > seqlen || cu[seqNum] < 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "cu_seqlens,T",
+            std::to_string(cu[seqNum]) + "," + std::to_string(seqlen),
+            "cu_seqlens must be non-negative and not exceed T");
         return false;
     }
     totalChunks = 0;
     for (int64_t seq = 0; seq < seqNum; ++seq) {
         if (cu[seq] < 0 || cu[seq + 1] < cu[seq]) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                context->GetNodeName(), "cu_seqlens",
+                std::to_string(cu[seq]) + "," + std::to_string(cu[seq + 1]),
+                "cu_seqlens must be non-decreasing and non-negative");
             return false;
         }
         totalChunks += (cu[seq + 1] - cu[seq] + chunkSize - 1) / chunkSize;
@@ -154,9 +203,20 @@ bool ResolveSequenceInfo(gert::TilingContext *context, int64_t seqlen, int64_t c
     const auto chunkShape = context->GetOptionalInputShape(INPUT_CHUNK_INDICES_IDX);
     if (chunkShape != nullptr &&
         chunkShape->GetStorageShape().GetShapeSize() != totalChunks * 2) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "chunk_indices",
+            std::to_string(chunkShape->GetStorageShape().GetShapeSize()),
+            "chunk_indices must contain exactly 2*totalChunks elements (" +
+                std::to_string(totalChunks * 2) + ")");
         return false;
     }
-    return totalChunks > 0;
+    if (totalChunks <= 0) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "cu_seqlens",
+            std::to_string(seqNum), "cu_seqlens must describe at least one token");
+        return false;
+    }
+    return true;
 }
 } // namespace
 
@@ -165,7 +225,12 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const auto qDesc = context->GetInputDesc(INPUT_Q_IDX);
     const auto gDesc = context->GetInputDesc(INPUT_G_IDX);
     const auto attrs = context->GetAttrs();
-    if (qDesc == nullptr || gDesc == nullptr || attrs == nullptr) {
+    if (qDesc == nullptr || gDesc == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), qDesc == nullptr ? "q" : "g");
+        return ge::GRAPH_FAILED;
+    }
+    if (attrs == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "attrs");
         return ge::GRAPH_FAILED;
     }
 
@@ -176,8 +241,11 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
     const float lowerBound = *attrs->GetAttrPointer<float>(ATTR_LOWER_BOUND_IDX);
     const bool useGateInKernel = *attrs->GetAttrPointer<bool>(ATTR_USE_GATE_IDX);
     const int64_t stage = *attrs->GetAttrPointer<int64_t>(ATTR_STAGE_IDX);
-    if (chunkSize <= 0 || stage < KDA_STAGE_FULL ||
-        stage > KDA_STAGE_FINALIZE) {
+    if (chunkSize <= 0 || stage < KDA_STAGE_FULL || stage > KDA_STAGE_FINALIZE) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            context->GetNodeName(), "chunk_size,stage",
+            std::to_string(chunkSize) + "," + std::to_string(stage),
+            "chunk_size must be positive and stage must be in [KDA_STAGE_FULL, KDA_STAGE_FINALIZE]");
         return ge::GRAPH_FAILED;
     }
 
@@ -279,6 +347,10 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
         // 不变式一：补齐到整块后的 token 数必须覆盖真实 token 数。totalChunks 由 host
         // 侧按 cu_seqlens 算出，一旦与实际序列长度口径分叉，这里就会退化成尾块越界。
         if (chunkAlignedTokens < tokenHeads / shape.vHeads) {
+            OP_LOGE(context->GetNodeName(),
+                    "internal invariant broken: chunkAlignedTokens=%lu < tokens=%lu",
+                    static_cast<unsigned long>(chunkAlignedTokens),
+                    static_cast<unsigned long>(tokenHeads / shape.vHeads));
             return ge::GRAPH_FAILED;
         }
         // 不变式二：保留区间必须覆盖 kernel 侧 WScratchOffset 的最坏下标。该表达式
@@ -288,6 +360,10 @@ ge::graphStatus Tiling4ChunkKdaFwd(gert::TilingContext *context)
             static_cast<uint64_t>(hChunkCount) * shape.vHeads * chunkSize *
             shape.kDim * sizeof(float);
         if (postWuScratchBytes < postWuKernelRequiredBytes) {
+            OP_LOGE(context->GetNodeName(),
+                    "internal invariant broken: postWuScratchBytes=%lu < required=%lu",
+                    static_cast<unsigned long>(postWuScratchBytes),
+                    static_cast<unsigned long>(postWuKernelRequiredBytes));
             return ge::GRAPH_FAILED;
         }
         cursor = postWuScratchOffset + postWuScratchBytes;

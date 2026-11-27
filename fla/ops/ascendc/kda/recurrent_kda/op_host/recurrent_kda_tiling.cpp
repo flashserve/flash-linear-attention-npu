@@ -185,6 +185,8 @@ ge::graphStatus RecurrentKdaTiling::GetPlatformInfo()
     return ge::GRAPH_SUCCESS;
 };
 
+// CheckContext/GetOptionalInput/GetAttrsInfo/AnalyzeDtype/AnalyzeShapes/AnalyzeFormat
+// 均在本层上报，失败时这里仅传递返回码。
 ge::graphStatus RecurrentKdaTiling::GetShapeAttrsInfo()
 {
     if (CheckContext() != ge::GRAPH_SUCCESS) {
@@ -214,6 +216,7 @@ ge::graphStatus RecurrentKdaTiling::GetShapeAttrsInfo()
     return ge::GRAPH_SUCCESS;
 }
 
+// CalUbSize 内部已带结构化上报，失败时这里仅传递返回码。
 ge::graphStatus RecurrentKdaTiling::DoOpTiling()
 {
     if (CalUbSize() != ge::GRAPH_SUCCESS) {

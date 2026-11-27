@@ -38,16 +38,12 @@ inline ge::graphStatus GetPlatformInfo(gert::TilingContext *context, uint64_t &u
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
     coreNum = platformInfoPtr->GetCoreNum();
     if (coreNum == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            context->GetNodeName(), "aicNum", "0",
-            "platform must report at least one AIC core for causal_conv1d");
+        OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "%s: platform reported 0 AIC cores.", __func__);
         return ge::GRAPH_FAILED;
     }
     platformInfoPtr->GetLocalMemSize(fe::LocalMemType::UB, ubSize);
     if (ubSize == 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            context->GetNodeName(), "ubSize", "0",
-            "platform must report non-zero UB size for causal_conv1d");
+        OPS_REPORT_VECTOR_INNER_ERR(context->GetNodeName(), "%s: platform reported 0 UB bytes.", __func__);
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

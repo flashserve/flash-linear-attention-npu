@@ -106,3 +106,14 @@ ACLNN 的 A2/A3 总接口与 A5 V2 均在 kRstdOptional 后按顺序接收
 当 A5（非 ARCH22）或 `soc`/`aicNum`/`ubSize` 不满足要求时，本接口返回
 161002，表示**当前平台/环境不支持**，不是入参取值错误，用户补参数无法解决；
 CANN 9.2.0-beta.2 未注册 EZ1009，暂以 161002 过渡。
+
+## 返回码（aclnnChunkKdaBwd / V2）
+
+| 返回码 | 触发条件 |
+|---|---|
+| `ACLNN_ERR_PARAM_NULLPTR (161001)` | 必选输入为空；`use_gate_in_kernel=true` 时 `raw_g/a_log/dA` 缺失；`q_rstd/k_rstd`、`cu_seqlens/chunk_indices` 成对缺失 |
+| `ACLNN_ERR_PARAM_INVALID (161002)` | shape/dtype/layout/stride/属性非法；A5（非 ARCH22）平台能力不支持（EZ0026） |
+| `ACLNN_ERR_INNER_TILING_ERROR (561002)` | 参数校验通过后 tiling/launch 失败 |
+| `ACLNN_ERR_INNER_NULLPTR (561103)` | 内部连续化/视图/l0op 返回空指针 |
+
+**兼容性说明**：`raw_g/a_log/dA` 缺失由 `161002` 改为 `161001`；成对缺失统一为 `161001`。仅错误码与报文变化，成功路径与输出不变。

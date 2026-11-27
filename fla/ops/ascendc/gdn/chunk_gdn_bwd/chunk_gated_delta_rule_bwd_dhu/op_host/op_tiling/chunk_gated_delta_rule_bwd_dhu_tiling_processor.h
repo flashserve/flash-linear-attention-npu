@@ -448,6 +448,10 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (static_cast<int64_t>(wShape.GetDim(DIM_1)) != tiling_.HV) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ctx_.nodeName, CGDR_BWD_DHU_INPUT_W_NAME,
+                std::to_string(wShape.GetDim(DIM_1)),
+                std::string("w head dim must equal HV=") + std::to_string(tiling_.HV));
             return ge::GRAPH_FAILED;
         }
         if (CompareDim(qShape, dOShape, CGDR_BWD_DHU_INPUT_Q_NAME,

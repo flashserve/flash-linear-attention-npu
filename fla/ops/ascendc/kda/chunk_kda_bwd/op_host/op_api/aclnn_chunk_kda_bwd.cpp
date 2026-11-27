@@ -379,6 +379,12 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
             "dv/db/dg must match the layout");
         return ACLNN_ERR_PARAM_INVALID;
     }
+    // 空值优先：缺 raw_g/a_log/dA 时返回 161001，避免落入形状检查被改写成 161002
+    if (useGateInKernel &&
+        (rawGOptional == nullptr || aLogOptional == nullptr || dAOutOptional == nullptr)) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g,a_log,dA");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
     if (useGateInKernel &&
         !((MatchesTensor(rawGOptional, gateToken, DataType::DT_FLOAT) ||
            MatchesTensor(rawGOptional, gateToken, DataType::DT_BF16)) &&
@@ -680,12 +686,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            OP_NAME, "cu_seqlens,chunk_indices",
-            std::string(cuSeqlensOptional == nullptr ? "cu_seqlens=absent" : "cu_seqlens=present") + "," +
-                (chunkIndicesOptional == nullptr ? "chunk_indices=absent" : "chunk_indices=present"),
-            "cu_seqlens and chunk_indices must be supplied together");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, cuSeqlensOptional == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
     // PR291 has not completed the reviewed dht/dh0 semantics. Keep the
     // public composition honest until that implementation is repaired.
@@ -696,10 +699,6 @@ extern "C" aclnnStatus aclnnChunkKdaBwdGetWorkspaceSize(
                 (dhtOptional != nullptr ? "dht=present" : "dht=absent") + "," +
                 (dh0OutOptional != nullptr ? "dh0=present" : "dh0=absent"),
             "initial_state, dht and dh0 are not supported by this integration");
-        return ACLNN_ERR_PARAM_INVALID;
-    }
-    if (useGateInKernel && (rawGOptional == nullptr || aLogOptional == nullptr || dAOutOptional == nullptr)) {
-        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "raw_g,aLogOptional,dA");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (!useGateInKernel &&

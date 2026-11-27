@@ -153,10 +153,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         return ACLNN_ERR_PARAM_INVALID;
     }
     if ((cuSeqlensOptional == nullptr) != (chunkIndicesOptional == nullptr)) {
-        const char *actual = cuSeqlensOptional == nullptr ? "cuSeqlens absent; chunkIndices present" :
-            "cuSeqlens present; chunkIndices absent";
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(OP_NAME, "cuSeqlensOptional/chunkIndicesOptional", actual, "both present or both absent");
-        return ACLNN_ERR_PARAM_INVALID;
+        OP_LOGE_WITH_INVALID_INPUT(
+            OP_NAME, cuSeqlensOptional == nullptr ? "cu_seqlens" : "chunk_indices");
+        return ACLNN_ERR_PARAM_NULLPTR;
     }
 
     const auto status = CheckA5HeadsAndMetadata(q, v, cuSeqlensOptional, chunkIndicesOptional, chunkSize);
