@@ -49,6 +49,8 @@ def affected_pairs(pairs, roots, base, head, repo):
                or (path.startswith(f"tests/atk/{op}/") and path.endswith(".py"))
                for path in paths)
     }
+    if "tests/atk/chunk_fwd_h/fwd_h_cpu.py" in paths:
+        changed_ops.add("chunk_gated_delta_rule_bwd")
     return {(op, platform) for op, platform in pairs
             if op in changed_ops or f"tests/atk/smoke/cases/{op}/{platform}/cases.json" in paths}
 
@@ -65,9 +67,8 @@ def validate_cases(suite, cases):
         )
     for case in cases:
         acc = case["standard"]["acc"]
-        if (list(acc) if isinstance(acc, dict) else [acc]) != [STANDARD] or case[
-            "api_type"
-        ] != "fla_smoke":
+        accepted_apis = {"fla_smoke", Path(suite["reference"]).stem}
+        if (list(acc) if isinstance(acc, dict) else [acc]) != [STANDARD] or case["api_type"] not in accepted_apis:
             raise ValueError(
                 f"Unexpected executor or standard in {suite['group']}/{case['id']}"
             )
@@ -86,11 +87,12 @@ def groups_for(entry):
             raise ValueError(f"Invalid or duplicate ATK group {name!r} in {path}")
         seen.add(name)
         reference = group["reference"]
+        reference_dir = ROOT.parent / entry["op"] if group.get("reference_source") == "repository" else path.parent.parent
         if (
             Path(reference).name != reference
             or not reference.startswith("executor_")
             or not reference.endswith(".py")
-            or not (path.parent.parent / reference).is_file()
+            or not (reference_dir / reference).is_file()
         ):
             raise ValueError(f"Invalid or missing reference {reference!r} for {name}")
         suite = {**group, **entry}
@@ -249,7 +251,8 @@ def run_suite(suite, cases, output, device):
         return
     # ATK consumes a flat list and one execution configuration per invocation.
     config = folder / "pending.json"
-    config.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf8")
+    instrumented = [{**case, "api_type": "fla_smoke"} for case in pending]
+    config.write_text(json.dumps(instrumented, ensure_ascii=False), encoding="utf8")
     env = os.environ.copy()
     for flag in (
         "KDA_ATK_KERNEL_SEMANTICS",

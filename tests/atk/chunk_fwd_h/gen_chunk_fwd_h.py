@@ -21,7 +21,7 @@ except ModuleNotFoundError as exc:
 
 OP_NAME = "chunk_fwd_h"
 SEED_BASE = 20260831
-STANDARD = {"acc": "mixed_tolerance_bm", "perf": "not_key", "mem": 1.1}
+STANDARD = {"acc": {"cv_fused_double_benchmark": {"max_re_ratio": 5, "avg_re_ratio": 1.5, "root_mean_squared_ratio": 1.5}}, "perf": "not_key", "mem": 1.1}
 TEMPLATE_GATE_DTYPES = ("bf16", "fp32")
 TEMPLATE_GATE_MODES = ("g", "gk")
 TEMPLATE_EXP2_VALUES = (False, True)
@@ -949,7 +949,7 @@ def _input(
     }
 
 
-def _case_payload(case_id: int, spec: dict) -> dict:
+def _case_payload(case_id: int, spec: dict, *, accuracy: bool = True) -> dict:
     metadata = deepcopy(spec)
     metadata["case_id"] = case_id
     inputs = [
@@ -1015,15 +1015,15 @@ def _case_payload(case_id: int, spec: dict) -> dict:
         "api_type": "executor_chunk_fwd_h",
         "expected_error_msg": None,
         "backward": False,
-        "standard": STANDARD,
+        "standard": STANDARD if accuracy else {**STANDARD, "acc": "mixed_tolerance_bm"},
         "outputs": None,
         "inputs": inputs,
         "save_name": OP_NAME,
     }
 
 
-def _payloads(specs: list[dict]) -> list[dict]:
-    return [_case_payload(case_id, spec) for case_id, spec in enumerate(specs)]
+def _payloads(specs: list[dict], *, accuracy: bool = True) -> list[dict]:
+    return [_case_payload(case_id, spec, accuracy=accuracy) for case_id, spec in enumerate(specs)]
 
 
 if GENERATOR_REGISTRY is not None:
@@ -1045,9 +1045,9 @@ if GENERATOR_REGISTRY is not None:
             return case
 
 
-def _write(path: Path, specs: list[dict]) -> None:
+def _write(path: Path, specs: list[dict], *, accuracy: bool = True) -> None:
     path.write_text(
-        json.dumps(_payloads(specs), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(_payloads(specs, accuracy=accuracy), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -1066,8 +1066,8 @@ def main() -> None:
     perf = build_perf_specs()
     mss = build_mss_specs()
     _write(args.output_dir / f"atk_{OP_NAME}.json", accuracy)
-    _write(args.output_dir / f"atk_{OP_NAME}_perf.json", perf)
-    _write(args.output_dir / f"atk_{OP_NAME}_mss.json", mss)
+    _write(args.output_dir / f"atk_{OP_NAME}_perf.json", perf, accuracy=False)
+    _write(args.output_dir / f"atk_{OP_NAME}_mss.json", mss, accuracy=False)
     if args.summary:
         print(
             f"accuracy={len(accuracy)} positive={len(POSITIVE_SPECS)} "

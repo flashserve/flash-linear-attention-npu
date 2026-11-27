@@ -25,6 +25,18 @@ class AtkSmokeSelectionTests(unittest.TestCase):
                 self.assertNotIn("op_kernel", Path(root).parts)
                 self.assertTrue((REPO / root / "op_host").is_dir())
 
+    def test_cv_cases_match_operator_generator_on_both_platforms(self):
+        for op in ("chunk_fwd_h", "chunk_kda_bwd_recompute"):
+            generated = json.loads((SMOKE.parent / op / f"atk_{op}.json").read_bytes())
+            self.assertEqual(len(generated), 200)
+            for arch in ("A2", "A5"):
+                with self.subTest(op=op, platform=arch):
+                    groups = json.loads((SMOKE / "cases" / op / arch / "cases.json").read_bytes())
+                    group, = (g for g in groups if g["group"] == f"{op}-{arch}-cv200")
+                    self.assertEqual(group["cases"], generated)
+                    self.assertEqual(group["output"], "native")
+                    self.assertTrue(all("cv_fused_double_benchmark" in c["standard"]["acc"] for c in generated))
+
     def test_changed_paths_drive_matrix_and_platform_execution(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -77,7 +89,12 @@ class AtkSmokeSelectionTests(unittest.TestCase):
             git("commit", "-qm", "A5 test input and unrelated operator documentation")
             self.assertEqual(json.loads(select("matrix")), {"include": [{"op": "chunk_fwd_h", "platform": "A5"}]})
             self.assertEqual(select("affected", "--platform", "A2"), "")
-            add_file("tests/atk/smoke/helpers/bridges.py")
+            add_file("tests/atk/chunk_fwd_h/fwd_h_cpu.py")
+            git("add", ".")
+            git("commit", "-qm", "shared forward-state reference")
+            self.assertEqual(select("affected", "--platform", "A5").splitlines(),
+                             ["chunk_fwd_h", "chunk_gated_delta_rule_bwd"])
+            add_file("tests/atk/smoke/executor.py")
             git("add", ".")
             git("commit", "-qm", "shared ATK test harness")
             registered = json.loads((SMOKE / "suites.json").read_bytes())

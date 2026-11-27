@@ -129,7 +129,7 @@ def _spec(index):
 
 if GENERATOR_REGISTRY is not None:
 
-    @GENERATOR_REGISTRY.register(f"generator_{OP_NAME}")
+    @GENERATOR_REGISTRY.register("generator_chunk_kda_bwd_recompute")
     class Generator(CaseGenerator):
         def __init__(self, config):
             super().__init__(config)

@@ -49,8 +49,8 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     return {
         "x": _randn((B, T, D), dtype_name, calc_dtype, device, seed + 1),
         "weight": _randn((W, D), dtype_name, calc_dtype, device, seed + 2),
-        "bias": _randn((D,), dtype_name, calc_dtype, device, seed + 3),
-        "conv_states": _zeros((B, W - 1, D), dtype_name, calc_dtype, device),
+        "bias": _randn((D,), dtype_name, calc_dtype, device, seed + 3) if spec.get("with_bias", True) else None,
+        "conv_states": _zeros((B, W - 1, D), dtype_name, calc_dtype, device) if spec.get("with_conv_states", True) else None,
     }
 
 
@@ -77,6 +77,8 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     from fla_npu.ops import ascendc
 
+    if "with_bias" in spec or "with_conv_states" in spec:
+        return ascendc.causal_conv1d_fn(inputs["x"], inputs["weight"], inputs["bias"], inputs["conv_states"], activation=None)
     return ascendc.causal_conv1d(inputs["x"], inputs["weight"], bias=inputs["bias"], conv_states=inputs["conv_states"], activation_mode=0, run_mode=0, head_num=0)
 
 
@@ -90,7 +92,7 @@ class FunctionApi(BaseApi):
         self.high_precision = self.device == "cpu" and self.is_benchmark_task
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME)
+        spec = _case_spec(input_data, OP_NAME, self.task_result.case_config)
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":

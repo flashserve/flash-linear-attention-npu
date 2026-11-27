@@ -1,7 +1,7 @@
 """causal_conv1d_bwd 的 ATK 泛化用例生成器。
 
 生成确定性的泛化用例矩阵，覆盖 executor 当前支持的执行域：
-- layout 固定为 BSND（逻辑 [B, T, D]），activation=0，不携带 initial_state / dht；
+- layout 为 BSND 或 BSH（逻辑 [B, T, D]），activation 为 0、1 或 2，不携带 initial_state / dht；
 - dtype: bf16 / fp16；
 - B: 1 / 2 / 4 / 8；
 - T: 16 / 32 / 64 / 128 / 256，且恒有 T >= W；
@@ -74,6 +74,11 @@ def _dtype(dtype):
 
 def _spec(index):
     profile = deepcopy(PROFILES[index % len(PROFILES)])
+    scenario = index // len(DTYPES)
+    layout = ("BSND", "BSH")[scenario % 2]
+    activation = (scenario // 2) % 3
+    profile["name"] = profile["name"].replace("bsnd", layout.lower()) + f"_act{activation}"
+    profile.update(input_layout=layout, activation=activation, with_y=bool(activation) or scenario % 4 == 0)
     profile.update(
         {
             "op": OP_NAME,

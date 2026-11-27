@@ -42,6 +42,8 @@ def _dtype(dtype):
 def _spec(index):
     profile = deepcopy(PROFILES[index % len(PROFILES)])
     profile.update({"op": OP_NAME, "case_id": index, "seed": 20260817 + index, "route": "ascendc", "soc": "ascend910b"})
+    profile["with_bias"] = (index // len(PROFILES)) % 2 == 0
+    profile["with_conv_states"] = (index // (2 * len(PROFILES))) % 2 == 0
     return profile
 
 if GENERATOR_REGISTRY is not None:

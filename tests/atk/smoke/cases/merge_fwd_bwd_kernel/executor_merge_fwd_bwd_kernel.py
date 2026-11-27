@@ -72,7 +72,7 @@ class FunctionApi(BaseApi):
         self.high_precision = self.device == "cpu" and self.is_benchmark_task
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _cpu().normalize_spec(_case_spec(input_data, OP_NAME))
+        spec = _cpu().normalize_spec(_case_spec(input_data, OP_NAME, self.task_result.case_config))
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":

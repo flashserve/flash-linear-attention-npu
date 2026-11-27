@@ -2,17 +2,14 @@
 
 from dataclasses import dataclass
 import math
+import os
 from typing import Optional
 
 import torch
 
 
 CHUNK_SIZE = 64
-
-
 K_DIM = 128
-
-
 V_DIM = 128
 
 
@@ -79,7 +76,7 @@ def _reference(
     v_new = torch.empty(tuple(u.shape), dtype=elem_dtype, device=u.device)
     state_dtype = (
         inputs.initial_state.dtype
-        if inputs.initial_state is not None
+        if inputs.initial_state is not None and not high_precision
         else calc_dtype
     )
     final_logical = (
@@ -103,7 +100,7 @@ def _reference(
     ):
         for value_head in range(v_heads):
             state = (
-                initial_logical[sequence, value_head].clone()
+                initial_logical[sequence, value_head].to(state_dtype).clone()
                 if initial_logical is not None
                 else torch.zeros(
                     (K_DIM, V_DIM), dtype=state_dtype, device=k.device
@@ -122,7 +119,9 @@ def _reference(
 
                 w_chunk = w[physical_batch, value_head, token_begin:token_end]
                 p_acc = w_chunk.to(calc_dtype) @ h_current.to(calc_dtype)
-                p = p_acc.to(state_dtype)
+                p_dtype = (torch.float32 if not high_precision and g is not None
+                           and os.environ.get("GDN_ATK_BENCHMARK_ARCH") == "arch22" else state_dtype)
+                p = p_acc.to(p_dtype)
                 v_new_fp32 = (
                     u[physical_batch, value_head, token_begin:token_end].to(calc_dtype)
                     - p.to(calc_dtype)

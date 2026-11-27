@@ -7,7 +7,7 @@ generate: generator_causal_conv1d_bwd
 dtype_numbers: 100
 extra_numbers: 0
 standard:
-  acc: mixed_tolerance_bm
+  acc: cv_fused_double_benchmark
   perf: not_key
 inputs:
   - name: low_precision_marker
