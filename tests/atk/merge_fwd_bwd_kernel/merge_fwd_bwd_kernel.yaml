@@ -1,175 +1,188 @@
-name: merge_fwd_bwd_kernel
 api: pytorch
 api_type: executor_merge_fwd_bwd_kernel
 version: v2.1
-aclnn_name: MergeFwdBwdKernel
+name: merge_fwd_bwd_kernel
+aclnn_name:
 generate: generator_merge_fwd_bwd_kernel
-dtype_numbers: 64
+dtype_numbers: 84
 extra_numbers: 0
+# 冻结用例由 gen_merge_fwd_bwd_kernel.py 写出。marker 保留 bf16/fp16 两路，
+# 生成器会把 fp16 marker 改回 bf16：本算子不支持 FP16。
 standard:
-  acc: mixed_tolerance_bm
-shape_distributions:
-- - 0
-  - 1.0
+  acc:
+    cv_fused_double_benchmark:
+      max_re_ratio: 5
+      avg_re_ratio: 1.5
+      root_mean_squared_ratio: 1.5
+  perf: not_key
 inputs:
-- name: h
-  type: tensor
-  required: true
-  dtypes:
-    values:
-    - fp32
-    - bf16
-  ranges:
-    valid:
-      values:
-      - - -5
-        - 5
-      random_types:
-      - name: nd
-        mean:
-        - -5
-        - 5
-        std:
-        - 0.1
-        - 2
-      custom_dist_ratio:
-      - - 0.5
-        - 0.0
-      - - 0.5
-        - 0.0
-    invalid:
-      values: []
-  shapes:
-    dim_numbers:
-      values:
-      - 3
-    dim_values:
-    - values:
-      - 1
-      - 2
-      - 3
-      - 4
-    - values:
-      - 128
-    - values:
-      - 128
-    max_length: 17179869184
-  boundary:
-    has_empty: false
-    has_scalar: false
-    has_infnan: true
-    has_lower_border: true
-    has_upper_border: true
-- name: ag_hm
-  type: tensor
-  required: true
-  dtypes:
-    values:
-    - fp32
-    - bf16
-  ranges:
-    valid:
-      values:
-      - - -5
-        - 5
-      random_types:
-      - name: nd
-        mean:
-        - -5
-        - 5
-        std:
-        - 0.1
-        - 2
-      custom_dist_ratio:
-      - - 0.5
-        - 0.0
-      - - 0.5
-        - 0.0
-    invalid:
-      values: []
-  shapes:
-    dim_numbers:
-      values:
-      - 4
-    dim_values:
-    - values:
-      - 1
-      - 2
-      - 3
-      - 4
-      - 7
-      - 8
-    - values:
-      - 1
-      - 2
-      - 3
-      - 4
-    - values:
-      - 128
-    - values:
-      - 256
-    max_length: 17179869184
-  boundary:
-    has_empty: false
-    has_scalar: false
-    has_infnan: true
-    has_lower_border: true
-    has_upper_border: true
-- name: pre_or_post_num_ranks
-  type: attr
-  required: true
-  dtypes:
-    values:
-    - int
-  ranges:
-    valid:
-      values:
-      - 1
-      - 2
-      - 3
-      - 4
-      - 7
-    invalid:
-      values: []
-- name: rank
-  type: attr
-  required: true
-  dtypes:
-    values:
-    - int
-  ranges:
-    valid:
-      values:
-      - 0
-      - 1
-      - 2
-      - 3
-      - 7
-    invalid:
-      values: []
-- name: forward
-  type: attr
-  required: true
-  dtypes:
-    values:
-    - attr_bool
-  ranges:
-    valid:
-      values:
-      - true
-      - false
-    invalid:
-      values: []
-- name: state_v_first
-  type: attr
-  required: true
-  dtypes:
-    values:
-    - attr_bool
-  ranges:
-    valid:
-      values:
-      - true
-      - false
-    invalid:
-      values: []
+  - name: low_precision_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [bf16, fp16]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: fp32_marker
+    type: tensor
+    required: true
+    dtypes:
+      values: [fp32]
+    ranges:
+      valid:
+        values: [[0, 0]]
+      invalid:
+        values: []
+    shapes:
+      dim_numbers:
+        values: [1]
+      dim_values:
+        values: [1]
+  - name: case_spec
+    type: attr
+    required: true
+    dtypes:
+      values: [non_param]
+    ranges:
+      valid:
+        values: ["{\"name\":\"MFB-01_unit_n1_bf16\",\"dtype\":\"bf16\",\"S\":1,\"HV\":1,\"pre_or_post_num_ranks\":1,\"rank\":0,\"forward\":true,\"state_v_first\":false,\"ag_hm_noncontiguous\":false,\"note\":\"N=1 单世界，只拷贝 He，不起 Cube\",\"op\":\"merge_fwd_bwd_kernel\",\"case_id\":0,\"logical_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"tiling_key\":10}"]
+      invalid:
+        values: []
+  - name: dtype
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["bf16", "fp32"]
+      invalid:
+        values: ["fp16"]
+  - name: S
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1]
+      invalid:
+        values: []
+  - name: HV
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1]
+      invalid:
+        values: []
+  - name: pre_or_post_num_ranks
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [1]
+      invalid:
+        values: []
+  - name: rank
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+  - name: forward
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [true]
+      invalid:
+        values: []
+  - name: state_v_first
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false]
+      invalid:
+        values: []
+  - name: ag_hm_noncontiguous
+    type: attr
+    required: true
+    dtypes:
+      values: [bool]
+    ranges:
+      valid:
+        values: [false]
+      invalid:
+        values: []
+  - name: tiling_key
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [10]
+      invalid:
+        values: []
+  - name: case_id
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [0]
+      invalid:
+        values: []
+  - name: seed
+    type: attr
+    required: true
+    dtypes:
+      values: [int]
+    ranges:
+      valid:
+        values: [20260817]
+      invalid:
+        values: []
+  - name: soc
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["ascend910b", "ascend910_93", "ascend950"]
+      invalid:
+        values: []
+  - name: route
+    type: attr
+    required: true
+    dtypes:
+      values: [string]
+    ranges:
+      valid:
+        values: ["ascendc"]
+      invalid:
+        values: []
