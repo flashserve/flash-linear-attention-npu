@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import ctypes
 import importlib.util
 import os
 import pathlib
 import re
+import sys
 import warnings
 from typing import Optional
 
@@ -412,8 +414,15 @@ def _run_import_guards() -> None:
 
 from ._backend_policy import validate_backend_environment as _validate_backend_environment
 
-_validate_backend_environment()
-_run_import_guards()
-_load_wheel_layer_plan()
-_warn_if_embedded_opp_not_preconfigured()
-load_ascendc_opapi_libraries()
+_pair = getattr(sys.modules.get("fla_npu_opp_env"), "installed_pair", None)
+if _pair is not None and _pair.formal != _PACKAGE_DIR:
+    _pair = None
+with (_pair.activating(_PACKAGE_DIR) if _pair is not None else nullcontext()):
+    _validate_backend_environment()
+    _run_import_guards()
+    _load_wheel_layer_plan()
+    _warn_if_embedded_opp_not_preconfigured()
+    load_ascendc_opapi_libraries()
+    if _pair is not None and _WHEEL_LAYER_CONTEXT is None:
+        _WHEEL_LAYER_CONTEXT = {"namespace": "fla_npu_stable",
+                                "libraries": [str(_resolve_packaged_opapi(v)) for v in _pair.vendors[_PACKAGE_DIR]]}

@@ -1,7 +1,24 @@
 # experimental 验证记录
 
-当前基线为 main `7065b0cd`（包含已合入的 #1177、#1148）。experimental 不跑 CI，以下区分本轮手动检查和历史实机结果。
-日志和数值明细保存在各次验证指定的输出目录；历史结果不累计为当前提交的通过数。
+experimental 使用手动验证。各次结果按日期和代码基线分别记录。
+
+## 2026-11-27 正式和实验 wheel 同进程调用
+
+基于 main `5d2eca9`，A5 / Ascend 950、CANN 9.2.0、Python 3.12.15、torch 2.13.0+cpu、torch_npu 2.13.0。在独立源码目录分别构建正式 `recompute_w_u_fwd` 和实验 RWKV8 的 run/wheel，并安装到临时 Python 环境。
+
+| 场景 | 实测结果 |
+|---|---|
+| 两种导入顺序 | 新进程自动发现两套 vendor。两种顺序分别通过正式算子恒等矩阵对拍、RWKV8 quick 三条 CPU reference 对拍。 |
+| 正式与实验各有增量 | 保留正式 run 增量，实验侧先叠加 wheel，再叠加 run，同一进程的两侧数值通过。 |
+| 仅 opType 冲突、仅 ACLNN 符号冲突 | 临时负例分别重复 CANN 配置中的 opType 或动态库导出。各交换一次导入顺序，四次均拒绝第二侧；异常后第一侧在原进程执行并通过数值对拍。 |
+| 卸载实验侧 | 移除实验增量及实验 wheel 前后，正式文件与原有正式增量状态的 SHA-256 一致；正式算子仍通过对拍。 |
+
+正常组合可在已安装两套配套 wheel 的 A5 环境复验：
+
+```bash
+python experimental/_tests/coexist.py --first formal --device 0
+python experimental/_tests/coexist.py --first experimental --device 0
+```
 
 ## 2026-11-13 增量验证目标与完整制品版本
 

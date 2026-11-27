@@ -21,7 +21,7 @@
 `build.sh` 未传 `--experimental` 时，省略 `--ops` 或使用 `--ops=all` 都只编正式算子。
 显式传入 `--experimental` 后，全选也只编实验算子。当前没有独立的 `--all` 参数。
 
-实验支持通用增量安装；不支持运行中替换 OPP 或正式/实验同进程混用。使用独立 Python 环境和新进程。增量 base 的归属由开发者保证，不提供跨集合误装的专属检查或恢复。
+新版正式 wheel 和实验 wheel 可安装在同一 Python 环境。两个包保留独立的 wrapper、launcher、vendor、增量状态和锁。安装或更新组件后须启动新进程。
 
 ## 构建与安装
 
@@ -75,7 +75,26 @@ python -m pip install --no-deps /absolute/development-wheels/*.whl
 
 ## 运行
 
-在安装实验 wheel 的环境中，先初始化 CANN，再启用 wheel 内的实验 vendor：
+### 与正式算子同进程使用
+
+先初始化 CANN toolkit，在已安装配套正式 wheel 的环境中追加同一 SoC 的实验 wheel。启用正式 wheel 的默认 Python 启动钩子即可，无需再 source 实验环境脚本：
+
+```bash
+unset FLA_NPU_DISABLE_PTH
+python -m pip install /absolute/path/to/experimental.whl
+python - <<'PY'
+from fla_npu_experimental import fused_recurrent_rwkv8
+from fla_npu.ops.ascendc import npu_recompute_w_u_fwd
+PY
+```
+
+两种导入顺序均支持。启动钩子检查双方当前选中 vendor 的 CANN opType 和动态库实际导出的 ACLNN 符号。名称无交集时，两套 vendor 在 CANN 初始化前就绪。发现重名时，先导入的一侧取得本进程的使用权，后导入的一侧在加载前报出冲突名称和来源；先导入侧仍可执行。冲突场景应在初始化 NPU 前导入需要使用的一侧。旧正式 wheel 不提供该协作能力。
+
+首次 pip 安装提供实验适配层和 OPP。后续实验增量使用下文的实验管理入口，正式增量继续由正式管理器管理。仅有正式 wheel 时，实验 `.run` 不能提供新算子的 Python 入口。
+
+### 单独使用实验环境
+
+在只安装实验 wheel 或显式关闭启动钩子的环境中，先初始化 CANN，再启用 wheel 内的实验 vendor：
 
 ```bash
 export FLA_NPU_DISABLE_PTH=1
@@ -90,7 +109,7 @@ PY
 
 默认装入实验 base 的 `libfla_npu_experimental_stable.so` 和 `opp/vendors/fla_npu_experimental_transformer/op_api/lib/libcust_opapi.so`，注册 `torch.ops.fla_npu_experimental_stable`。
 `FLA_NPU_EXPERIMENTAL_OPP_PATH` 表示显式 OPP root，默认使用内嵌 `opp`；合法增量由通用管理器选择其 OPP 组件。
-首次装载检查 ABI、launcher 指纹及符号来源；每次调用只检查环境和正式包混用。文件更新后必须重启，不监控运行中的文件变更。
+首次装载检查 ABI、launcher 指纹及符号来源；后续调用核对进程环境。文件更新后必须重启。
 RWKV8 返回 `(o, s, sa)`，`chunk_len` 范围为 `[1,4294967295]`。
 
 ## 增量安装、卸载与恢复
@@ -104,7 +123,7 @@ python -m fla_npu_experimental_manage --source /absolute/update.whl
 python -m fla_npu_experimental_manage --source /absolute/update.run
 # 查看 生效的组件及兼容性问题。
 python -m fla_npu_experimental_manage --status
-# 重新设置选中组件的 OPP 顺序，然后启动新的 Python 进程。
+# 仅独立实验模式需要重新 source；双包模式直接启动新进程。
 source /absolute/site-packages/fla_npu_experimental/opp/vendors/fla_npu_experimental_transformer/bin/set_env.bash
 # 临时禁用增量；重新 source 后，新进程只使用 base。
 export FLA_NPU_OVERLAY_VENDOR=''

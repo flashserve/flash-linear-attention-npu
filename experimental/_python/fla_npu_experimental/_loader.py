@@ -1,12 +1,8 @@
-"""Load one explicitly selected experimental OPP in a fresh Python process.
-
-This module never discovers stable wheels, registers torch operators, modifies
-OPP search paths, or imports torch/torch_npu. Source the experimental vendor's
-set_env.bash before starting Python, then import this package before torch_npu.
-"""
+"""Validate experimental vendor ownership in standalone or paired wheel installations."""
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import ctypes
 import json
 import os
@@ -20,6 +16,19 @@ _CONFIGURATION = None
 _ENVIRONMENT = None
 _PLAN = None
 _LIBRARIES = ()
+_PACKAGE = Path(__file__).resolve().parent
+
+
+def installed_pair():
+    pair = getattr(sys.modules.get("fla_npu_opp_env"), "installed_pair", None)
+    if pair is not None and pair.experimental == _PACKAGE:
+        return pair
+    return None
+
+
+def activation():
+    pair = installed_pair()
+    return pair.activating(_PACKAGE) if pair is not None else nullcontext()
 
 
 def _absolute_path(value: str, label: str) -> Path:
@@ -39,10 +48,11 @@ def _inside(path: Path, root: Path, label: str) -> Path:
 
 
 def _resolve_configuration():
-    if os.environ.get("FLA_NPU_DISABLE_PTH", "").upper() not in {"1", "TRUE", "YES", "ON"}:
+    pair = installed_pair()
+    if pair is None and os.environ.get("FLA_NPU_DISABLE_PTH", "").upper() not in {"1", "TRUE", "YES", "ON"}:
         raise RuntimeError("Set FLA_NPU_DISABLE_PTH=1 before starting the experimental Python process.")
     bundled = Path(__file__).resolve().parent / "opp"
-    root = _absolute_path(os.environ.get("FLA_NPU_EXPERIMENTAL_OPP_PATH", str(bundled) if bundled.is_dir() else ""),
+    root = bundled if pair is not None else _absolute_path(os.environ.get("FLA_NPU_EXPERIMENTAL_OPP_PATH", str(bundled) if bundled.is_dir() else ""),
                           "FLA_NPU_EXPERIMENTAL_OPP_PATH")
     vendor = _inside(root / "vendors" / VENDOR, root, "experimental vendor")
     manifest_path = _inside(vendor / MANIFEST, vendor, "experimental manifest")
@@ -73,7 +83,11 @@ def _resolve_configuration():
     _LIBRARIES = tuple(str(_inside(v / "op_api/lib/libcust_opapi.so", package if _PLAN else root,
                                  "selected OPP library")) for v in vendors)
     paths = [part for part in os.environ.get("ASCEND_CUSTOM_OPP_PATH", "").split(os.pathsep) if part]
-    if [_absolute_path(part, "ASCEND_CUSTOM_OPP_PATH") for part in paths] != vendors:
+    if pair is not None:
+        selected = [Path(p).resolve() for p in paths if Path(p).resolve().is_relative_to(package / "opp")]
+        if selected != vendors:
+            raise RuntimeError("Experimental vendor order differs from the configured CANN path.")
+    elif [_absolute_path(part, "ASCEND_CUSTOM_OPP_PATH") for part in paths] != vendors:
         raise RuntimeError("ASCEND_CUSTOM_OPP_PATH must contain only the selected experimental vendor.")
     return root, vendor, custom
 
@@ -93,6 +107,14 @@ def _mapped_libraries():
 
 
 def _check_process(custom: Path, *, first_import: bool):
+    pair = installed_pair()
+    if pair is not None:
+        if first_import:
+            allowed = {v / "op_api/lib/libcust_opapi.so" for group in pair.vendors.values() for v in group}
+            for path in _mapped_libraries():
+                if path.name == "libcust_opapi.so" and path not in allowed:
+                    raise RuntimeError(f"A different custom OPP is already loaded: {path}")
+        return
     if any(name == "fla_npu" or name.startswith("fla_npu.") for name in sys.modules):
         raise RuntimeError("Stable fla_npu and fla_npu_experimental require separate Python processes.")
     if first_import and any(name == "torch_npu" or name.startswith("torch_npu.") or name == "acl"
@@ -124,7 +146,8 @@ def configure():
         _check_process(configuration[2], first_import=True)
         _CONFIGURATION = configuration
         _ENVIRONMENT = _environment()
-        sys.meta_path.insert(0, _RejectStableImport())
+        if installed_pair() is None:
+            sys.meta_path.insert(0, _RejectStableImport())
     else:
         validate_active_environment()
 

@@ -53,7 +53,7 @@ class CleanBuildPy(_build_py):
         for vendor in (built_package_dir / "opp/vendors").glob("*"):
             if vendor.is_dir():
                 writer["_write_set_env"](vendor)
-        for name in ("fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
+        for name in ("fla_npu_coexist.py", "fla_npu_opp_env.py", "fla_npu_opp_env.pth", "fla_npu_opp_manage.py", "fla_npu_wheel_overlay.py"):
             src = SETUP_DIR / name
             if src.exists():
                 self.copy_file(str(src), str(Path(self.build_lib) / name))

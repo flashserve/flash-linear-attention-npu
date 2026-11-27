@@ -9,6 +9,7 @@ fla_npu 后设置环境变量来不及”的问题。设置 FLA_NPU_DISABLE_PTH=
 可用 FLA_NPU_OVERLAY_VENDOR 指定（os.pathsep 分隔，靠前者优先）。
 """
 
+import importlib.util
 import os
 import re
 import warnings
@@ -139,14 +140,37 @@ def _vendor_dirs() -> list[Path]:
     return dirs
 
 
+installed_pair = None
+
+
+def _discover_pair(formal_vendors):
+    spec = importlib.util.find_spec("fla_npu_experimental_manage")
+    if spec is None or spec.origin is None:
+        return None
+    formal = _PACKAGE_DIR / "fla_npu"
+    peer = Path(spec.origin).resolve().parent / "fla_npu_experimental"
+    if not (formal / "layer_manifest.json").is_file() or not (peer / "layer_manifest.json").is_file():
+        return None
+    import fla_npu_experimental_manage as experimental
+    if not hasattr(experimental, "selected_vendors"):
+        return None
+    from fla_npu_coexist import InstalledPair
+    return InstalledPair(formal, peer, formal_vendors, experimental.selected_vendors)
+
+
 def _setup() -> None:
+    global installed_pair
     if _env_flag("FLA_NPU_DISABLE_PTH"):
         return
     vendor_dirs = _vendor_dirs()
     # 只处理 wheel 内嵌 OPP；skeleton（未 overlay）时静默跳过。
     if not vendor_dirs:
         return
-    _normalize_custom_opp_path(vendor_dirs)
+    installed_pair = _discover_pair(vendor_dirs)
+    if installed_pair is not None:
+        installed_pair.startup()
+    else:
+        _normalize_custom_opp_path(vendor_dirs)
     os.environ.setdefault("FLA_NPU_OPP_PATH", str(_VENDORS_DIR.parent))
 
 
