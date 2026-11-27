@@ -6,15 +6,12 @@
 #include <cstdint>
 #include <limits>
 #include <initializer_list>
-#include <type_traits>
 
 #include <register/op_impl_registry.h>
 #include "platform/platform_ascendc.h"
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../arch22/chunk_gated_delta_rule_bwd_finalize_tiling_arch22.h"
-#include "../../op_kernel/arch92/chunk_gated_delta_rule_bwd_finalize_policy.h"
-#include "../../op_kernel/arch92/chunk_gated_delta_rule_bwd_finalize_struct.h"
 #include <string>
 #include "graph/utils/type_utils.h"
 
@@ -96,9 +93,8 @@ bool CheckRank(const gert::StorageShape *shape, size_t rank)
     return shape != nullptr && shape->GetStorageShape().GetDimNum() == rank;
 }
 
-template <bool IsArch92, typename TilingData, typename Layout>
-ge::graphStatus ValidateShapes(gert::TilingContext *context, TilingData &tiling,
-                               bool stateVFirst, Layout inputLayout)
+ge::graphStatus ValidateShapes(gert::TilingContext *context, ChunkGatedDeltaRuleBwdFinalizeTilingData &tiling,
+                               bool stateVFirst, FinalizeLayout::Layout inputLayout, bool isArch92)
 {
     // 先从真实输入 shape 提取运行时规格，再校验当前仅支持的 64/128 档位；
     // 禁止用编译期常量代替 shape 推导结果写入 tiling data。
@@ -141,10 +137,10 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context, TilingData &tiling,
     const gert::Shape h = hShape->GetStorageShape();
     const gert::Shape dh = dhShape->GetStorageShape();
     tiling.B = q.GetDim(0);
-    tiling.HK = (inputLayout == Layout::BSND) ? q.GetDim(2) : q.GetDim(1);
-    tiling.T = (inputLayout == Layout::BSND) ? q.GetDim(1) : q.GetDim(2);
+    tiling.HK = (inputLayout == FinalizeLayout::BSND) ? q.GetDim(2) : q.GetDim(1);
+    tiling.T = (inputLayout == FinalizeLayout::BSND) ? q.GetDim(1) : q.GetDim(2);
     tiling.K = q.GetDim(3);
-    tiling.HV = (inputLayout == Layout::BSND) ? v.GetDim(2) : v.GetDim(1);
+    tiling.HV = (inputLayout == FinalizeLayout::BSND) ? v.GetDim(2) : v.GetDim(1);
     tiling.V = v.GetDim(3);
     tiling.chunkSize = a.GetDim(3);
     if (tiling.B <= 0 || tiling.HK <= 0 || tiling.HV <= 0 || tiling.T <= 0) {
@@ -169,12 +165,12 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context, TilingData &tiling,
     if (tiling.HV % tiling.HK != 0 || tiling.headRatio < 1 || tiling.headRatio > FinalizeHost::kA5PublishedMaxG) {
         const std::string actual = "HK=" + std::to_string(tiling.HK) + ", HV=" + std::to_string(tiling.HV);
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV/HK", actual,
-            IsArch92 ? "integer in [1, 16] on A6" : "integer in [1, 16] on A5");
+            isArch92 ? "integer in [1, 16] on A6" : "integer in [1, 16] on A5");
         return ge::GRAPH_FAILED;
     }
 
     if (k.GetDim(0) != tiling.B ||
-                    ((inputLayout == Layout::BSND) ?
+                    ((inputLayout == FinalizeLayout::BSND) ?
                          (k.GetDim(1) != tiling.T || k.GetDim(2) != tiling.HK) :
                          (k.GetDim(1) != tiling.HK || k.GetDim(2) != tiling.T)) ||
                     k.GetDim(3) != tiling.K) {
@@ -190,7 +186,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context, TilingData &tiling,
         return ge::GRAPH_FAILED;
     }
     if (v.GetDim(0) != tiling.B ||
-                    ((inputLayout == Layout::BSND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
+                    ((inputLayout == FinalizeLayout::BSND) ? (v.GetDim(1) != tiling.T || v.GetDim(2) != tiling.HV)
                                        : (v.GetDim(1) != tiling.HV || v.GetDim(2) != tiling.T)) ||
                     vNew.GetDim(0) != tiling.B || vNew.GetDim(1) != tiling.HV ||
                     vNew.GetDim(2) != tiling.T || vNew.GetDim(3) != tiling.V ||
@@ -238,14 +234,9 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context, TilingData &tiling,
     return ge::GRAPH_SUCCESS;
 }
 
-template <bool IsArch92>
 ge::graphStatus TilingFinalize(gert::TilingContext *context)
 {
-    using TilingData = std::conditional_t<IsArch92, GDN::FinalizeArch92::ChunkGatedDeltaRuleBwdFinalizeTilingData,
-                                           GDN::ChunkGatedDeltaRuleBwdFinalizeTilingData>;
-    using Layout = std::conditional_t<IsArch92, GDN::FinalizeArch92::FinalizeLayout::Layout,
-                                        GDN::FinalizeLayout::Layout>;
-    auto *tiling = context->GetTilingData<TilingData>();
+    auto *tiling = context->GetTilingData<ChunkGatedDeltaRuleBwdFinalizeTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
@@ -260,22 +251,20 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
         OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND");
         return ge::GRAPH_FAILED;
     }
-    const Layout layoutValue = (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
-        ? Layout::BSND : Layout::BNSD;
+    const FinalizeLayout::Layout layoutValue = (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+        ? FinalizeLayout::BSND : FinalizeLayout::BNSD;
     tiling->layout = layoutValue;
-    if constexpr (!IsArch92) {
-        // A2/A3 使用私有 tiling；A5 保留基线属性读取、shape 和 workspace 流程。
-        const platform_ascendc::PlatformAscendC routePlatform(context->GetPlatformInfo());
-        const auto npuArch = routePlatform.GetCurNpuArch();
-        if (npuArch == NpuArch::DAV_2201) {
-            return gdn_finalize_arch22::Tiling(context, routePlatform);
-        }
-        if (npuArch != NpuArch::DAV_3510) {
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                context->GetNodeName(), "npuArch", std::to_string(static_cast<int32_t>(npuArch)),
-                "only DAV_3510 reaches this path; DAV_2201 uses the arch22 private tiling");
-            return ge::GRAPH_FAILED;
-        }
+    const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
+    const auto npuArch = platform.GetCurNpuArch();
+    if (npuArch == NpuArch::DAV_2201) {
+        return gdn_finalize_arch22::Tiling(context, platform);
+    }
+    const bool isArch92 = (npuArch == NpuArch::DAV_9201);
+    if (!isArch92 && npuArch != NpuArch::DAV_3510) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "npuArch", std::to_string(static_cast<int32_t>(npuArch)),
+            "DAV_3510 or DAV_9201");
+        return ge::GRAPH_FAILED;
     }
     // 必选输入判空必须先于 ValidateShapes 的 rank 检查：
     // 缺参 → 161001/EZ0004，rank 不符 → 161002。
@@ -289,7 +278,7 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
         OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "dh");
         return ge::GRAPH_FAILED;
     }
-    if (ValidateShapes<IsArch92>(context, *tiling, stateVFirstValue, layoutValue) != ge::GRAPH_SUCCESS) {
+    if (ValidateShapes(context, *tiling, stateVFirstValue, layoutValue, isArch92) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
 
@@ -348,7 +337,7 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
     } else {
         tiling->seqNum = tiling->B;
         tiling->chunkNumForT = CeilDiv(tiling->T, tiling->chunkSize);
-        if ((IsArch92 || tiling->headRatio > 4) &&
+        if ((isArch92 || tiling->headRatio > 4) &&
             tiling->B > std::numeric_limits<int64_t>::max() / tiling->chunkNumForT) {
             const std::string actual = "B=" + std::to_string(tiling->B) +
                 ", chunksPerSequence=" + std::to_string(tiling->chunkNumForT);
@@ -377,10 +366,9 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
         return ge::GRAPH_FAILED;
     }
 
-    const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     const uint32_t availableCoreNum = std::min<uint32_t>(platform.GetCoreNumAic(), platform.GetCoreNumAiv());
     const uint32_t aicCoreNum = std::max<uint32_t>(1, availableCoreNum);
-    constexpr int64_t maxHeadsPerTask = IsArch92 ? GDN::FinalizeArch92::HEAD_COUNT : 4;
+    const int64_t maxHeadsPerTask = isArch92 ? 3 : 4;
     if (tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->HK) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "chunkCount,HK",
             std::to_string(tiling->totalChunkNum) + "," + std::to_string(tiling->HK),
@@ -577,11 +565,11 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
     const uint32_t blockDim = std::max<uint32_t>(1, std::min<uint64_t>(aicCoreNum, tiling->taskNum));
     // A5: 2 windows x 4 heads. A6: 3 windows x 3 heads.
     const uint64_t vectorBytes = static_cast<uint64_t>(tiling->chunkSize) * tiling->K * sizeof(uint16_t);
-    constexpr uint64_t workspaceBufferCount = IsArch92 ? GDN::FinalizeArch92::WORKSPACE_BUFFER_COUNT : 8;
-    constexpr uint64_t workspaceRegionCount = IsArch92 ? GDN::FinalizeArch92::WORKSPACE_REGION_COUNT : 7;
-    constexpr uint64_t gvaAccCoreBytes = IsArch92 ? GDN::FinalizeArch92::GVA_ACC_CORE_BYTES : GDN::GVA_ACC_CORE_BYTES;
+    const uint64_t workspaceWindowCount = isArch92 ? 3 : 2;
+    const uint64_t workspaceBufferCount = workspaceWindowCount * static_cast<uint64_t>(maxHeadsPerTask);
+    constexpr uint64_t workspaceRegionCount = 7;
     const uint64_t privateBytes = tiling->headRatio > 4 ?
-        static_cast<uint64_t>(blockDim) * 2 * gvaAccCoreBytes : 0;
+        static_cast<uint64_t>(blockDim) * 2 * GDN::GVA_ACC_CORE_BYTES : 0;
     const uint64_t userWorkspace = static_cast<uint64_t>(blockDim) *
         workspaceBufferCount * workspaceRegionCount * vectorBytes + privateBytes;
     if (userWorkspace > std::numeric_limits<size_t>::max() - platform.GetLibApiWorkSpaceSize()) {
@@ -598,12 +586,6 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
     // 主张量固定 BF16，g/beta 共用一个 BF16 或 FP32 模板参数；
     // 三个 backward/指数开关独立控制输入搬运和 VF 公式，共 16 个模板。
     // state_v_first 只选择 state GM 布局解释，作为运行时 tiling 数据不扩展 key。
-    const auto &g_tilingDeclareParams = IsArch92 ?
-        GDN::FinalizeArch92::g_tilingDeclareParams : GDN::g_tilingDeclareParams;
-#ifdef ASCENDC_DEBUG
-    const auto &g_tilingSelectParams = IsArch92 ?
-        GDN::FinalizeArch92::g_tilingSelectParams : GDN::g_tilingSelectParams;
-#endif
     const uint64_t tilingKey = GET_TPL_TILING_KEY(
         static_cast<uint64_t>(qKey), static_cast<uint64_t>(gKey),
         static_cast<uint64_t>(useL2NormValue), static_cast<uint64_t>(useBetaSigmoidValue),
@@ -618,12 +600,7 @@ ge::graphStatus TilingFinalize(gert::TilingContext *context)
 
 ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *context)
 {
-    auto *platformInfo = context->GetPlatformInfo();
-    if (platformInfo != nullptr &&
-        platform_ascendc::PlatformAscendC(platformInfo).GetCurNpuArch() == NpuArch::DAV_9201) {
-        return TilingFinalize<true>(context);
-    }
-    return TilingFinalize<false>(context);
+    return TilingFinalize(context);
 }
 
 ge::graphStatus TilingPrepareForChunkGatedDeltaRuleBwdFinalize(gert::TilingParseContext *context)
