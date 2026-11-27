@@ -188,6 +188,16 @@ done
 复用通用构建工具不等于编入另一集合。默认正式 wheel、实验 wheel 和两类 run 的实际内容都需要手动检查。
 独立包身份、普通安装目录和装载 namespace 保持隔离；实验私有打包器不得把产物放入正式包的路径。
 
+#### 安装实验 wheel 后的目录与调用关系
+
+先安装正式 wheel，再在同一 Python 环境用 pip 安装面向同一 SoC 的实验 wheel。图中左列是已有文件，右列是新增文件。两个包位于同一个 `site-packages/` 下，即使文件同名（如 `libcust_opapi.so`），其完整路径也各自独立。
+
+初始化 CANN toolkit 后，保留 Python 默认的 `.pth` 启动行为，即可在新进程中按任意顺序导入两个包，无需手动 `source` 实验环境脚本。下半图以两个 wheel 内置的适配层和 OPP 为例。若发现重名，在初始化 NPU 前先导入需要使用的一侧。
+
+![实验 wheel 在正式包同级新增文件。同一进程中，正式和实验 Python 入口经各自的 dispatcher、launcher 和 vendor 调用 NPU 算子。](assets/wheel-install-and-call.svg)
+
+后续用管理器追加增量时，各侧在自己的包目录下维护 `opp/wheel_layers/` 和 `opp/.overlay.lock`。增量 wheel 可更新本侧适配层与 OPP，增量 `.run` 更新本侧 OPP 并沿用已选适配层。
+
 ### 3.3 增量安装：通用机制，开发者选择 base
 
 增量安装按主干的 [OPP 增量设计](../../../docs/OPP叠加层增量设计.md) 和 [使用指南](../../../docs/Wheel增量安装指南.md) 执行。
@@ -212,13 +222,13 @@ experimental 不另建一套 overlay 协议、管理器、优先级、状态文�
 `fla_npu_experimental_manage` 只负责参数转发，不导入算子包或 NPU，也不另建安装状态机。
 制品提供主干协议 1 的 layer 元数据和 ABI 清单，安装校验、原子切换、移除与恢复均调用通用管理器。
 
-运行前 source 实验 base 的 `set_env.bash`，按通用选择设置 OPP 顺序。首次导入读取一次选择，
+正式与实验 wheel 并排安装时，Python 启动钩子根据两侧的增量状态设置 OPP 路径。显式使用独立实验模式时，运行前 source 实验 base 的 `set_env.bash`。首次导入读取一次选择，
 首次装载校验 ABI、launcher 指纹及 ACLNN 符号来源，并将 OPP 库路径显式传给公共 runtime。
 增量 wheel 的 wrapper 与注册库一起装入独立 namespace；仅增量 `.run` 时继续使用原适配层。
 部分更新时，base 只校验和注册未被覆盖的算子，增量适配层负责被覆盖的算子。
 仅更新 `.run` 不改变适配层集合，仍须满足原适配层的 ABI。
 每次调用检查环境字符串；显式独立实验模式还检查正式 Python 包混用。名称清单与进程映射检查不在逐次调用路径上。
-安装、移除、禁用和更新后均需重新 source 并启动新进程。
+安装、移除、禁用和更新增量后，启动新进程以读取当前选择。显式独立实验模式需先重新 source 实验脚本。
 
 普通 `.run --install-path` 仍安装至独立空目录。增量 `.run` 由通用管理器解包到临时目录后
 作为 OPP 组件安装，不使用实验专属 overlay 安装参数或 base 类型检查。
@@ -295,7 +305,7 @@ SoC 使用 `--soc`；若同时透传 `-c/--compute-unit`，必须与 `--soc` 的
 | `python -m pip install --force-reinstall --no-deps /absolute/update.whl` | 当前 Python 环境的实验 base wheel | 强制重新安装指定制品，包括其中的 OPP |
 
 pip 更新 base 不等同于管理器安装或移除增量；已存在的 active 增量仍按通用规则选择，
-需要验证新 base 时先移除或禁用增量。安装完成后均须重新 source 并启动新进程。
+需要验证新 base 时先移除或禁用增量。安装完成后按 §3.2 所示启动新进程，显式独立实验模式按 §3.3 准备环境。
 launcher 源码指纹和 ABI 清单保留各自的装载、兼容性检查，不由 wheel 内容版本替代；
 版本变化本身不表示 ABI 不兼容。不修改 pip 自身、用户全局配置或正式 wheel 的版本规则。
 

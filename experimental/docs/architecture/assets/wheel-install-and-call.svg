@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1000" viewBox="0 0 1080 1000" role="img" aria-labelledby="title desc">
+  <title id="title">正式 wheel 与实验 wheel 的安装目录和同进程调用</title>
+  <desc id="desc">两列从左到右展示同一 site-packages 中的文件变化。正式 wheel 已有 fla_npu 和 Python 启动钩子，pip 追加实验 wheel 后新增同级的 fla_npu_experimental 包和独立管理入口。启动钩子检查两个 vendor 的 CANN opType 和 ACLNN 符号。无冲突时，同一进程的两个 Python 入口分别经过各自的 dispatcher、launcher 和 libcust_opapi.so 在 NPU 上执行。重名时仅后导入的一侧启用失败。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 1 L8 5 L1 9" fill="none" stroke="#536877" stroke-width="1.5"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #192f3f; }
+      .section { font-size: 24px; font-weight: 700; }
+      .heading { font-size: 21px; font-weight: 700; }
+      .label { font-size: 16px; font-weight: 600; }
+      .body { font-size: 17px; }
+      .code { font-family: Consolas, "Liberation Mono", monospace; font-size: 16px; }
+      .formal { fill: #15547a; }
+      .experimental { fill: #13634e; }
+      .muted { fill: #435966; }
+      .entry { font-family: Consolas, "Liberation Mono", monospace; font-size: 18px; font-weight: 600; }
+      .arrow { fill: none; stroke: #536877; stroke-width: 1.6; marker-end: url(#arrow); }
+      .guide { fill: none; stroke: #99a9b3; stroke-width: 1.4; }
+    </style>
+  </defs>
+  <rect width="1080" height="1000" rx="12" fill="white"/>
+
+  <!-- The two columns are siblings under the same installation root. -->
+  <text x="26" y="42" class="section">安装到同一个 site-packages/</text>
+  <text x="1054" y="40" class="body muted" text-anchor="end">目录节选</text>
+  <g transform="translate(24 64)">
+    <rect width="504" height="337" rx="10" fill="#f3f8fc" stroke="#b9d4e5"/>
+    <text x="20" y="34" class="heading formal">安装正式 wheel 后已有</text>
+    <path d="M20 52H484" stroke="#cbdde8"/>
+    <text x="20" y="81" class="entry formal">fla_npu/</text>
+    <path d="M29 90V181 M29 106H43 M29 131H43 M29 156H43 M29 181H43" class="guide"/>
+    <text x="50" y="111" class="code">ops/ascendc/</text>
+    <text x="50" y="136" class="code">libfla_npu_stable.so</text>
+    <text x="50" y="161" class="code">layer_manifest.json</text>
+    <text x="50" y="186" class="code">opp/vendors/fla_npu_transformer/</text>
+    <path d="M59 194V207H73" class="guide"/>
+    <text x="81" y="212" class="code">op_api/lib/libcust_opapi.so</text>
+    <text x="20" y="247" class="code">fla_npu_opp_env.pth</text>
+    <text x="20" y="269" class="code">fla_npu_opp_env.py</text>
+    <text x="20" y="291" class="code">fla_npu_coexist.py</text>
+    <text x="20" y="313" class="code">fla_npu_opp_manage.py</text>
+  </g>
+  <g transform="translate(552 64)">
+    <rect width="504" height="337" rx="10" fill="#f1f9f5" stroke="#b6d9c8"/>
+    <text x="20" y="34" class="heading experimental">pip 追加实验 wheel 后新增</text>
+    <path d="M20 52H484" stroke="#c8e2d5"/>
+    <text x="20" y="81" class="entry experimental">fla_npu_experimental/</text>
+    <path d="M29 90V181 M29 106H43 M29 131H43 M29 156H43 M29 181H43" class="guide"/>
+    <text x="50" y="111" class="code">_rwkv8.py</text>
+    <text x="50" y="136" class="code">libfla_npu_experimental_stable.so</text>
+    <text x="50" y="161" class="code">layer_manifest.json</text>
+    <text x="50" y="186" class="code">opp/vendors/fla_npu_experimental_transformer/</text>
+    <path d="M59 194V207H73" class="guide"/>
+    <text x="81" y="212" class="code">op_api/lib/libcust_opapi.so</text>
+    <text x="20" y="247" class="code">fla_npu_experimental_manage.py</text>
+    <text x="20" y="291" class="body muted">两个包各有一份 .dist-info/ 安装记录。</text>
+    <text x="20" y="316" class="body muted">追加安装保留左列文件及正式增量状态。</text>
+  </g>
+
+  <text x="26" y="445" class="section">新 Python 进程中的调用关系</text>
+  <rect x="24" y="462" width="1032" height="104" rx="10" fill="#f6f8fa" stroke="#c6d1d8"/>
+  <text x="44" y="491" class="heading">正式 wheel 的 .pth 启动钩子发现双方 vendor</text>
+  <text x="44" y="521" class="body">检查 CANN opType 和 ACLNN 符号。无重名时，在 CANN 初始化前将双方 vendor 加入 ASCEND_CUSTOM_OPP_PATH。</text>
+  <text x="44" y="547" class="body">发现重名时，先导入的一侧可用。后导入的一侧在注册前报错，列出冲突名称。</text>
+  <path d="M540 566V582 M276 582H804" class="guide"/>
+  <path d="M276 582V601" class="arrow"/><path d="M804 582V601" class="arrow"/>
+
+  <g transform="translate(24 608)">
+    <rect width="504" height="72" rx="9" fill="#e8f3fa" stroke="#b9d4e5"/>
+    <text x="20" y="26" class="label formal">正式 Python 入口</text>
+    <text x="20" y="53" class="entry">fla_npu.ops.ascendc.npu_recompute_w_u_fwd</text>
+    <path d="M252 73V95" class="arrow"/>
+    <rect y="102" width="504" height="94" rx="9" fill="#f3f8fc" stroke="#b9d4e5"/>
+    <text x="20" y="129" class="label formal">PyTorch dispatcher 命名空间与注册它的 launcher</text>
+    <text x="20" y="155" class="code">torch.ops.fla_npu_stable</text>
+    <text x="20" y="179" class="code">libfla_npu_stable.so</text>
+    <path d="M252 197V219" class="arrow"/>
+    <rect y="226" width="504" height="72" rx="9" fill="#f3f8fc" stroke="#b9d4e5"/>
+    <text x="20" y="253" class="label formal">正式 vendor 的 libcust_opapi.so</text>
+    <text x="20" y="279" class="code">aclnnRecomputeWUFwd</text>
+  </g>
+  <g transform="translate(552 608)">
+    <rect width="504" height="72" rx="9" fill="#e4f4ec" stroke="#b6d9c8"/>
+    <text x="20" y="26" class="label experimental">实验 Python 入口</text>
+    <text x="20" y="53" class="entry">fla_npu_experimental.fused_recurrent_rwkv8</text>
+    <path d="M252 73V95" class="arrow"/>
+    <rect y="102" width="504" height="94" rx="9" fill="#f1f9f5" stroke="#b6d9c8"/>
+    <text x="20" y="129" class="label experimental">PyTorch dispatcher 命名空间与注册它的 launcher</text>
+    <text x="20" y="155" class="code">torch.ops.fla_npu_experimental_stable</text>
+    <text x="20" y="179" class="code">libfla_npu_experimental_stable.so</text>
+    <path d="M252 197V219" class="arrow"/>
+    <rect y="226" width="504" height="72" rx="9" fill="#f1f9f5" stroke="#b6d9c8"/>
+    <text x="20" y="253" class="label experimental">实验 vendor 的 libcust_opapi.so</text>
+    <text x="20" y="279" class="code">aclnnFusedRecurrentRwkv8</text>
+  </g>
+  <path d="M276 906V936 M804 906V936 M276 936H804" class="guide"/>
+  <path d="M540 936V950" class="arrow"/>
+  <text x="540" y="981" text-anchor="middle" class="heading">CANN 在同一进程将各自的 kernel 下发到 NPU</text>
+</svg>
