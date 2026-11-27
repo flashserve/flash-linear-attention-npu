@@ -4,7 +4,7 @@ A2、A5 在各自的 NPU CI 任务中运行本次改动命中的算子用例。�
 
 ## 哪些修改会触发冒烟
 
-常规 NPU CI 对比本次实际合并的目标分支提交和合并结果。改动 [source_roots.json](source_roots.json) 中某个算子目录下的文件，就运行该算子在 [suites.json](suites.json) 中登记的全部用例。每个平台独立选择，多个目录取并集。删除文件也会命中，跨算子移动文件会检查新旧两个目录。
+常规 NPU CI 对比本次实际合并的目标分支提交和合并结果。选算子 ATK 时先忽略所有 `.md` 文件（大小写均可），包括算子目录里的 README。只改 Markdown 时，算子 ATK 为 0 项。其余变更按 [source_roots.json](source_roots.json) 中的算子目录和 [suites.json](suites.json) 中登记的平台匹配。多个目录取并集，跨算子移动文件会检查新旧两个目录。
 
 - 修改 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/`，A2 和 A5 都运行 `chunk_fwd_h`。
 - 修改同级的 `chunk_gated_delta_rule_fwd_h/`，只有 A5 有登记用例。融合算子目录下的 `op_kernel/internal/operators/` 归其外层算子。

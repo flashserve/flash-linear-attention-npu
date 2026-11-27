@@ -35,7 +35,7 @@ def affected_pairs(pairs, roots, base, head, repo):
         ["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--", "fla/ops/ascendc/", "tests/atk/"],
         cwd=repo,
     )
-    paths = {os.fsdecode(raw) for raw in data.split(b"\0") if raw}
+    paths = {os.fsdecode(raw) for raw in data.split(b"\0") if raw and not raw.lower().endswith(b".md")}
     # Bundled references can import other operators' references. Exercise their
     # consumers too when changing the Python harness, reference code or catalog.
     if paths & {"tests/atk/smoke/suites.json", "tests/atk/smoke/source_roots.json"} or any(
