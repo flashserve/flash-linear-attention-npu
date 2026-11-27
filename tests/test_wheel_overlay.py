@@ -450,7 +450,12 @@ a = npu_a
         sys.path.insert(0, str(ROOT / "scripts"))
         from build_layer_manifest import requirements
         operators = requirements()
-        self.assertEqual(len(operators), 38)
+        self.assertEqual(len(operators), 39)
+        for name in ("npu_causal_conv1d_bwd", "npu_causal_conv1d_bwd_no_bias"):
+            self.assertEqual(
+                set(operators[name]["requires"]),
+                {"aclnnCausalConv1dBwd", "aclnnCausalConv1dBwdGetWorkspaceSize"},
+            )
         for name, description in operators.items():
             self.assertTrue(description["dispatch"], name)
             self.assertFalse(any("?" in signature for signature in description["requires"].values()), name)

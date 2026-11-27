@@ -35,6 +35,7 @@ _ASCENDC_OPS = (
     "npu_causal_conv1d_fn",
     "npu_causal_conv1d_update",
     "npu_causal_conv1d_bwd",
+    "npu_causal_conv1d_bwd_no_bias",
     "npu_prepare_wy_repr_bwd_full",
     "npu_prepare_wy_repr_bwd",
     "npu_chunk_gated_delta_rule_bwd_dhu",
@@ -525,23 +526,17 @@ def causal_conv1d(
                 run_mode=run_mode,
                 head_num=head_num,
             )
-            tensors = [x_, weight_]
-            ctx.has_bias = bias_ is not None
-            if bias_ is not None:
-                tensors.append(bias_)
-            ctx.activation_mode = activation_mode
-            ctx.save_for_backward(*tensors)
+            ctx.save_for_backward(x_, weight_)
             return y
 
         @staticmethod
         def backward(ctx, grad):
-            saved = list(ctx.saved_tensors)
-            x_ = saved.pop(0)
-            weight_ = saved.pop(0)
-            bias_ = saved.pop(0) if ctx.has_bias else None
-            dx, dw, db, _ = _get_direct_op("npu_causal_conv1d_bwd")(
+            x_, weight_ = ctx.saved_tensors
+            need_bias = ctx.needs_input_grad[2]
+            op = "npu_causal_conv1d_bwd" if need_bias else "npu_causal_conv1d_bwd_no_bias"
+            gradients = _get_direct_op(op)(
                 x=x_,
-                y=None if ctx.activation_mode == 0 else None,
+                y=None,
                 weight=weight_,
                 dy=grad,
                 initial_state=None,
@@ -550,7 +545,7 @@ def causal_conv1d(
                 activation=0,
                 input_layout="BSH",
             )
-            return dx, dw, (db if bias_ is not None else None), None
+            return gradients[0], gradients[1], (gradients[2] if need_bias else None), None
 
     return Function.apply(x, weight, bias, conv_states)
 

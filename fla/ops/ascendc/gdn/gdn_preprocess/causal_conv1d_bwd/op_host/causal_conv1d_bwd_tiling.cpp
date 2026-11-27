@@ -112,13 +112,32 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
     const char *outputNames[] = {"dx", "dw", "db", "dh0"};
     for (size_t i = 0; i < sizeof(outputNames) / sizeof(outputNames[0]); i++) {
         const auto *desc = context->GetOutputDesc(i);
-        OP_CHECK_IF(desc != nullptr && desc->IsExist() && desc->GetDataType() != xDtype,
+        const auto *shape = context->GetOutputShape(i);
+        // An omitted output may arrive as an untyped, empty descriptor.
+        const bool present = shape != nullptr && shape->GetStorageShape().GetDimNum() > 0 &&
+                             shape->GetStorageShape().GetShapeSize() > 0;
+        OP_CHECK_IF(present && desc != nullptr && desc->IsExist() && desc->GetDataType() != xDtype,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, outputNames[i],
                                               ge::TypeUtils::DataTypeToSerialString(desc->GetDataType()),
                                               ge::TypeUtils::DataTypeToSerialString(xDtype)),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
+}
+
+// GE may compact optional output slots. Only db has one dimension:
+// dx and dw have at least two, and dh0 has three.
+static bool HasBiasGradient(const gert::TilingContext *context)
+{
+    for (size_t i = 1; i < context->GetComputeNodeOutputNum(); ++i) {
+        const auto *desc = context->GetOutputDesc(i);
+        const auto *shape = context->GetOutputShape(i);
+        if (desc != nullptr && desc->IsExist() && shape != nullptr &&
+            shape->GetStorageShape().GetDimNum() == 1 && shape->GetStorageShape().GetDim(0) > 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
@@ -144,6 +163,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     OP_CHECK_IF(xDesc == nullptr,
                 OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: required input x descriptor is unavailable", __func__),
                 return ge::GRAPH_FAILED);
+    const bool hasBias = HasBiasGradient(context);
     auto xDtype = xDesc->GetDataType();
     if (CheckDtypes(context, xDtype) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
@@ -495,7 +515,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     };
     // 普通路径（chunk 切分 / i_d 切分）的 UB 预算，不含两级归约 stage buffer（该部分在预算内按需追加）。
     auto CalcNormalNeed = [BD, W, rawDtypeSize, isB16Input, useRegbaseVfBudget, activation,
-                           useInitialState, useFinalState](uint32_t bt) -> uint32_t {
+                           useInitialState, useFinalState, hasBias](uint32_t bt) -> uint32_t {
         uint32_t btBdAl = CeilAlign(bt * BD, BLOCK_ALIGN_NUM);
         uint32_t dyBdAl = CeilAlign((bt + W - 1) * BD, BLOCK_ALIGN_NUM);
         uint32_t wBdAl = CeilAlign(W * BD, BLOCK_ALIGN_NUM);
@@ -503,7 +523,6 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         uint32_t calcBdAl = std::max(std::max(btBdAl, wBdAl), dyBdAl);
         uint32_t wBtBdAl = CeilAlign(W * bt * BD, BLOCK_ALIGN_NUM);
         const bool hasWeight = true;
-        const bool hasBias = true;
         uint32_t need = (3 * btBdAl + 2 * calcBdAl) * FP32_DTYPE_SIZE;
         need += (dyBdAl - btBdAl) * FP32_DTYPE_SIZE;
         if (hasWeight) need += 2 * wBdAl * FP32_DTYPE_SIZE;
@@ -746,7 +765,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     tiling->W = W;
     tiling->activation = activation;
     tiling->hasWeight = 1;
-    tiling->hasBias = 1;
+    tiling->hasBias = hasBias ? 1 : 0;
     tiling->useInitialState = useInitialState ? 1 : 0;
     tiling->useFinalState = useFinalState ? 1 : 0;
     tiling->inputMode = inputMode;
@@ -772,7 +791,7 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     // useIdSplit 时每个核独占 i_d 并直接写回 dw/db，不再需要 partial 归约缓冲。
     uint64_t partialDwBytes = useIdSplit ? 0ULL
         : static_cast<uint64_t>(mainCoreNum) * numBlksD * wBdAl * FP32_DTYPE_SIZE;
-    uint64_t partialDbBytes = useIdSplit ? 0ULL
+    uint64_t partialDbBytes = (useIdSplit || !hasBias) ? 0ULL
         : static_cast<uint64_t>(mainCoreNum) * numBlksD * bdAl * FP32_DTYPE_SIZE;
     uint64_t wsSize = sysWorkspaceSize + partialDwBytes + partialDbBytes;
     tiling->workspaceSize = sysWorkspaceSize;
