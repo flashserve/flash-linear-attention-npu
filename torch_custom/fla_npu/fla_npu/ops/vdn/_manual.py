@@ -1,7 +1,8 @@
-"""Manually scheduled four-stage VDN kernel on Ascend 910B3."""
+"""Manually scheduled VDN kernel for 20- and 24-cube Ascend 910B devices."""
 from functools import lru_cache
 from pathlib import Path
 import os
+import struct
 
 import torch
 
@@ -22,11 +23,21 @@ _GEOMETRIES = {(85, 7), (87, 7), (87, 14)}
 
 
 @lru_cache(maxsize=None)
-def _tiling(device, frames, heads):
+def _tiling(device, frames, heads, cores):
     tables = []
     for name in ("c", "a", "b"):
         path = _PACKAGE / "manual_tiling" / f"{name}-{frames}-{heads}.bin"
-        data = torch.frombuffer(bytearray(path.read_bytes()), dtype=torch.uint8)
+        raw = bytearray(path.read_bytes())
+        if cores == 24:
+            if name == "c":
+                # Conv ABI: batch_dim; group_dim stays four.
+                struct.pack_into("<i", raw, 92, cores // 4)
+            else:
+                # Gram ABI: batch_single_core, batch_dim and batch_l1_factor.
+                per_core = (frames * heads + cores - 1) // cores
+                for offset, value in ((76, per_core), (88, cores), (156, per_core)):
+                    struct.pack_into("<i", raw, offset, value)
+        data = torch.frombuffer(raw, dtype=torch.uint8)
         tables.append(data.to(device))
     return tables
 
@@ -45,7 +56,7 @@ def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_si
             or frame_tile not in ((32, 64) if heads == 7 else (32,))
             or not torch.are_deterministic_algorithms_enabled() or torch.npu.matmul.allow_hf32
             or torch.npu.conv.allow_hf32 or torch.npu.is_current_stream_capturing()
-            or "910B3" not in torch.npu.get_device_name(q.device)):
+            or "910B" not in torch.npu.get_device_name(q.device)):
         return None
     device, bf = q.device, torch.bfloat16
     if not all(x.ndim == 4 and _matches(x.transpose(1, 2), device, bf, (frames,tokens,heads,dim))
@@ -74,10 +85,14 @@ def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_si
     import torch_npu
     if any(torch_npu.get_npu_format(t) not in (0, 2) for t in tensors):
         return None
-    return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile)
+    props = torch.npu.get_device_properties(q.device)
+    cores = props.cube_core_num
+    if cores not in (20, 24) or props.vector_core_num != 2 * cores:
+        return None
+    return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile,cores)
 
 
-def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile):
+def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores):
     f, h, s, d = q.shape
     row = torch.arange(f, device="cpu")
     lo, hi = bounds.unbind(1)
@@ -90,7 +105,7 @@ def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile):
     def matrix():
         return fp(f,h,d,d)
     inputs = [q,k,v,beta,alpha,bounds.contiguous().to(q.device),text_state if text_state is not None else q,
-              *weights.get("k",(q,q)),*weights.get("v",(q,q)),*_tiling(q.device,f,h)]
+              *weights.get("k",(q,q)),*weights.get("v",(q,q)),*_tiling(q.device,f,h,cores)]
     if weights:
         spatial_shape = (f*h*s*d,)  # flat GM storage for the packed 5HD panel
         workspace = [bf(*spatial_shape),bf(h*8,25,16,16),bf(*spatial_shape),bf(f,h,s,d),bf(5,h*d),bf(5,h*d)]
@@ -100,10 +115,10 @@ def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile):
     workspace.extend([
         bf(f,h,s,d),bf(f,h,s,d),bf(f,h,s,d),fp(f,h,s,d),fp(f,h,s,d),
         matrix(),bf(f,h,d,d),matrix(),matrix(),matrix(),matrix(),
-        fp(d,d),fp(d,d),fp(20*6*d*d),matrix(),matrix(),
+        fp(d,d),fp(d,d),fp(cores*6*d*d),matrix(),matrix(),
         fp(f+1,h,d,d),fp(f+1,h,d,d),fp(3,f,h,d),fp(f+1,h,d),bf(f,h,d,d),bf(f,h,s,d),
     ])
     panel = 20 if h == 7 else 44
     _stable._op("npu_vdn_pipeline")(*inputs, *workspace, f, h, panel, ITERATIONS - 1,
-                                   bool(weights), text_state is not None, _stable._current_stream_ptr())
+                                   bool(weights), text_state is not None, _stable._current_stream_ptr(), cores)
     return workspace[-1]

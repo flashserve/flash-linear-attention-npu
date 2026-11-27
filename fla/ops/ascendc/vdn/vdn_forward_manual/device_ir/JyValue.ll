@@ -986,11 +986,11 @@ define dso_local void @JyValue.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace
   call void @llvm.hivm.SET.FLAG.REG(i64 5, i64 1, i64 %160)
   %332 = add i64 %46, 1
   store i64 %332, ptr %16, align 4
-  %333 = add nsw i32 %43, 40
+  %333 = add nsw i32 %43, %12
   br label %42
 
 334:                                              ; preds = %42
-  %335 = add nsw i32 %36, 40
+  %335 = add nsw i32 %36, %12
   br label %35
 
 336:                                              ; preds = %35

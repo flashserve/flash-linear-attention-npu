@@ -19,9 +19,9 @@ constexpr const char* schema = "npu_vdn_pipeline("
     "Tensor(a!) two_eye, Tensor(a!) work, Tensor(a!) trans, Tensor(a!) inj, "
     "Tensor(a!) prefix, Tensor(a!) suffix, Tensor(a!) logs_tmp, Tensor(a!) logs, "
     "Tensor(a!) state, Tensor(a!) out, "
-    "int frames, int heads, int bridge_panel, int steps, bool conv, bool seed, int stream) -> ()";
+    "int frames, int heads, int bridge_panel, int steps, bool conv, bool seed, int stream, int cores=20) -> ()";
 
-using Kernel = void (*)(void**, int, int, int, int, int, int, void*);
+using Kernel = void (*)(void**, int, int, int, int, int, int, void*, int);
 
 Kernel load_kernel() {
   Dl_info info{};
@@ -32,7 +32,7 @@ Kernel load_kernel() {
   path += "ops/vdn/libvdn_pipeline_device.so";
   void* library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!library) throw std::runtime_error(dlerror());
-  auto kernel = reinterpret_cast<Kernel>(dlsym(library, "vdn_forward_pipeline_v1"));
+  auto kernel = reinterpret_cast<Kernel>(dlsym(library, "vdn_forward_pipeline_v2"));
   if (!kernel) throw std::runtime_error(dlerror());
   return kernel;
 }
@@ -40,13 +40,14 @@ Kernel load_kernel() {
 void run(StableIValue* stack, uint64_t inputs, uint64_t outputs) {
   using namespace fla_npu_stable::stable;
   using torch::stable::Tensor;
-  if (inputs != BufferCount + 7 || outputs != 0)
+  if (inputs != BufferCount + 8 || outputs != 0)
     throw std::invalid_argument("invalid VDN pipeline schema");
   const auto f = unbox<int64_t>(stack[BufferCount]), h = unbox<int64_t>(stack[BufferCount+1]);
   const auto panel = unbox<int64_t>(stack[BufferCount+2]), steps = unbox<int64_t>(stack[BufferCount+3]);
   const bool conv = unbox<bool>(stack[BufferCount+4]), seed = unbox<bool>(stack[BufferCount+5]);
   const auto stream = unbox<int64_t>(stack[BufferCount+6]);
-  if (!((f==85 && h==7) || (f==87 && (h==7 || h==14))) ||
+  const auto cores = unbox<int64_t>(stack[BufferCount+7]);
+  if ((cores!=20 && cores!=24) || !((f==85 && h==7) || (f==87 && (h==7 || h==14))) ||
       panel != (h==7 ? 20 : 44) || steps<1 || steps>15)
     throw std::invalid_argument("invalid VDN pipeline geometry");
   constexpr int64_t dim = 128, square = dim*dim;
@@ -58,7 +59,7 @@ void run(StableIValue* stack, uint64_t inputs, uint64_t outputs) {
       256+4*(6480+8192),256,256,conv?features:0,conv?h*8*25*256:0,
       conv?features:0,conv?features:0,conv?h*dim*5:0,conv?h*dim*5:0,
       features,features,features,features,features,matrices,matrices,matrices,matrices,
-      matrices,matrices,square,square,20*6*square,matrices,matrices,bank,bank,
+      matrices,matrices,square,square,cores*6*square,matrices,matrices,bank,bank,
       3*fh*dim,(f+1)*h*dim,matrices,features};
   const int bf = aoti_torch_dtype_bfloat16(), fp = aoti_torch_dtype_float32();
   const int u8 = aoti_torch_dtype_uint8(), i64 = aoti_torch_dtype_int64();
@@ -90,7 +91,7 @@ void run(StableIValue* stack, uint64_t inputs, uint64_t outputs) {
   }
   static Kernel kernel = load_kernel();
   auto call = [=]() mutable -> int {
-    kernel(ptrs.data(),f,h,panel,steps,conv,seed,reinterpret_cast<void*>(stream));
+    kernel(ptrs.data(),f,h,panel,steps,conv,seed,reinterpret_cast<void*>(stream),cores);
     owners.reset();
     return 0;
   };

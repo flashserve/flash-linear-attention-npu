@@ -8,7 +8,7 @@ inline __aicore__ void inject_set_fmatrix(uint64_t value, uint64_t& last_value) 
   }
 }
 
-inline __aicore__ void Spatial2097177(__gm__ bfloat16_t* __restrict__ Fmap, __gm__ bfloat16_t* __restrict__ Filter, __gm__ bfloat16_t* __restrict__ remove_pad_cc, __gm__ uint8_t* __restrict__ tiling_data) {
+inline __aicore__ void Spatial2097177(__gm__ bfloat16_t* __restrict__ Fmap, __gm__ bfloat16_t* __restrict__ Filter, __gm__ bfloat16_t* __restrict__ remove_pad_cc, __gm__ uint8_t* __restrict__ tiling_data, int32_t batch_n) {
 set_ctrl(get_ctrl() & 0xffff3fffffffffff);
 set_l1_3d_size(0);
 set_padding(0);
@@ -18,7 +18,6 @@ uint64_t last_set_fmatrix_value = 0;
   for (int32_t i = 0; i < (int64_t)3; ++i) {
     dc_preload(((__gm__ uint64_t *)((__gm__ uint8_t *)tiling_data + (((int64_t)i) * (int64_t)64))), (int16_t)0);
   }
-  int32_t batch_n = (*((__gm__ int32_t *)((__gm__ uint8_t *)tiling_data)));
   int32_t c_in = (*((__gm__ int32_t *)((__gm__ uint8_t *)tiling_data + 4)));
   int32_t fmap_h = (*((__gm__ int32_t *)((__gm__ uint8_t *)tiling_data + 8)));
   int32_t fmap_w = (*((__gm__ int32_t *)((__gm__ uint8_t *)tiling_data + 12)));

@@ -897,11 +897,11 @@ define dso_local void @JyQuery.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace
   call void @llvm.hivm.SET.FLAG.IMM(i64 5, i64 1, i64 1)
   %98 = add i64 %36, 1
   store i64 %98, ptr %12, align 4
-  %99 = add nsw i32 %33, 40
+  %99 = add nsw i32 %33, %8
   br label %32
 
 100:                                              ; preds = %32
-  %101 = add nsw i32 %26, 40
+  %101 = add nsw i32 %26, %8
   br label %25
 
 102:                                              ; preds = %25

@@ -1,6 +1,8 @@
-# Pipelined VDN forward for Ascend 910B3
+# Pipelined VDN forward for Ascend 910B
 
 The public entry is `fla_npu.ops.vdn.vdn_forward`. A single mixed AIC/AIV launch runs feature preparation, FP32 Newton–Schulz, the bidirectional scan, bridge and readout. Each scan bank has one writer per head and direction. The vector cores form the log prefix while the cube cores scan. The bridge produces panels of 20 frames for 7 heads or 44 frames for 14 heads so readout can consume the preceding panel. Each call owns its workspace.
+
+A device with 20 AICs and 40 AIVs uses a 5 × 4 spatial split across frame groups and channel groups. The 24 AIC / 48 AIV configuration uses 6 × 4. Within each projection, AICs produce the second spatial panel while AIVs unpack and apply the temporal convolution to the first. The final two output frames of the first panel move to the next temporal pass so they can read the right halo. Both passes retain the five BF16 taps in their original order. Each AIC owns six 128 × 128 FP32 Newton scratch matrices, and the scan uses the same FP32 summation groups on both configurations.
 
 The accelerated configurations are (frames, heads) of (85, 7), (87, 7), and (87, 14), with 405 tokens and head dimension 128. Q/K/V are token-major BF16, beta is contiguous BF16, alpha is contiguous FP32, and bounds are CPU int64. The supported short convolution is the paired K/V path on a 15 by 27 grid. Deterministic execution, disabled HF32, SiLU, Q/K L2 normalization and Newton–Schulz are required. Other configurations use the existing implementation.
 
@@ -11,6 +13,10 @@ The feature functions in `device_ir` are LLVM IR generated from the Ascend Trito
 Run `VDN_TEST_DEVICE=7 python -m unittest discover -s tests/atk/vdn_forward` against the built wheel to check dispatch, CPU reference agreement, and bitwise equivalence to the existing implementation.
 
 ## Device validation
+
+The two-panel implementation was tested on 910B3 (20 AIC / 40 AIV). For 24 AIC / 48 AIV, the host-side checks cover tiling, task ownership, and halo boundaries. Device timing and numerical results for that configuration are pending hardware access.
+
+### Earlier whole-forward baseline
 
 On a 910B3 with CANN 9.2.1, the standard wheel matched the previous PR head (`0c5d2cb8`) bit for bit on 19 accelerated and 27 fallback cases. Each accelerated case was repeated 50 times. Two threads on independent NPU streams also matched their respective references for 50 calls each. These tests used the PR's CPU golden with its existing tolerances.
 

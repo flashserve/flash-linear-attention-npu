@@ -99,9 +99,9 @@ __aicore__ inline void Mark(Addresses g,int task,int end) {
 #if defined(__DAV_CUBE__)
         int lane=GetBlockIdx();
 #else
-        int lane=20+GetBlockIdx();
+        int lane=GetBlockNum()+GetBlockIdx();
 #endif
-        ((__gm__ int64_t*)g.clocks)[(task*60+lane)*16+end]=GetSystemCycle();
+        ((__gm__ int64_t*)g.clocks)[(task*(3*GetBlockNum())+lane)*16+end]=GetSystemCycle();
     }
 }
 #if defined(__DAV_VEC__)
@@ -109,76 +109,78 @@ __aicore__ inline void PackProjection(Addresses g,bool value,GM_ADDR packed,GM_A
     PackWeights(g.p[value?Vsp:Ksp],g.p[value?Vtm:Ktm],filter,g.p[value?VTime:KTime],g.p[ConvT],g.h);
     Pack(g.p[value?V:K],packed,g.p[ConvT],g.f,g.h);
 }
-__aicore__ inline void Temporal(Addresses g,bool value){
-    for(int id=GetBlockIdx();id<40;id+=GetBlockNum()*GetSubBlockNum()){
-        if(value) JyValue(0,nullptr,nullptr,g.p[Panel],g.p[VTime],g.p[Value],g.p[Beta],g.h,S,0,g.f,g.f,40,1,1,id);
-        else JyKey(0,nullptr,nullptr,g.p[Panel],g.p[KTime],g.p[Key],g.p[Key],g.h,S,0,g.f,g.f,40,1,1,id);
-    }
+__aicore__ inline void Temporal(Addresses g,bool value,int first,int count) {
+    const int workers=GetBlockNum()*GetSubBlockNum();
+    const int64_t row=int64_t(first)*g.h*S;
+    const int64_t bytes=row*D*sizeof(bfloat16_t);
+    if(value)
+        JyValue(0,nullptr,nullptr,g.p[Panel],g.p[VTime],g.p[Value]+bytes,g.p[Beta]+row*sizeof(bfloat16_t),g.h,S,first,g.f,count,workers,1,1,GetBlockIdx());
+    else
+        JyKey(0,nullptr,nullptr,g.p[Panel],g.p[KTime],g.p[Key]+bytes,g.p[Key]+bytes,g.h,S,first,g.f,count,workers,1,1,GetBlockIdx());
 }
 __aicore__ inline void QueryFeatures(Addresses g){
     Mark(g,4,0);
-    for(int id=GetBlockIdx();id<40;id+=GetBlockNum()*GetSubBlockNum()) JyQuery(0,nullptr,nullptr,g.p[Q],g.p[Query],g.f,g.h,S,40,1,1,id);
+    const int workers=GetBlockNum()*GetSubBlockNum();
+    JyQuery(0,nullptr,nullptr,g.p[Q],g.p[Query],g.f,g.h,S,workers,1,1,GetBlockIdx());
     Mark(g,4,1);
 }
 #endif
 #if defined(__DAV_CUBE__)
-__aicore__ inline void Spatial(Addresses g,GM_ADDR packed,GM_ADDR filter){
-    OriginalConv::Spatial2097177((__gm__ bfloat16_t*)packed,(__gm__ bfloat16_t*)filter,(__gm__ bfloat16_t*)g.p[ConvOut],g.p[ConvT]);
+__aicore__ inline void Spatial(Addresses g,GM_ADDR packed,GM_ADDR filter,int first,int count) {
+    const int64_t bytes=int64_t(first)*g.h*S*D*sizeof(bfloat16_t);
+    OriginalConv::Spatial2097177((__gm__ bfloat16_t*)(packed+bytes),(__gm__ bfloat16_t*)filter,
+        (__gm__ bfloat16_t*)(g.p[ConvOut]+bytes),g.p[ConvT],count);
 }
 #endif
+// Cube produces the next raw spatial panel while vector consumes the previous one.
+// Each projection keeps its two-frame halo across the panel boundary.
+__aicore__ inline void ConvPipeline(Addresses g) {
+    const int frameGroups=GetBlockNum()/4;
+    const int split=((g.f/2+frameGroups/2)/frameGroups)*frameGroups;
+    GM_ADDR packedV=g.p[K32];
+    GM_ADDR filterV=packedV+int64_t(g.f)*g.h*S*D*sizeof(bfloat16_t);
+#if defined(__DAV_VEC__)
+    PackProjection(g,false,g.p[Packed],g.p[Filter]);
+#endif
+    SyncAll<false>();
+    // Spatial order is K front, K back, V front, V back. The last wave drains V.
+    for(int wave=0;wave<5;++wave) {
+#if defined(__DAV_CUBE__)
+        if(wave<4){
+            const bool value=wave>=2, back=wave%2;
+            Spatial(g,value?packedV:g.p[Packed],value?filterV:g.p[Filter],
+                    back?split:0,back?g.f-split:split);
+        }
+#else
+        if(wave==0){
+            PackProjection(g,true,packedV,filterV);
+        }else{
+            const int ready=wave-1;
+            const bool back=ready%2;
+            const int first=back?split:0, count=back?g.f-split:split;
+            const int64_t bytes=int64_t(first)*g.h*S*D*sizeof(bfloat16_t);
+            Unpack(g.p[ConvOut]+bytes,g.p[Panel]+bytes,count,g.h);
+            SyncAll<true>();
+            const int start=back?split-2:0, end=back?g.f:split-2;
+            Temporal(g,ready>=2,start,end-start);
+        }
+#endif
+        SyncAll<false>();
+    }
+}
 template<int Version> __aicore__ inline void Prepare(Addresses g){
 #if defined(__DAV_VEC__)
     SeedBanks(g);
 #endif
     SyncAll<false>();
     if(g.conv) {
-        // K32 first becomes live after both spatial convolutions and temporal features.
-        GM_ADDR packedV=Version>=5?g.p[K32]:g.p[Packed];
-        GM_ADDR filterV=Version>=5?packedV+int64_t(g.f)*g.h*S*D*sizeof(bfloat16_t):g.p[Filter];
-#if defined(__DAV_VEC__)
-        PackProjection(g,false,g.p[Packed],g.p[Filter]);
-#endif
-        SyncAll<false>();
-#if defined(__DAV_CUBE__)
-        Mark(g,9,0);Spatial(g,g.p[Packed],g.p[Filter]);Mark(g,9,1);
-#elif defined(__DAV_VEC__)
-        if constexpr(Version>=5){Mark(g,10,0);PackProjection(g,true,packedV,filterV);Mark(g,10,1);}
-#endif
-        SyncAll<false>();
-#if defined(__DAV_VEC__)
-        Unpack(g.p[ConvOut],g.p[Panel],g.f,g.h);
-#endif
-        SyncAll<false>();
-        if constexpr(Version==0){
-#if defined(__DAV_VEC__)
-            Mark(g,0,0);Temporal(g,false);Mark(g,0,1);
-#endif
-            SyncAll<false>();
-        }
-#if defined(__DAV_VEC__)
-        if constexpr(Version<5){Mark(g,10,0);PackProjection(g,true,packedV,filterV);Mark(g,10,1);}
-#endif
-        SyncAll<false>();
-#if defined(__DAV_CUBE__)
-        Mark(g,1,0);Spatial(g,packedV,filterV);Mark(g,1,1);
-#elif defined(__DAV_VEC__)
-        if constexpr(Version>=1){Mark(g,0,0);Temporal(g,false);Mark(g,0,1);}
-#endif
-        SyncAll<false>();
-#if defined(__DAV_VEC__)
-        Unpack(g.p[ConvOut],g.p[Panel],g.f,g.h);
-#endif
-        SyncAll<false>();
-#if defined(__DAV_VEC__)
-        Temporal(g,true);
-#endif
-        SyncAll<false>();
+        ConvPipeline(g);
     }else{
 #if defined(__DAV_VEC__)
-        for(int id=GetBlockIdx();id<40;id+=GetBlockNum()*GetSubBlockNum()){
-            if(g.h==7) JyKV7(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,40,1,1,id);
-            else JyKV14(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,40,1,1,id);
-        }
+        const int workers=GetBlockNum()*GetSubBlockNum();
+        const int id=GetBlockIdx();
+        if(g.h==7) JyKV7(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,workers,1,1,id);
+        else JyKV14(0,nullptr,nullptr,g.p[K],g.p[V],g.p[Beta],g.p[Key],g.p[Value],g.f,g.h,S,workers,1,1,id);
 #endif
         SyncAll<false>();
     }
@@ -198,7 +200,8 @@ template<int Version> __aicore__ inline void Prepare(Addresses g){
     SyncAll<false>();
 #if defined(__DAV_VEC__)
     if constexpr(Version<3){Mark(g,6,0);CastB(g);Mark(g,6,1);}
-    for(int id=GetBlockIdx();id<40;id+=GetBlockNum()*GetSubBlockNum()) JyInit(0,nullptr,nullptr,g.p[GramA],g.p[NegativeMatrix],g.p[First],g.f*g.h,40,1,1,id);
+    JyInit(0,nullptr,nullptr,g.p[GramA],g.p[NegativeMatrix],g.p[First],g.f*g.h,
+           GetBlockNum()*GetSubBlockNum(),1,1,GetBlockIdx());
 #endif
     SyncAll<false>();
 }

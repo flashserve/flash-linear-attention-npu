@@ -480,11 +480,11 @@ define dso_local void @JyInit.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(
   call void @llvm.hivm.SET.FLAG.REG(i64 5, i64 1, i64 %72)
   %89 = add i64 %28, 1
   store i64 %89, ptr %11, align 4
-  %90 = add nsw i32 %25, 40
+  %90 = add nsw i32 %25, %7
   br label %24
 
 91:                                               ; preds = %24
-  %92 = add nsw i32 %18, 40
+  %92 = add nsw i32 %18, %7
   br label %17
 
 93:                                               ; preds = %17

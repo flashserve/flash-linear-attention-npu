@@ -1080,11 +1080,11 @@ define dso_local void @JyKV7.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(1
   call void @llvm.hivm.SET.FLAG.IMM(i64 5, i64 1, i64 1)
   %153 = add i64 %39, 1
   store i64 %153, ptr %15, align 4
-  %154 = add nsw i32 %36, 40
+  %154 = add nsw i32 %36, %11
   br label %35
 
 155:                                              ; preds = %35
-  %156 = add nsw i32 %29, 40
+  %156 = add nsw i32 %29, %11
   br label %28
 
 157:                                              ; preds = %28
