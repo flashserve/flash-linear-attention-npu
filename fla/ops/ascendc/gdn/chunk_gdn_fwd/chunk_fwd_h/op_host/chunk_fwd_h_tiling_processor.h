@@ -145,15 +145,6 @@ public:
         workspaceOffset += AlignUp(static_cast<size_t>(activeAicCoreNum * CHUNK_FWD_H_ROUND_HEAD_SLOTS *
                                                         kHeadDim * vHeadDim * sizeof(float)));
 
-        // gated 复用 workspace 追加段：tiling 镜像（256B 上界）+
-        // numSeq/numChunks 前缀表（int64 × (tokenBatch+2)）。
-        tiling.gatedTilingOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += 256;
-        tiling.gatedNumSeqOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 2) * sizeof(int64_t)));
-        tiling.gatedNumChunksOffset = static_cast<int64_t>(workspaceOffset);
-        workspaceOffset += AlignUp(static_cast<size_t>((tokenBatch + 2) * sizeof(int64_t)));
-
         workspaceOffset += CHUNK_FWD_H_WORKSPACE_RSV_BYTE;
         workspaceSize = workspaceOffset;
 
@@ -169,6 +160,10 @@ public:
         tiling.isVariedLen = isVariedLen;
         tiling.shapeBatch = shapeBatch;
         tiling.tokenBatch = tokenBatch;
+        // gated 引擎启用位：与 blockDim/workspace 同源决策（ctx_.gatedEligible）
+        // 原样落盘，kernel 分派以此为充分条件——必设字段，漏设会让 gated
+        // 用例静默降级通用路径（精度不敏感、perf 掉 ~30%，只有 perf canary 能发现）。
+        tiling.gatedEngine = ctx_.gatedEligible ? 1 : 0;
     }
 
 private:

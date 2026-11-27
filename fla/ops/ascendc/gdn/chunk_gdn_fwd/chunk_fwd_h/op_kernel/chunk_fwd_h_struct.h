@@ -46,10 +46,9 @@ struct ChunkFwdHPlainTilingData {
     // 份数恒等于 blockDim。
     int64_t coreBoundCount;
     int64_t coreTaskBounds[CHUNK_FWD_H_MAX_CORE_BOUNDS];
-    // gated 复用路径（与 op_host TILING_DATA 版同步——tiling.cpp 逐字段拷贝）
-    int64_t gatedTilingOffset;
-    int64_t gatedNumSeqOffset;
-    int64_t gatedNumChunksOffset;
+    // gated 引擎启用位（与 op_host TILING_DATA 版同步——tiling.cpp 逐字段拷贝）：
+    // host gatedEligible 原样落盘，kernel 分派以此为准（充分条件）。
+    int64_t gatedEngine;
 };
 
 #endif // CHUNK_FWD_H_STRUCT_H

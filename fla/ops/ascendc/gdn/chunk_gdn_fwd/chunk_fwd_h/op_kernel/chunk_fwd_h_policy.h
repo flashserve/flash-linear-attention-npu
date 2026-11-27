@@ -171,10 +171,11 @@ struct FwdHRuntimeTiling {
     // AIV 指令缓冲等待 +48us 的代码足迹税），此处仅持 GM 指针，每核读 2 个字。
     uint32_t coreBoundCount = 0;
     const __gm__ int64_t *coreBoundsGm = nullptr;
-    // gated 复用路径：workspace 内的 tiling 镜像/前缀表偏移
-    uint64_t gatedTilingOffset = 0;
-    uint64_t gatedNumSeqOffset = 0;
-    uint64_t gatedNumChunksOffset = 0;
+    // gated 引擎启用位（host gatedEligible 落盘，kernel 入口拷贝）：
+    // RunFwdHGatedDispatch 的充分条件——0 时本实例即便编译期具备 gated 能力
+    // 也降级通用路径，保证 kernel 分派与 host 资源形状（blockDim/workspace）
+    // 恒一致。
+    uint32_t gatedEngine = 0;
 };
 
 struct FwdHKernelArgs {
