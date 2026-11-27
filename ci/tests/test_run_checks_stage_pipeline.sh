@@ -266,7 +266,7 @@ run_case \
     false \
     1 \
     failure \
-    failure,skipped,skipped,skipped,skipped \
+    failure,skipped,skipped,skipped,skipped,skipped \
     false \
     '' \
     false \
