@@ -214,6 +214,9 @@ inline ge::graphStatus GetAttrsInfo(gert::TilingContext *context, CausalConv1dAt
         return ge::GRAPH_FAILED;
     }
 
+    const int64_t *xTokenStridePtr = attrs->GetAttrPointer<int64_t>(ATTR_X_TOKEN_STRIDE_INDEX);
+    attrInfo.xTokenStride = xTokenStridePtr == nullptr ? 0 : *xTokenStridePtr;
+
     const int64_t *maxQueryLenPtr = attrs->GetAttrPointer<int64_t>(ATTR_MAX_QUERY_LEN_INDEX);
     attrInfo.maxQueryLen = (maxQueryLenPtr == nullptr) ? -1 : *maxQueryLenPtr;
     if (attrInfo.maxQueryLen < -1 ||
@@ -261,7 +264,7 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
 
     auto xShapePtr = context->GetInputShape(X_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
-    auto xShape = EnsureNotScalar(xShapePtr->GetStorageShape());
+    auto xShape = EnsureNotScalar(xShapePtr->GetOriginShape());
 
     int64_t dim = 0;
     int64_t cuSeqlen = 0;
@@ -308,6 +311,28 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "validation", "invalid", "dim alignment validation failed");
         return ge::GRAPH_FAILED;
     }
+    const auto *xStride = context->GetInputStride(X_INDEX);
+    const auto rank = xShape.GetDimNum();
+    if (attrInfo.xTokenStride != 0) {
+        if (rank != 2 || attrInfo.xTokenStride < dim ||
+            attrInfo.xTokenStride > CAUSAL_CONV1D_MAX_X_TOKEN_STRIDE ||
+            attrInfo.xTokenStride % DIM_ALIGN_ELEMS != 0 ||
+            (xStride != nullptr && xStride->GetDimNum() != 0 &&
+             (xStride->GetDimNum() != rank || xStride->GetStride(1) != 1 ||
+              xStride->GetStride(0) != attrInfo.xTokenStride))) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x stride", std::to_string(attrInfo.xTokenStride),
+                "aligned 2D row stride");
+            return ge::GRAPH_FAILED;
+        }
+    } else if (xStride != nullptr && xStride->GetDimNum() != 0) {
+        if (xStride->GetDimNum() != rank || xStride->GetStride(rank - 1) != 1 ||
+            (xShape.GetDim(rank - 2) > 1 && xStride->GetStride(rank - 2) != dim) ||
+            (rank == 3 && batch > 1 && xStride->GetStride(0) != seqLen * dim)) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x stride", "non-dense", "dense x or explicit xTokenStride");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    tiling.xTokenStride = attrInfo.xTokenStride == 0 ? dim : attrInfo.xTokenStride;
     if (tiling.headNum > 0) {
         if (isDecodeMode) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "headNum", std::to_string(tiling.headNum), "headNum > 0 is only supported when runMode=0");

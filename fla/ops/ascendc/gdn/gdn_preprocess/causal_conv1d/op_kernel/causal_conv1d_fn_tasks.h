@@ -104,14 +104,15 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t seq, int32_
     LocalTensor<T> ring = inBuf.Get<T>();
     bool hasGmHistoryCopy = false;
     bool hasVectorInit = false;
-    int64_t xHistoryOffset = static_cast<int64_t>(historyStartTok) * dim + channelStart;
+    const int64_t xTokenStride = tilingData_->xTokenStride;
+    int64_t xHistoryOffset = static_cast<int64_t>(historyStartTok) * xTokenStride + channelStart;
 
     for (int32_t i = 0; i < ringStart; ++i) {
         Duplicate(ring[i * MAX_BLOCK_DIM], static_cast<T>(0), baseDim);
         hasVectorInit = true;
     }
 
-    for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += dim) {
+    for (int32_t i = 0, srcTok = historyStartTok; i < historyCount; ++i, ++srcTok, xHistoryOffset += xTokenStride) {
         LocalTensor<T> histSlot = ring[(ringStart + i) * MAX_BLOCK_DIM];
         if (srcTok >= seqStart) {
             DataCopy(histSlot, xGm[xHistoryOffset], baseDim);
@@ -145,7 +146,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRingSeqSplit(int32_t seq, int32_
 
     if (tileLen > 0) {
         const int32_t slot0 = SlotCurr(0);
-        const int64_t xOffset = static_cast<int64_t>(tileStart) * dim + channelStart;
+        const int64_t xOffset = static_cast<int64_t>(tileStart) * xTokenStride + channelStart;
         DataCopy(ring[slot0 * MAX_BLOCK_DIM], xGm[xOffset], baseDim);
         SetFlag<HardEvent::MTE2_V>(inputMte2ToVEvent_[slot0]);
     }

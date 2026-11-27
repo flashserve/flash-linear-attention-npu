@@ -149,7 +149,7 @@ int main()
 
     ret = aclnnCausalConv1dGetWorkspaceSize(x, weight, bias, convStates, queryStartLoc, nullptr, nullptr, nullptr,
                                             nullptr, nullptr, nullptr, nullptr, activation, padSlotId, nullBlockId,
-                                            runMode, headNum, maxQueryLen, y, &workspaceSize, &executor);
+                                            runMode, headNum, maxQueryLen, 0, y, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCausalConv1dGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
 
