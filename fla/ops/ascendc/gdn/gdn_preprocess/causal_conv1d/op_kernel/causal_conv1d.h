@@ -121,7 +121,7 @@ protected:
     __aicore__ inline void InitSharedBuffersAndEvents();
     __aicore__ inline void LoadWeightAndBias(int32_t channelStart, int32_t baseDim);
     __aicore__ inline void InitRing(int32_t cacheIdx, bool hasInit, int32_t stateTokenOffset, int32_t start,
-                                    int32_t len, int32_t channelStart, int32_t baseDim, int32_t dim);
+                                    int32_t len, int32_t channelStart, int32_t baseDim);
     __aicore__ inline void InitRingSeqSplit(int32_t seq, int32_t cacheIdx, bool hasInit, int32_t seqStart,
                                             int32_t tileStart, int32_t tileLen, int32_t channelStart, int32_t baseDim,
                                             int32_t dim);
@@ -131,8 +131,7 @@ protected:
     __aicore__ inline void ComputeFnRollingOutput(int32_t slotCurr, int32_t baseDim);
     __aicore__ inline void AdvanceFnLocalPartials(int32_t slotCurr, int32_t baseDim);
     __aicore__ inline void CopyFnRollingInputBatch(int32_t start, int32_t firstToken, int32_t tokenCount,
-                                                   int32_t dstSlot, int32_t channelStart, int32_t baseDim,
-                                                   int32_t dim);
+                                                   int32_t dstSlot, int32_t channelStart, int32_t baseDim);
     __aicore__ inline void ProcessFnRollingToken(int32_t start, int32_t len, int32_t t, int32_t slotCurr,
                                                  int32_t channelStart, int32_t baseDim, int32_t dim);
     __aicore__ inline void RunSeqFnRolling(int32_t start, int32_t len, int32_t channelStart, int32_t baseDim,
@@ -372,7 +371,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::LoadWeightAndBias(int32_t channelSta
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
 __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRing(int32_t cacheIdx, bool hasInit, int32_t stateTokenOffset,
                                                      int32_t start, int32_t len, int32_t channelStart,
-                                                     int32_t baseDim, int32_t dim)
+                                                     int32_t baseDim)
 {
     const int64_t convStateStride0 = tilingData_->convStateStride0;
     const int64_t convStateStride1 = tilingData_->convStateStride1;
@@ -407,7 +406,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::InitRing(int32_t cacheIdx, bool hasI
 
     if (len > 0) {
         const int32_t slot0 = SlotCurr(0);
-        const int64_t xOffset = static_cast<int64_t>(start) * dim + channelStart;
+        const int64_t xOffset = static_cast<int64_t>(start) * tilingData_->xTokenStride + channelStart;
         DataCopy(ring[slot0 * MAX_BLOCK_DIM], xGm[xOffset], baseDim);
 
         SetFlag<HardEvent::MTE2_V>(inputMte2ToVEvent_[slot0]);
@@ -486,7 +485,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::RunSeq(int32_t start, int32_t len, i
 
         if (t + 1 < len) {
             const int32_t slotNext = SlotPrefetch(t);
-            const int64_t xOffsetNext = static_cast<int64_t>(start + t + 1) * dim + channelStart;
+            const int64_t xOffsetNext = static_cast<int64_t>(start + t + 1) * tilingData_->xTokenStride + channelStart;
             WaitFlag<HardEvent::V_MTE2>(inputVToMte2Event_);
             DataCopy(ring[slotNext * MAX_BLOCK_DIM], xGm[xOffsetNext], baseDim);
             SetFlag<HardEvent::MTE2_V>(inputMte2ToVEvent_[slotNext]);
@@ -718,15 +717,15 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::AdvanceFnLocalPartials(int32_t slotC
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
 __aicore__ inline void CAUSAL_CONV1D_CLASS::CopyFnRollingInputBatch(int32_t start, int32_t firstToken,
                                                                    int32_t tokenCount, int32_t dstSlot,
-                                                                   int32_t channelStart, int32_t baseDim, int32_t dim)
+                                                                   int32_t channelStart, int32_t baseDim)
 {
 
     const int32_t pairBuffer = dstSlot / 2;
     WaitFlag<HardEvent::V_MTE2>(rollingPairVToMte2Event_[pairBuffer]);
     LocalTensor<T> ring = inBuf.Get<T>();
-    const int64_t xOffset = static_cast<int64_t>(start + firstToken) * dim + channelStart;
+    const int64_t xOffset = static_cast<int64_t>(start + firstToken) * tilingData_->xTokenStride + channelStart;
     const int32_t blockLen = baseDim * static_cast<int32_t>(sizeof(T)) / 32;
-    const int32_t srcStride = (dim - baseDim) * static_cast<int32_t>(sizeof(T)) / 32;
+    const int64_t srcStride = (tilingData_->xTokenStride - baseDim) * sizeof(T) / 32;
     const int32_t dstStride = (MAX_BLOCK_DIM - baseDim) * static_cast<int32_t>(sizeof(T)) / 32;
 
     const bool canUseCompactBatch =
@@ -737,7 +736,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::CopyFnRollingInputBatch(int32_t star
         DataCopy(ring[dstSlot * MAX_BLOCK_DIM], xGm[xOffset], copyParams);
     } else {
         for (int32_t i = 0; i < tokenCount; ++i) {
-            const int64_t tokenOffset = static_cast<int64_t>(start + firstToken + i) * dim + channelStart;
+            const int64_t tokenOffset = static_cast<int64_t>(start + firstToken + i) * tilingData_->xTokenStride + channelStart;
             DataCopy(ring[(dstSlot + i) * MAX_BLOCK_DIM], xGm[tokenOffset], baseDim);
         }
     }
@@ -834,7 +833,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::RunSeqFnRolling(int32_t start, int32
 
         SetFlag<HardEvent::V_MTE2>(rollingPairVToMte2Event_[0]);
         const int32_t tokenCount = ((len - nextToken) < kTokensPerCopy) ? (len - nextToken) : kTokensPerCopy;
-        CopyFnRollingInputBatch(start, nextToken, tokenCount, currentPairSlot, channelStart, baseDim, dim);
+        CopyFnRollingInputBatch(start, nextToken, tokenCount, currentPairSlot, channelStart, baseDim);
         nextToken += tokenCount;
     }
 
@@ -852,7 +851,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::RunSeqFnRolling(int32_t start, int32
         if (nextToken < len) {
             const int32_t nextTokenCount =
                 ((len - nextToken) < kTokensPerCopy) ? (len - nextToken) : kTokensPerCopy;
-            CopyFnRollingInputBatch(start, nextToken, nextTokenCount, nextPairSlot, channelStart, baseDim, dim);
+            CopyFnRollingInputBatch(start, nextToken, nextTokenCount, nextPairSlot, channelStart, baseDim);
             nextToken += nextTokenCount;
         }
 
@@ -927,9 +926,9 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::WriteBackFnState(int32_t seq, int32_
 
     if (seqLen >= historyCount) {
         const int32_t firstToken = seqStart + seqLen - historyCount;
-        const int64_t xOffset = static_cast<int64_t>(firstToken) * dim + channelStart;
+        const int64_t xOffset = static_cast<int64_t>(firstToken) * tilingData_->xTokenStride + channelStart;
         const int32_t blockLen = baseDim * static_cast<int32_t>(sizeof(T)) / 32;
-        const int32_t srcStride = (dim - baseDim) * static_cast<int32_t>(sizeof(T)) / 32;
+        const int64_t srcStride = (tilingData_->xTokenStride - baseDim) * sizeof(T) / 32;
         const int32_t dstStride = (MAX_BLOCK_DIM - baseDim) * static_cast<int32_t>(sizeof(T)) / 32;
         if (historyCount > 1 && blockLen <= 65535 && srcStride <= 65535 && dstStride <= 65535) {
             const DataCopyParams copyParams{static_cast<uint16_t>(historyCount), static_cast<uint16_t>(blockLen),
@@ -937,7 +936,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::WriteBackFnState(int32_t seq, int32_
             DataCopy(stateT, xGm[xOffset], copyParams);
         } else {
             for (int32_t pos = 0; pos < historyCount; ++pos) {
-                const int64_t tokenOffset = static_cast<int64_t>(firstToken + pos) * dim + channelStart;
+                const int64_t tokenOffset = static_cast<int64_t>(firstToken + pos) * tilingData_->xTokenStride + channelStart;
                 DataCopy(stateT[pos * MAX_BLOCK_DIM], xGm[tokenOffset], baseDim);
             }
         }
@@ -947,7 +946,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::WriteBackFnState(int32_t seq, int32_
             const int32_t relativeToken = seqLen - historyCount + pos;
             LocalTensor<T> stateSlot = stateT[pos * MAX_BLOCK_DIM];
             if (relativeToken >= 0) {
-                const int64_t xOffset = static_cast<int64_t>(seqStart + relativeToken) * dim + channelStart;
+                const int64_t xOffset = static_cast<int64_t>(seqStart + relativeToken) * tilingData_->xTokenStride + channelStart;
                 DataCopy(stateSlot, xGm[xOffset], baseDim);
                 hasGmCopy = true;
             } else if (hasInit) {
@@ -1063,7 +1062,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::WriteBackStateSpec(int32_t cacheIdx,
         WaitFlag<HardEvent::MTE3_MTE2>(stateShiftMte3ToMte2Event_);
     }
 
-    const int64_t xOffset0 = static_cast<int64_t>(start) * dim + channelStart;
+    const int64_t xOffset0 = static_cast<int64_t>(start) * tilingData_->xTokenStride + channelStart;
     DataCopy(buf0, xGm[xOffset0], baseDim);
     SetFlag<HardEvent::MTE2_MTE3>(specWritebackMte2ToMte3Event_[0]);
 
@@ -1076,7 +1075,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::WriteBackStateSpec(int32_t cacheIdx,
         WaitFlag<HardEvent::MTE2_MTE3>(specWritebackMte2ToMte3Event_[curr]);
 
         if (t + 1 < len) {
-            const int64_t xOffsetNext = static_cast<int64_t>(start + t + 1) * dim + channelStart;
+            const int64_t xOffsetNext = static_cast<int64_t>(start + t + 1) * tilingData_->xTokenStride + channelStart;
             if (t > 0) {
                 WaitFlag<HardEvent::MTE3_MTE2>(specWritebackMte3ToMte2Event_[next]);
             }
@@ -1269,7 +1268,7 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessDefaultByWindowMode()
 
         LoadWeightAndBias(channelStart, curBaseDim);
 
-        InitRing(cacheIdx, hasInit, stateTokenOffset, start, len, channelStart, curBaseDim, dim);
+        InitRing(cacheIdx, hasInit, stateTokenOffset, start, len, channelStart, curBaseDim);
         RunSeq(start, len, channelStart, curBaseDim, dim);
 
         if (isSpecDecodingGlobal) {

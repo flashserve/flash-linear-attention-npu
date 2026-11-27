@@ -24,7 +24,7 @@ public:
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
             .FormatList({ge::FORMAT_ND})
-            .AutoContiguous();
+            .IgnoreContiguous();
         this->Input("weight")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT16, ge::DT_BF16})
@@ -103,6 +103,9 @@ public:
 
         // upper bound for runMode=1 varlen update.
         this->Attr("maxQueryLen").AttrType(OPTIONAL).Int(-1);
+
+        // Element stride of a 2D input. Zero denotes dense rows.
+        this->Attr("xTokenStride").AttrType(OPTIONAL).Int(0);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)

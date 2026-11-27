@@ -34,9 +34,12 @@ inline constexpr int64_t ResolveFnExecutionPlan(int64_t baseDimCnt)
     return FN_EXECUTION_PLAN_CUTBSD;
 }
 
+constexpr int64_t CAUSAL_CONV1D_MAX_X_TOKEN_STRIDE = 65536;
+
 struct CausalConv1dTilingData {
 
     int64_t dim;
+    int64_t xTokenStride;
     int64_t cuSeqlen;
     int64_t seqLen;
     int64_t inputMode;

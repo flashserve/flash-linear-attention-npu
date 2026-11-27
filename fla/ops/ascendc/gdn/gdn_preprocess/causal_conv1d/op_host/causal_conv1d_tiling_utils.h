@@ -40,6 +40,7 @@ constexpr int32_t ATTR_NULL_BLOCK_ID_INDEX = 2;
 constexpr int32_t ATTR_RUN_MODE_INDEX = 3;
 constexpr int32_t ATTR_HEAD_NUM_INDEX = 4;
 constexpr int32_t ATTR_MAX_QUERY_LEN_INDEX = 5;
+constexpr int32_t ATTR_X_TOKEN_STRIDE_INDEX = 6;
 
 constexpr int64_t METADATA_DTYPE_INT64 = 0;
 constexpr int64_t METADATA_DTYPE_INT32 = 1;
@@ -57,6 +58,7 @@ struct CausalConv1dAttrInfo {
     int64_t runMode = 0;
     int64_t headNum = 0;
     int64_t maxQueryLen = -1;
+    int64_t xTokenStride = 0;
     int64_t padSlotId = -1;
     int64_t nullBlockId = 0;
 };

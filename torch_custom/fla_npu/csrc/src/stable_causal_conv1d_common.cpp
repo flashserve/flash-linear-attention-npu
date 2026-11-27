@@ -79,7 +79,25 @@ Tensor launch(Tensor x, Tensor weight, std::optional<Tensor> bias,
               int64_t pad_slot_id, int64_t null_block_id, int64_t run_mode,
               int64_t head_num, int64_t max_query_len, int64_t stream,
               std::optional<Tensor> out_override = std::nullopt) {
-  const TensorMeta x_meta = meta_of(x);
+  TensorMeta x_meta = meta_of(x);
+  int64_t x_token_stride = 0;
+  if (!x_meta.contiguous) {
+    constexpr int64_t kRowAlignment = 16;
+    constexpr int64_t kMaxRowStride = 65536;
+    if (x_meta.ndim == 2 && x_meta.strides[1] == 1 &&
+        x_meta.strides[0] >= x_meta.sizes[1] &&
+        x_meta.strides[0] <= kMaxRowStride &&
+        x_meta.strides[0] % kRowAlignment == 0 &&
+        x_meta.storage_offset % kRowAlignment == 0) {
+      x_token_stride = x_meta.strides[0];
+    } else {
+      // Keep the forward APIs compatible with layouts previously copied by ACLNN.
+      Tensor dense = allocate_like(x_meta);
+      TORCH_ERROR_CODE_CHECK(aoti_torch_copy_(dense.get(), x.get(), false));
+      x = std::move(dense);
+      x_meta = meta_of(x);
+    }
+  }
   // The update form may be handed the caller's destination buffer, which is
   // what keeps the result off a second allocation and off the `copy_` back
   // (the caller's `out=` contract).  Only `x`'s own shape is legal there: the
@@ -116,7 +134,7 @@ Tensor launch(Tensor x, Tensor weight, std::optional<Tensor> bias,
                   int_array(num_accepted_tokens_cpu),
                   cstr(kActivationNames, activation), scalar(pad_slot_id),
                   scalar(null_block_id), scalar(run_mode), scalar(head_num),
-                  scalar(max_query_len), out_tensor(meta_of(out)));
+                  scalar(max_query_len), scalar(x_token_stride), out_tensor(meta_of(out)));
   return out;
 }
 
