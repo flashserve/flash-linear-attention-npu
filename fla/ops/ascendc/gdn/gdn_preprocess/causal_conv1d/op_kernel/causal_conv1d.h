@@ -133,7 +133,9 @@ protected:
     __aicore__ inline void CopyFnRollingInputBatch(int32_t start, int32_t firstToken, int32_t tokenCount,
                                                    int32_t dstSlot, int32_t channelStart, int32_t baseDim);
     __aicore__ inline void ProcessFnRollingToken(int32_t start, int32_t len, int32_t t, int32_t slotCurr,
-                                                 int32_t channelStart, int32_t baseDim, int32_t dim);
+                                                 int32_t channelStart, int32_t baseDim, int32_t dim,
+                                                 int32_t deferredOutSlot = -1);
+    __aicore__ inline void WriteFnOutputPair(int32_t token, int32_t channelStart, int32_t baseDim);
     __aicore__ inline void RunSeqFnRolling(int32_t start, int32_t len, int32_t channelStart, int32_t baseDim,
                                            int32_t dim);
     __aicore__ inline void RunSeq(int32_t start, int32_t len, int32_t channelStart, int32_t baseDim, int32_t dim);
@@ -746,7 +748,8 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::CopyFnRollingInputBatch(int32_t star
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
 __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnRollingToken(int32_t start, int32_t len, int32_t t,
                                                                   int32_t slotCurr, int32_t channelStart,
-                                                                  int32_t baseDim, int32_t dim)
+                                                                  int32_t baseDim, int32_t dim,
+                                                                  int32_t deferredOutSlot)
 {
     auto cl = CalcBufLayout::FromCalcBuf(calcBuf);
     LocalTensor<float> &weightF = cl.weightF;
@@ -762,9 +765,9 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnRollingToken(int32_t start,
     ComputeFnRollingOutput(slotCurr, baseDim);
 #endif
 
-    const int32_t outSlot = t & 1;
+    const int32_t outSlot = deferredOutSlot >= 0 ? deferredOutSlot : (t & 1);
     LocalTensor<T> outSlotT = outT[outSlot * MAX_BLOCK_DIM];
-    if (t >= 2) {
+    if (deferredOutSlot < 0 && t >= 2) {
         WaitFlag<HardEvent::MTE3_V>(outMte3ToVEvent_[outSlot]);
     }
 
@@ -799,6 +802,9 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnRollingToken(int32_t start,
     PipeBarrier<PIPE_V>();
 #endif
 
+    if (deferredOutSlot >= 0) {
+        return;
+    }
     SetFlag<HardEvent::V_MTE3>(outVToMte3Event_[outSlot]);
 
     WaitFlag<HardEvent::V_MTE3>(outVToMte3Event_[outSlot]);
@@ -806,6 +812,35 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::ProcessFnRollingToken(int32_t start,
     if (t + 2 < len) {
         SetFlag<HardEvent::MTE3_V>(outMte3ToVEvent_[outSlot]);
     }
+}
+
+template <CAUSAL_CONV1D_TEMPLATE_ARGS>
+__aicore__ inline void CAUSAL_CONV1D_CLASS::WriteFnOutputPair(int32_t token, int32_t channelStart,
+                                                            int32_t baseDim)
+{
+    LocalTensor<T> out = outBuf.Get<T>();
+    const int32_t headDim = static_cast<int32_t>(tilingData_->headDim);
+    const int32_t totalTokens = static_cast<int32_t>(tilingData_->cuSeqlen);
+    const int32_t elementsPerBlock = 32 / sizeof(T);
+    SetFlag<HardEvent::V_MTE3>(outVToMte3Event_[0]);
+    WaitFlag<HardEvent::V_MTE3>(outVToMte3Event_[0]);
+    for (int32_t offset = 0; offset < baseDim;) {
+        const int32_t channel = channelStart + offset;
+        const int32_t head = channel / headDim;
+        const int32_t inHead = channel % headDim;
+        const int32_t remaining = baseDim - offset;
+        const int32_t headRemaining = headDim - inHead;
+        const int32_t count = remaining < headRemaining ? remaining : headRemaining;
+        const int64_t dst = (static_cast<int64_t>(head) * totalTokens + token) * headDim + inHead;
+        const DataCopyParams copy{2, static_cast<uint16_t>(count / elementsPerBlock),
+                                  static_cast<uint16_t>((MAX_BLOCK_DIM - count) / elementsPerBlock),
+                                  static_cast<uint16_t>((headDim - count) / elementsPerBlock)};
+        DataCopy(yGm[dst], out[offset], copy);
+        offset += count;
+    }
+    // Both output slots remain owned by MTE3 until both token rows are written.
+    SetFlag<HardEvent::MTE3_V>(outMte3ToVEvent_[0]);
+    WaitFlag<HardEvent::MTE3_V>(outMte3ToVEvent_[0]);
 }
 
 template <CAUSAL_CONV1D_TEMPLATE_ARGS>
@@ -837,7 +872,18 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::RunSeqFnRolling(int32_t start, int32
         nextToken += tokenCount;
     }
 
+    // Restrict this experiment to the A5 BF16 prefill shape in the trace.
+    bool batchHeadFirstOutput = false;
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201)
+    batchHeadFirstOutput = IsSameType<T, bfloat16_t>::value && kTemplateWidth == 4 &&
+                           tilingData_->inputMode == 0 && tilingData_->headNum == 40 &&
+                           tilingData_->headDim == 128 && dim == 5120 &&
+                           channelStart % 16 == 0 && baseDim % 16 == 0 && len >= 3;
+#endif
     ProcessFnRollingToken(start, len, 0, slot0, channelStart, baseDim, dim);
+    if (batchHeadFirstOutput) {
+        WaitFlag<HardEvent::MTE3_V>(outMte3ToVEvent_[0]);
+    }
     if (nextToken < len) {
 
         SetFlag<HardEvent::V_MTE2>(rollingPairVToMte2Event_[1]);
@@ -855,8 +901,22 @@ __aicore__ inline void CAUSAL_CONV1D_CLASS::RunSeqFnRolling(int32_t start, int32
             nextToken += nextTokenCount;
         }
 
-        for (int32_t i = 0; i < tokenCount; ++i) {
-            ProcessFnRollingToken(start, len, t + i, currentPairSlot + i, channelStart, baseDim, dim);
+        if (batchHeadFirstOutput) {
+            for (int32_t i = 0; i < tokenCount; ++i) {
+                ProcessFnRollingToken(start, len, t + i, currentPairSlot + i, channelStart, baseDim, dim, i);
+            }
+            if (tokenCount == kTokensPerCopy) {
+                WriteFnOutputPair(start + t, channelStart, baseDim);
+            } else {
+                LocalTensor<T> out = outBuf.Get<T>();
+                SetFlag<HardEvent::V_MTE3>(outVToMte3Event_[0]);
+                WaitFlag<HardEvent::V_MTE3>(outVToMte3Event_[0]);
+                WriteFnOutput(out, start + t, channelStart, baseDim, dim);
+            }
+        } else {
+            for (int32_t i = 0; i < tokenCount; ++i) {
+                ProcessFnRollingToken(start, len, t + i, currentPairSlot + i, channelStart, baseDim, dim);
+            }
         }
 
         if (nextToken < len) {
