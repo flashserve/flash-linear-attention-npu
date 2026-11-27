@@ -53,6 +53,7 @@
 #include "stable_recurrent_kda.cpp"
 #include "stable_solve_tri.cpp"
 #include "stable_vdn_scan.cpp"
+#include "stable_vdn_pipeline.cpp"
 #include "stable_vdn_add_diagonal.cpp"
 #include "stable_vdn_bridge.cpp"
 
@@ -131,6 +132,7 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_chunk_gated_delta_rule_fwd);
   m.def(kSchema_solve_tri);
   m.def(kSchema_vdn_scan);
+  m.def(vdn_manual::schema);
   m.def(kSchema_vdn_add_diagonal);
   m.def(kSchema_vdn_bridge);
   m.def(kSchema_chunk_gated_delta_rule_fwd_prepare);
@@ -146,6 +148,7 @@ static void register_schemas(StableLibrary& m) {
 }
 
 static void register_implementations(StableLibrary& m) {
+  m.impl("npu_vdn_pipeline", &vdn_manual::run);
   m.impl("npu_vdn_scan", &fla_npu_stable::stable::boxed_adapter<run_vdn_scan>);
   m.impl("npu_vdn_add_diagonal", &fla_npu_stable::stable::boxed_adapter<run_vdn_add_diagonal>);
   m.impl("npu_vdn_bridge", &fla_npu_stable::stable::boxed_adapter<run_vdn_bridge>);

@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.16)
+find_package(ASC REQUIRED)
+project(vdn_forward_manual LANGUAGES ASC CXX)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(TRITON_METAOP_LIBRARY "" CACHE FILEPATH "Triton Ascend Atlas A2 Vector bitcode library")
+if(NOT EXISTS "${TRITON_METAOP_LIBRARY}")
+  message(FATAL_ERROR "Set TRITON_METAOP_LIBRARY to meta_op.aiv.c220.O0.bc from the Triton Ascend backend")
+endif()
+find_program(LLVM_LINK llvm-link REQUIRED)
+set(features JyInit JyKey JyKV7 JyKV14 JyQuery JyValue)
+foreach(name IN LISTS features)
+  list(APPEND feature_sources "${CMAKE_CURRENT_SOURCE_DIR}/device_ir/${name}.ll")
+endforeach()
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/features.bc"
+  COMMAND "${LLVM_LINK}" ${feature_sources} -o "${CMAKE_CURRENT_BINARY_DIR}/entries.bc"
+  COMMAND "${LLVM_LINK}" "${CMAKE_CURRENT_BINARY_DIR}/entries.bc" --only-needed "${TRITON_METAOP_LIBRARY}" -o "${CMAKE_CURRENT_BINARY_DIR}/features.bc"
+  DEPENDS ${feature_sources} "${TRITON_METAOP_LIBRARY}" VERBATIM)
+add_custom_target(vdn_features DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/features.bc")
+add_library(vdn_pipeline_device SHARED manual.asc)
+add_dependencies(vdn_pipeline_device vdn_features)
+target_compile_options(vdn_pipeline_device PRIVATE --npu-arch=dav-2201 -std=c++17 -O2 -cce-link-aicore-ll-module "${CMAKE_CURRENT_BINARY_DIR}/features.bc")
+target_compile_definitions(vdn_pipeline_device PRIVATE CATLASS_ARCH=2201)
+target_include_directories(vdn_pipeline_device PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../third_party/catlass/include")
+target_link_libraries(vdn_pipeline_device PRIVATE ascendcl)
+
+target_include_directories(vdn_pipeline_device PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../torch_custom/fla_npu/csrc/include")

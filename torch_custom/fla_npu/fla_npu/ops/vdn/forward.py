@@ -3,6 +3,7 @@
 import torch
 
 from ._core import forward as _forward
+from ._manual import try_forward as _try_manual
 from ._newton import inverse, inverse_sub
 from ..triton.triton_core.vdn_short_conv import feature_preprocessor
 
@@ -55,6 +56,12 @@ def vdn_forward(q, k, v, beta, alpha, bounds, text_state=None, *, delta_rule="vd
         raise ValueError(f"unsupported delta_rule: {delta_rule!r}")
     # Triton selects its device from the current context, including for JIT compilation.
     with torch.npu.device(q.device):
+        result = _try_manual(q, k, v, beta, alpha, bounds, text_state, delta_rule=delta_rule,
+                             fuse_silu=fuse_silu, fuse_qk_l2norm=fuse_qk_l2norm,
+                             short_conv=short_conv, frame_size=frame_size, frame_tile=frame_tile,
+                             pad_tail=pad_tail, value_first=value_first)
+        if result is not None:
+            return result
         preprocess = feature_preprocessor(q, silu=fuse_silu, qk_l2norm=fuse_qk_l2norm,
                                           short_conv=short_conv, frame_size=frame_size)
         return _forward(q, k, v, beta, alpha, bounds, text_state, inverse_solver=inverse_solver,
