@@ -124,7 +124,7 @@ public:
                 }
             }
             FinalizeChunk chunk{};
-            if (!ResolveChunk(args_, chunkId, chunk)) {
+            if (!ResolveChunk(args_, chunkId, chunk, chunkCursor_)) {
                 continue;
             }
             if (headEnd > args_.tiling.valueHeadNum) {
@@ -167,6 +167,7 @@ public:
     }
 
 private:
+    KdaFinalize::ChunkCursor chunkCursor_{};
 #if !defined(__NPU_ARCH__) || __NPU_ARCH__ == 2201
     __aicore__ inline bool NextHead(uint64_t &work, uint64_t total,
                                     FinalizeChunk &chunk, uint32_t &head)
@@ -175,7 +176,7 @@ private:
         while (work < total) {
             const uint64_t current = work;
             work += args_.tiling.usedCoreNum;
-            if (ResolveChunk(args_, static_cast<uint32_t>(current / args_.tiling.valueHeadNum), chunk)) {
+            if (ResolveChunk(args_, static_cast<uint32_t>(current / args_.tiling.valueHeadNum), chunk, chunkCursor_)) {
                 head = static_cast<uint32_t>(current % args_.tiling.valueHeadNum);
                 return true;
             }

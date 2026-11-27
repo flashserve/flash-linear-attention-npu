@@ -31,16 +31,26 @@ __aicore__ inline uint64_t RotateWork(const PrepareRuntimeTiling &t,uint64_t cur
     // The same physical core/slot owns all buffers and flags as before.
     return begin+offset;
 }
-__aicore__ inline Work Describe(const PrepareKernelArgs &a,uint64_t job) {
+__aicore__ inline Work Describe(const PrepareKernelArgs &a,uint64_t job,
+                                     KdaPrepare::ChunkCursor &cursor) {
     const auto &t=a.tiling; Work w;
     uint32_t pairs=(t.valueHeadNum+1)/2, chunk=job/pairs, pair=job%pairs;
     if(t.isVarLen) {
-        GlobalTensor<int64_t> ids,cu;
-        ids.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(a.chunkIndices));
-        cu.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(a.cuSeqlens));
-        uint32_t seq=ids.GetValue(2*chunk), local=ids.GetValue(2*chunk+1);
-        uint32_t end=cu.GetValue(seq+1); w.token=cu.GetValue(seq)+64*local;
-        w.rows=w.token<end?(end-w.token<64?end-w.token:64):0;
+        if (a.chunkIndices != nullptr) {
+            GlobalTensor<int64_t> ids,cu;
+            ids.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(a.chunkIndices));
+            cu.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(a.cuSeqlens));
+            uint32_t seq=ids.GetValue(2*chunk), local=ids.GetValue(2*chunk+1);
+            uint32_t end=cu.GetValue(seq+1); w.token=cu.GetValue(seq)+64*local;
+            w.rows=w.token<end?(end-w.token<64?end-w.token:64):0;
+        } else {
+            uint64_t seq=0,begin=0,end=0;
+            if (cursor.Resolve(reinterpret_cast<const __gm__ int64_t *>(a.cuSeqlens),
+                               t.seqNum,t.seqLen,64,chunk,seq,begin,end)) {
+                w.token=static_cast<uint32_t>(begin);
+                w.rows=static_cast<uint32_t>(end-begin);
+            }
+        }
     } else {
         w.batch=chunk/t.totalChunks; w.token=(chunk%t.totalChunks)*64;
         w.rows=t.seqLen-w.token<64?t.seqLen-w.token:64;

@@ -331,3 +331,31 @@ by the rescaled query, so only the upper exponent clamp is retained.
 This does not guarantee exact preservation of very small historical terms.
 The ordinary gate clamps, non-SAFE_GATE path, Cube grouping and workspace
 are unchanged. The reference shift uses the existing FP32 Adds operation.
+
+## 缺省 chunk_indices 的核内游标（规则 V2，局部复核）
+
+本方案对应 #1164，替代 PR #1194 的 host 建表路径。公开接口、canonical 显式表校验、
+数学公式、任务划分、TilingKey、Stage、数据 buffer 和同步协议保持当前 main 的定义。
+仅在 kernel 收到空 chunk_indices 时，使用每个 kernel 实例独占的 ChunkCursor；
+显式表仍按原有 O(1) 路径读取。Python 包装层现有自动补表行为保持兼容；专项测试和
+性能比较通过原生 ACLNN 入参传空，确保实际覆盖无表路径。
+
+游标缓存 sequence、chunkPrefix、sequenceBegin/End、sequenceChunks 和有效位。
+命中当前序列时直接用 localChunk=flatChunk-chunkPrefix 计算 token 起点与有效行数，
+不再读 cu_seqlens；越过当前序列时顺序推进，空序列贡献零个 chunk；
+查询退回当前前缀之前时清空游标再从序列 0 定位。重复查询、跨 chunk 跳跃、
+prefetch 后回查以及越界后重新查询均保持正确。元数据在单次 launch 中只读，
+游标为 AIC/各 AIV 独立标量状态，不共享、不落 GM，不新增事件或 workspace。
+
+对单调访问的一轮，每核扫描成本为 O(sequence_count+visited_chunks)，
+代价是每核首次定位及后续跨序列的 GM 标量读；查表方案则支付 host 的
+O(sequence_count+chunk_count) 构表和 16*chunk_count 字节表传输。
+A2 Prepare 的 RotateWork 在当前 wave 内置换任务；游标支持回退，不以单调性保证正确性。
+独立 Prepare/Finalize、V1 内嵌 Prepare/Post-WU/Finalize 的所有调用点分别持有状态。
+
+验证先执行独立线性 oracle 的 CPU 查询轨迹测试，再构建 A2 并验证原始全量精度与
+无表专项（空序列、尾块、重复/回退、不同 head/layout、千级序列）。出现失败先保存
+输出并用 CT 分析；数值误差用 50 轮 accuracy_lt 和 ct dual analyze 复检。
+精度或 CT 复检通过后，才以相同 main、输入和采集配置比较 host 建表与 kernel 游标。
+正式 kernel 数据取 msprof op_summary 的 Task Duration(us)，host 与端到端独立记录，
+不得用端到端减 kernel 反推纯 host 时间，也不将 Python wall time 当 kernel 性能。
