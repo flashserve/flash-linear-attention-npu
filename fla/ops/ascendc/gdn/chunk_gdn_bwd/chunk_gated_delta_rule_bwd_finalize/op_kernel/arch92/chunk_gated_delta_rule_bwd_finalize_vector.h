@@ -125,7 +125,6 @@ public:
                 stage12Mte3ToMte2_[eventIndex]);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
-        stage12VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         stage15VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
@@ -307,7 +306,7 @@ public:
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    WaitReady<PIPE_V>(CUBE_TO_VEC_FLAG);
+                    WaitReady(CUBE_TO_VEC_FLAG);
                     Stage2VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dAu_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(kb_[streamSlot_].GetPhyAddr()),
@@ -330,7 +329,7 @@ public:
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    WaitReady<PIPE_V>(CUBE_TO_VEC_FLAG);
+                    WaitReady(CUBE_TO_VEC_FLAG);
                     Stage4VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dAw0_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(dAu_[streamSlot_].GetPhyAddr()),
@@ -381,7 +380,7 @@ public:
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
                     vOffset = gOffset * tiling_->V;
-                    WaitReady<PIPE_V>(CUBE_TO_VEC_FLAG);
+                    WaitReady(CUBE_TO_VEC_FLAG);
                     Stage8VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dA2_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(gateDA_[streamSlot_].GetPhyAddr()),
@@ -443,6 +442,8 @@ public:
                     vectorBase = gOffset * K_SIZE_128;
                     workspaceVectorOffset = GetWorkspaceHeadOffset(
                         coreIdx_, workspaceGroupRound, headOffset);
+                    // S11 publishes Fixpipe output and prior S9 GM writes before S12 issues any copies.
+                    WaitReady(CUBE_TO_VEC_FLAG);
                     AscendC::DataCopy(
                         doG_[streamSlot_], doGm_[vectorBase], chunk.chunkLen * V_SIZE_128);
                     AscendC::DataCopy(
@@ -452,11 +453,6 @@ public:
                             {1, static_cast<uint32_t>(chunk.chunkLen * sizeof(BT)), 0, 0, 0},
                             {false, 0, 0, 0});
                     }
-                    WaitReady<PIPE_V>(CUBE_TO_VEC_FLAG);
-                    // Keep flag 3 ordered on V and forward readiness to the GM reads on MTE2.
-                    // The MTE2_V wait below completes this handshake before the next head.
-                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
-                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
                     AscendC::DataCopy(
                         dkb_[streamSlot_], dkbInGm_[workspaceVectorOffset], chunk.chunkLen * K_SIZE_128);
                     AscendC::DataCopy(
@@ -503,7 +499,7 @@ public:
                 }
                 streamSlot_ = 0;
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
-                    WaitReady<PIPE_V>(CUBE_TO_VEC_FLAG);
+                    WaitReady(CUBE_TO_VEC_FLAG);
                     hv = hvBase + headOffset;
                     hk = hv / tiling_->headRatio;
                     localHv = hv - hk * tiling_->headRatio;
@@ -715,7 +711,6 @@ public:
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
-        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
 
@@ -922,7 +917,6 @@ private:
     AscendC::TEventID mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stage12Mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stateVToMte2_[SLOT_COUNT];
-    AscendC::TEventID stage12VToMte2_;
     AscendC::TEventID stage15VToMte2_;
     int64_t stateChunkNum_ = 0;
 };

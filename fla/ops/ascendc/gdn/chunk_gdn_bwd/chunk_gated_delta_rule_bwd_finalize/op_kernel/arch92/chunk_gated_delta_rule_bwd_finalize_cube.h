@@ -269,7 +269,7 @@ public:
                 // S13 dk_base spans the compact ds slots of adjacent heads.
                 // All S12 MTE3 consumers must finish before any of these CV writes.
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
-                    WaitReady<PIPE_MTE2>(VEC_TO_CUBE_FLAG);
+                    WaitReady(VEC_TO_CUBE_FLAG);
                 }
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     ProcessStage13Head(
@@ -279,7 +279,7 @@ public:
                         chunk, hvBase + headOffset, headOffset);
                     SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
                 }
-                WaitReady<PIPE_MTE2>(VEC_TO_CUBE_FLAG);
+                WaitReady(VEC_TO_CUBE_FLAG);
                 ++windowBank;
             }
         }
@@ -491,7 +491,7 @@ private:
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[hEvent]);
 
-        WaitReady<PIPE_MTE2>(VEC_TO_CUBE_FLAG);
+        WaitReady(VEC_TO_CUBE_FLAG);
         typename TileCopyDau::template CopyGmToL1B<decltype(blockGmVb)>{}(tensorL1Vb, blockGmVb);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[duEvent]);
 
@@ -810,7 +810,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[l1Event]);
         typename TileCopyDau::template CopyGmToL1A<decltype(blockGmK)>{}(
             tensorL1K, blockGmK);
-        WaitReady<PIPE_MTE2>(VEC_TO_CUBE_FLAG);
+        WaitReady(VEC_TO_CUBE_FLAG);
         typename TileCopyDw0::template CopyGmToL1A<decltype(blockGmDA0)>{}(
             tensorL1DA0, blockGmDA0);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[l1Event]);
@@ -1084,7 +1084,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[l1Event]);
         typename TileCopyStage9DkbT::template CopyGmToL1B<decltype(blockGmKb)>{}(
             tensorL1Kb, blockGmKb);
-        WaitReady<PIPE_MTE2>(VEC_TO_CUBE_FLAG);
+        WaitReady(VEC_TO_CUBE_FLAG);
         typename TileCopyDw0::template CopyGmToL1A<decltype(blockGmDA)>{}(
             tensorL1DA, blockGmDA);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[l1Event]);

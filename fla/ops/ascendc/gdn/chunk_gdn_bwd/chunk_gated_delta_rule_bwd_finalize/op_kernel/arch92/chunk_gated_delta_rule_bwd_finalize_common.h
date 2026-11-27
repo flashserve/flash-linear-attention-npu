@@ -92,10 +92,10 @@ __aicore__ inline void SetReady(uint16_t flag)
 {
     AscendC::CrossCoreSetFlag<0x4, Pipe>(flag);
 }
-template <pipe_t Pipe>
 __aicore__ inline void WaitReady(uint16_t flag)
 {
-    AscendC::CrossCoreWaitFlag<0x4, Pipe>(flag);
+    // Both directions use ordered flags. Stop dispatch before issuing dependent pipe work.
+    AscendC::CrossCoreWaitFlag<0x4, PIPE_S>(flag);
 }
 } // namespace GDN::FinalizeArch92
 #endif
