@@ -28,18 +28,29 @@ def source_roots(suites):
     return roots
 
 
-def affected_ops(roots, base, head, repo):
+def affected_pairs(pairs, roots, base, head, repo):
     # Disabling rename detection returns both the deleted and the added path.
     # NUL delimiters preserve file names containing tabs, spaces and newlines.
     data = subprocess.check_output(
-        ["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--", "fla/ops/ascendc/"],
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--", "fla/ops/ascendc/", "tests/atk/"],
         cwd=repo,
     )
-    paths = [os.fsdecode(raw) for raw in data.split(b"\0") if raw]
-    return {
+    paths = {os.fsdecode(raw) for raw in data.split(b"\0") if raw}
+    # Bundled references can import other operators' references. Exercise their
+    # consumers too when changing the Python harness, reference code or catalog.
+    if paths & {"tests/atk/smoke/suites.json", "tests/atk/smoke/source_roots.json"} or any(
+        path.endswith(".py") and path.startswith(("tests/atk/smoke/", "tests/atk/common/"))
+        for path in paths
+    ):
+        return pairs
+    changed_ops = {
         op for op, root in roots.items()
-        if any(path == root or path.startswith(root + "/") for path in paths)
+        if any(path == root or path.startswith(root + "/")
+               or (path.startswith(f"tests/atk/{op}/") and path.endswith(".py"))
+               for path in paths)
     }
+    return {(op, platform) for op, platform in pairs
+            if op in changed_ops or f"tests/atk/smoke/cases/{op}/{platform}/cases.json" in paths}
 
 
 def case_path(suite):
@@ -340,8 +351,10 @@ def main():
         raise ValueError("Expected one cases.json per operator and platform in suites.json")
     if args.action in ("matrix", "affected"):
         roots = source_roots(suites)
-        ops = affected_ops(roots, *args.git_range, ROOT.parents[2]) if args.git_range else roots
-        pairs = sorted({(s["op"], s["platform"]) for s in suites if s["op"] in ops})
+        pairs = {(s["op"], s["platform"]) for s in suites}
+        if args.git_range:
+            pairs = affected_pairs(pairs, roots, *args.git_range, ROOT.parents[2])
+        pairs = sorted(pairs)
         if args.action == "affected":
             for op, platform in pairs:
                 if platform == args.platform:

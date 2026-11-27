@@ -90,7 +90,9 @@ class RunCiContainerTests(unittest.TestCase):
                 'assert sys.argv[1:] == ["affected", "--platform", "A5", "--git-range", "tested-base", "HEAD"]\n'
                 'print("chunk_fwd_h")\nprint("recurrent_kda")\n'
             )
-            env.update(CI_ATK_BASE_SHA="tested-base", CI_ACCURACY_PLATFORM="a5", CI_STAGE="all", CI_OPS="")
+            # The protected target-branch workflow publishes the actual merge base parent here.
+            env.pop("CI_ATK_BASE_SHA", None)
+            env.update(NPU_CI_BASE_SHA="tested-base", CI_ACCURACY_PLATFORM="a5", CI_STAGE="all", CI_OPS="")
         if broad_tmp:
             env["CI_HOST_TMPDIR"] = env["TMPDIR"]
         command = ["bash", "ci/run_ci_container.sh"]

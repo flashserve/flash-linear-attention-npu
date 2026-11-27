@@ -765,7 +765,6 @@ jobs:
           echo "::group::${{ matrix.name }} 完整构建与测试日志（默认折叠）"
           (
             set -o pipefail
-            export CI_ATK_BASE_SHA="$NPU_CI_BASE_SHA"
             bash ci/run_ci_container.sh 2>&1 | tee "$CI_RAW_LOG_FILE"
           ) &
           ci_pid=$!

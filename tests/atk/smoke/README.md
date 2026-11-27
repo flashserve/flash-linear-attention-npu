@@ -8,6 +8,8 @@ A2、A5 在各自的 NPU CI 任务中运行本次改动命中的算子用例。�
 
 - 修改 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/`，A2 和 A5 都运行 `chunk_fwd_h`。
 - 修改同级的 `chunk_gated_delta_rule_fwd_h/`，只有 A5 有登记用例。融合算子目录下的 `op_kernel/internal/operators/` 归其外层算子。
+- PR 只改某个算子的平台 `cases.json` 时，该平台也会运行这个算子的 ATK。修改冒烟 Python 执行器、标杆或公共清单时，两个平台分别运行全部已登记的算子，覆盖跨算子标杆依赖。
+- 在 PR 上按现有方式触发 `/run-npu-ci quick` 或 `/run-npu-ci full` 即可。容器入口读取目标分支 workflow 已提供的 `NPU_CI_BASE_SHA`。常规冒烟即使只修改模型用例，也会执行 KDA/GDN 模型回归。
 - 未命中已登记目录时直接进入模型回归。显式指定 `ops=...` 的编译诊断沿用现有流程。
 
 在本地预览选择结果时，将下面的 `BASE` 和 `MERGED_HEAD` 换成两次提交的 SHA。在 CI 的合并提交上也可以使用 `HEAD^1 HEAD`。

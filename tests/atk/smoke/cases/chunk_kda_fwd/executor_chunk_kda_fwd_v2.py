@@ -1,4 +1,3 @@
-import ctypes
 import sys
 from pathlib import Path
 
@@ -10,51 +9,6 @@ from executor_chunk_kda_fwd import ChunkKdaFwdApi as ForwardReference, _apply_ou
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "chunk_kda_fwd_prepare"))
 from executor_chunk_kda_fwd_prepare_a2 import PreparedInputs, run_cpu as prepare_cpu
-
-
-def _run_v2(inputs, spec):
-    from fla_npu.ops.ascendc import _aclnn_ctypes as acl
-
-    q = inputs.q
-    if (q.dtype, spec["K"], spec["V"], spec["chunk_size"]) != (torch.bfloat16, 128, 128, 64):
-        raise ValueError("Forward V2 requires BF16 Q/K/V, K=V=128 and chunk_size=64")
-    cu = inputs.cu_seqlens
-    if cu and any(a >= b for a, b in zip(cu, cu[1:])):
-        raise ValueError("Forward V2 requires strictly increasing cu_seqlens")
-    indices = inputs.chunk_indices or acl._kda_build_chunk_indices(cu, 64)
-    batch, heads, tokens = spec["B"], spec["HV"], spec["T"]
-    packed = spec["layout"] in ("TND", "NTD")
-    prefix = () if packed else (batch,)
-    chunks = acl._kda_total_chunks(batch, tokens, 64, cu, indices)
-    head_shape = (*prefix, heads, tokens, 128)
-    matrix_shape = (*prefix, heads, tokens, 64)
-    mask = acl.kda_fwd_optional_output_mask(
-        output_final_state=spec["output_final_state"], use_gate_in_kernel=spec["use_gate_in_kernel"],
-        disable_recompute=spec["disable_recompute"], return_intermediate_states=spec["return_intermediate_states"],
-    )
-    seqs = len(cu) - 1 if cu else batch
-    shapes = ((*prefix, tokens, heads, 128), (seqs, heads, 128, 128), head_shape,
-              matrix_shape, matrix_shape, head_shape, head_shape, head_shape, head_shape,
-              head_shape, (*prefix, chunks, heads, 128, 128))
-    outputs = tuple(torch.empty(shape, device=q.device, dtype=torch.float32 if i in (1, 2) else q.dtype)
-                    if mask[i] else None for i, shape in enumerate(shapes))
-    layout = ctypes.create_string_buffer(spec["layout"].encode())
-    def build(ctx):
-        args = [ctx.tensor(getattr(inputs, key), key) for key in
-                ("q", "k", "v", "g", "beta", "A_log", "dt_bias", "initial_state")]
-        args.extend([ctx.int_array(cu), ctx.int_array(indices), ctypes.cast(layout, ctypes.c_char_p),
-                     ctypes.c_double(spec["scale"]), ctypes.c_int64(64), ctypes.c_bool(spec["safe_gate"]),
-                     ctypes.c_double(spec["lower_bound"]), ctypes.c_bool(spec["use_gate_in_kernel"]),
-                     ctypes.c_bool(spec["state_v_first"]), ctypes.c_double(spec["epsilon"]),
-                     ctypes.c_bool(spec["use_qk_l2norm_in_kernel"]), ctypes.c_bool(spec["use_beta_sigmoid_in_kernel"]),
-                     ctypes.c_bool(spec["allow_neg_eigval"]), ctypes.c_bool(spec["use_exp2"])])
-        names = ("attn_out", "final_state", "gk", "Aqk", "Akk", "w", "u", "qg", "kg", "v_new", "h")
-        args.extend(ctx.tensor(t, name) for t, name in zip(outputs, names))
-        args.extend(ctx.tensor(None, name) for name in ("q_hat", "k_hat", "q_rstd", "k_rstd", "beta_eff"))
-        return args
-
-    acl._call_aclnn("aclnnChunkKdaFwdV2", build, outputs)
-    return (*outputs, inputs.initial_state)
 
 
 def _run_public(inputs, spec):
@@ -140,7 +94,15 @@ class FunctionApi(ForwardReference):
     def _run_fp64(inputs, spec):
         return _run_cpu_control(inputs, spec, role="truth_fp64")
 
-    _run_npu = staticmethod(_run_v2)
+    @staticmethod
+    def _run_npu(inputs, spec):
+        cu = inputs.cu_seqlens
+        if cu and any(left >= right for left, right in zip(cu, cu[1:])):
+            raise ValueError("Forward V2 requires strictly increasing cu_seqlens")
+        outputs = _run_public(inputs, spec)
+        # This ATK registration exposes the original 11 outputs and caller state.
+        return (*outputs[:11], inputs.initial_state)
+
     _run_cpu_control = staticmethod(_run_cpu_control)
 
 @register("executor_chunk_kda_fwd_public")

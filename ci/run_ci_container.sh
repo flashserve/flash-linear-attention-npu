@@ -253,10 +253,11 @@ fi
 atk_smoke_ops=""
 # The workflow supplies the first parent of the merge actually being tested.
 # ops=... diagnostics only compile and do not enter the runtime stage.
-if [[ -n "${CI_ATK_BASE_SHA:-}" && "${CI_STAGE:-all}" == "all" && -z "${CI_OPS:-}" ]]; then
+atk_base="${CI_ATK_BASE_SHA:-${NPU_CI_BASE_SHA:-}}"
+if [[ -n "$atk_base" && "${CI_STAGE:-all}" == "all" && -z "${CI_OPS:-}" ]]; then
     platform="${CI_ACCURACY_PLATFORM:?CI accuracy platform is required for ATK selection}"
     atk_smoke_ops="$(python3 tests/atk/smoke/run.py affected --platform "${platform^^}" \
-        --git-range "$CI_ATK_BASE_SHA" HEAD)"
+        --git-range "$atk_base" HEAD)"
     if [[ -n "$atk_smoke_ops" ]]; then
         echo "[CI][ATK] ${platform^^}: ${atk_smoke_ops//$'\n'/ }"
     else

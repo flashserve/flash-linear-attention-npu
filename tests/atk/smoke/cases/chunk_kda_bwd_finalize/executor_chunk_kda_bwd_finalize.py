@@ -172,46 +172,42 @@ def interface_outputs(outputs, spec):
                  for i, x in enumerate(outputs))
 
 
-def run_npu(data, spec, cu, chunks, device):
-    """Call the public two-stage ACLNN with the exact typed C signature."""
-    import torch_npu
-    from fla_npu.ops.ascendc import _runtime
-    variable = spec['lengths'] is not None
+def finalize_device(inputs, spec, cu, chunks, device):
+    from fla_npu.ops.ascendc import npu_chunk_kda_bwd_finalize
+
     dev = {}
-    for name, value in data.items():
-        if name not in ('a_log', 'dt_bias'):
-            if variable and spec['rank'] == 4:
+    for name, value in inputs.items():
+        if name not in ("a_log", "dt_bias"):
+            if spec["lengths"] is not None and spec["rank"] == 4:
                 value = value.unsqueeze(0)
-            elif not variable and spec['rank'] == 3:
+            elif spec["lengths"] is None and spec["rank"] == 3:
                 value = value.squeeze(0)
         dev[name] = value.contiguous().to(device)
-    token_major = spec['output_layout'] in ('BSND', 'TND')
-    qshape = dev['q'].transpose(-3, -2).shape if token_major else dev['q'].shape
-    outputs = tuple([torch.empty(qshape, dtype=torch.bfloat16, device=device) for _ in range(3)] + [
-        torch.empty(qshape[:-1], dtype=dev['beta'].dtype, device=device),
-        torch.empty(qshape, dtype=dev['raw_g'].dtype, device=device),
-        torch.empty_like(dev['a_log']), torch.empty_like(dev['dt_bias'])])
-    signature = ([c.c_void_p] * 19 + [c.c_double, c.c_double, c.c_int64] + [c.c_bool] * 6 +
-                 [c.c_char_p] + [c.c_void_p] * 7 + [c.POINTER(c.c_uint64), c.POINTER(c.c_void_p)])
+    dev["d_aqk"] = dev.pop("dAqk")
+    indices = (
+        [n for item in chunks for n in item[:2]]
+        if cu and spec["metadata"] != "auto"
+        else None
+    )
+    return npu_chunk_kda_bwd_finalize(
+        **dev,
+        scale=spec["scale"],
+        lower_bound=spec["lower_bound"],
+        chunk_size=64,
+        safe_gate=True,
+        use_gate_in_kernel=True,
+        use_exp2=True,
+        state_v_first=False,
+        output_layout=spec["output_layout"],
+        cu_seqlens=cu or None,
+        chunk_indices=indices,
+        use_beta_sigmoid_in_kernel=spec["beta_mode"] != 0,
+        allow_neg_eigval=spec["beta_mode"] == 2,
+    )
 
-    def build_args(ctx):
-        def tensor(value, name):
-            if value is None:
-                return None
-            return ctx.tensor(value, name, acl_format_override=2, storage_shape_override=tuple(value.shape))
-        names = ('q', 'k', 'v', 'gk', 'raw_g', 'beta', 'a_log', 'dt_bias', 'akk', 'v_new',
-                 'h', 'dh', 'dv_scan', 'dAqk', 'dq_raw', 'q_rstd', 'k_rstd')
-        args = [tensor(dev.get(n), n) for n in names]
-        indices = [n for x in chunks for n in x[:2]] if cu and spec['metadata'] != 'auto' else None
-        args += [ctx.int_array(cu if cu else None), ctx.int_array(indices)]
-        args += [spec['scale'], spec['lower_bound'], 64, True, True, True, False,
-                 spec['beta_mode'] != 0, spec['beta_mode'] == 2, spec['output_layout'].encode()]
-        args += [tensor(t, n) for n, t in zip(NAMES, outputs)]
-        return args
 
-    _runtime.call_aclnn('aclnnChunkKdaBwdFinalize', build_args, outputs, get_workspace_argtypes=signature)
-    torch.npu.synchronize()
-    return tuple(t.cpu() for t in outputs)
+def run_npu(data, spec, cu, chunks, device):
+    return tuple(t.cpu() for t in finalize_device(data, spec, cu, chunks, device))
 
 
 try:
@@ -282,17 +278,27 @@ if 'AclnnBaseApi' in globals():
             from atk.tasks.backends.lib_interface.acl_wrapper import AclTensor, AclIntArray
             args = [self.torch_tensor_to_acl(dev[n]) if n in dev else c.POINTER(AclTensor)() for n in names]
             indices = [n for x in chunks for n in x[:2]] if cu and spec['metadata'] != 'auto' else None
-            if cu:
-                from fla_npu.ops.ascendc import _runtime
-                # ATK releases descriptors after the call; retain their backing
-                # storage here and do not also call ctx.destroy().
-                self.ctx = _runtime._CallContext(_runtime.runtime(), torch.device(device))
-                args += [c.cast(self.ctx.int_array(cu), c.POINTER(AclIntArray)),
-                         c.cast(self.ctx.int_array(indices), c.POINTER(AclIntArray))]
-            else:
-                # Dense inputs have no sequence metadata. Typed null pointers
-                # do not require the private runtime removed from newer wheels.
-                args += [c.POINTER(AclIntArray)(), c.POINTER(AclIntArray)()]
+            # ATK takes ownership of the descriptors after init_by_input_data returns.
+            opapi = c.CDLL("libopapi.so")
+            create = opapi.aclCreateIntArray
+            create.argtypes = [c.POINTER(c.c_int64), c.c_uint64]
+            create.restype = c.POINTER(AclIntArray)
+            self.metadata_storage = []
+            metadata = []
+            for values in (cu, indices):
+                if values:
+                    storage = (c.c_int64 * len(values))(*values)
+                    self.metadata_storage.append(storage)
+                    handle = create(storage, len(values))
+                    if not handle:
+                        for prior in metadata:
+                            if prior:
+                                opapi.aclDestroyIntArray(prior)
+                        raise RuntimeError("aclCreateIntArray failed for finalize metadata")
+                    metadata.append(handle)
+                else:
+                    metadata.append(c.POINTER(AclIntArray)())
+            args.extend(metadata)
             args += [c.c_double(spec['scale']), c.c_double(spec['lower_bound']), c.c_int64(64),
                      c.c_bool(True), c.c_bool(True), c.c_bool(True), c.c_bool(False),
                      c.c_bool(spec['beta_mode'] != 0), c.c_bool(spec['beta_mode'] == 2),
