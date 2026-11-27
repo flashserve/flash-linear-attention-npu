@@ -25,6 +25,7 @@
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
 #include "tiling_base/tiling_templates_registry.h"
+#include "op_api/chunk_fwd_o_layout.h"
 #include "../op_kernel/chunk_fwd_o_struct.h"
 #include "../op_kernel/chunk_fwd_o_a5_constants.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -104,6 +105,24 @@ static constexpr const char *const CHUNK_FWD_O_INPUT_G_NAME = "g";
 static constexpr const char *const CHUNK_FWD_O_INPUT_SEQLENS_NAME = "cu_seqlens";
 static constexpr const char *const CHUNK_FWD_O_INPUT_CHUNK_OFFSETS_NAME = "chunk_offsets";
 
+enum class ChunkFwdOTilingPath {
+    Standard,
+    A5TokenFirst,
+    A6TokenFirst,
+};
+
+inline constexpr ChunkFwdOTilingPath GetChunkFwdOTokenFirstPath(NpuArch arch)
+{
+    switch (arch) {
+        case NpuArch::DAV_3510:
+            return ChunkFwdOTilingPath::A5TokenFirst;
+        case NpuArch::DAV_9201:
+            return ChunkFwdOTilingPath::A6TokenFirst;
+        default:
+            return ChunkFwdOTilingPath::Standard;
+    }
+}
+
 struct ChunkFwdOTilingContext {
     const char *nodeName;
     const gert::StorageShape *qShape;
@@ -120,11 +139,9 @@ struct ChunkFwdOTilingContext {
     bool useExp2;
     bool stateVFirst;
     const char *outputLayout;
-    bool isA5;
+    NpuArch arch;
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
-    bool isA6 = false;
-    bool isA2 = false;
 };
 
 class ChunkFwdOTilingProcessor {
@@ -387,13 +404,14 @@ public:
         return OptimizedShapeCheck("A6");
     }
 
-    ge::graphStatus LayoutCheck()
+    ge::graphStatus LayoutCheck(ChunkFwdOTilingPath &path)
     {
         const char *layout = ctx_.outputLayout == nullptr ? "BNSD" : ctx_.outputLayout;
-        const bool fusedA2Bsnd = ctx_.isA2 && std::strcmp(layout, GDN::kFusedA2BsndOutput) == 0;
+        const bool fusedBsnd = ctx_.arch == NpuArch::DAV_2201 &&
+                               std::strcmp(layout, GDN::kFusedA2BsndOutput) == 0;
         if (std::strcmp(layout, "BNSD") == 0) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_BNSD;
-        } else if (std::strcmp(layout, "BSND") == 0 || fusedA2Bsnd) {
+        } else if (std::strcmp(layout, "BSND") == 0 || fusedBsnd) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_BSND;
         } else if (std::strcmp(layout, "TND") == 0) {
             tiling_.outputLayout = GDN::CHUNK_FWD_O_LAYOUT_TND;
@@ -407,8 +425,9 @@ public:
         }
 
         const bool tokenFirst = GetOutputTokenFirst() != 0;
-        const bool useOptimizedLayout = tokenFirst && (ctx_.isA5 || ctx_.isA6);
-        if (tokenFirst && !useOptimizedLayout && !fusedA2Bsnd) {
+        path = tokenFirst ? GetChunkFwdOTokenFirstPath(ctx_.arch) : ChunkFwdOTilingPath::Standard;
+        const bool useOptimizedLayout = path != ChunkFwdOTilingPath::Standard;
+        if (tokenFirst && !useOptimizedLayout && !fusedBsnd) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                 ctx_.nodeName, "output_layout", "BSND/TND", "BSND/TND output requires A5/A6");
             return ge::GRAPH_FAILED;
@@ -531,27 +550,23 @@ public:
             return ge::GRAPH_FAILED;
         }
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
-        if (LayoutCheck() != ge::GRAPH_SUCCESS) {
+        ChunkFwdOTilingPath path = ChunkFwdOTilingPath::Standard;
+        if (LayoutCheck(path) != ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
-        if (GetOutputTokenFirst() != 0 && (ctx_.isA5 || ctx_.isA6)) {
-            if (ctx_.isA5) {
-                if (A5ShapeCheck() != ge::GRAPH_SUCCESS || A5ChunkTiling() != ge::GRAPH_SUCCESS ||
-                    WorkspaceTilingA5() != ge::GRAPH_SUCCESS) {
-                    return ge::GRAPH_FAILED;
-                }
-            } else if (ctx_.isA6) {
-                if (A6ShapeCheck() != ge::GRAPH_SUCCESS || A6ChunkTiling() != ge::GRAPH_SUCCESS ||
-                    WorkspaceTilingA6() != ge::GRAPH_SUCCESS) {
-                    return ge::GRAPH_FAILED;
-                }
+        if (path == ChunkFwdOTilingPath::A5TokenFirst) {
+            if (A5ShapeCheck() != ge::GRAPH_SUCCESS || A5ChunkTiling() != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
             }
-            return ge::GRAPH_SUCCESS;
+            return WorkspaceTilingA5();
         }
-        if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-            return ge::GRAPH_FAILED;
+        if (path == ChunkFwdOTilingPath::A6TokenFirst) {
+            if (A6ShapeCheck() != ge::GRAPH_SUCCESS || A6ChunkTiling() != ge::GRAPH_SUCCESS) {
+                return ge::GRAPH_FAILED;
+            }
+            return WorkspaceTilingA6();
         }
-        return ge::GRAPH_SUCCESS;
+        return WorkspaceTiling();
     }
 };
 

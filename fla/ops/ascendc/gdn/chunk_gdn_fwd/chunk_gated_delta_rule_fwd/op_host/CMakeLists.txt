@@ -56,6 +56,11 @@ if (BUILD_OPEN_PROJECT)
 endif()
 
 add_modules_sources(OPTYPE chunk_gated_delta_rule_fwd ACLNNTYPE aclnn_exclude)
+target_include_directories(${OPHOST_NAME}_opapi_obj PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../chunk_gated_delta_rule_fwd_prepare/op_host/op_api"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../chunk_fwd_h/op_host/op_api"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../chunk_fwd_o/op_host/op_api"
+)
 add_ops_compile_options(
     OP_NAME ChunkGatedDeltaRuleFwd
     OPTIONS --cce-auto-sync=off
