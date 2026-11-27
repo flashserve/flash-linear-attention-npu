@@ -471,6 +471,9 @@ define dso_local void @JyInit.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(
   call void @vmuls_vs_1d_float(ptr addrspace(6) %59, ptr addrspace(6) %60, i64 0, i64 4096, i64 1, float -1.000000e+00, ptr addrspace(6) %67, ptr addrspace(6) %68, i64 0, i64 4096, i64 1, ptr addrspace(6) null, ptr addrspace(6) null, i64 0, i64 0, i64 1)
   call void @llvm.hivm.BARRIER(i64 1)
   call void @vadds_vs_1d_float(ptr addrspace(6) %67, ptr addrspace(6) %68, i64 0, i64 4096, i64 1, float 0.000000e+00, ptr addrspace(6) %31, ptr addrspace(6) %32, i64 0, i64 4096, i64 1, ptr addrspace(6) null, ptr addrspace(6) null, i64 0, i64 0, i64 1)
+  ; Complete the Newton system sign change before the tile leaves UB.
+  call void @llvm.hivm.BARRIER(i64 1)
+  call void @vmuls_vs_1d_float(ptr addrspace(6) %31, ptr addrspace(6) %32, i64 0, i64 4096, i64 1, float -1.000000e+00, ptr addrspace(6) %31, ptr addrspace(6) %32, i64 0, i64 4096, i64 1, ptr addrspace(6) null, ptr addrspace(6) null, i64 0, i64 0, i64 1)
   call void @llvm.hivm.SET.FLAG.IMM(i64 1, i64 5, i64 0)
   call void @llvm.hivm.WAIT.FLAG.IMM(i64 1, i64 5, i64 0)
   call void @llvm.hivm.BARRIER(i64 5)

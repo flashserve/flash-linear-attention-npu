@@ -62,6 +62,10 @@ __aicore__ inline void SeedBanks(Addresses g) {
         Duplicate(ub,0.f,16384);PipeBarrier<PIPE_ALL>();
         for(int d=0;d<128;++d) ub.SetValue(d*129,1.f);
         PipeBarrier<PIPE_ALL>();DataCopy(eye,ub,16384);PipeBarrier<PIPE_ALL>();
+        GlobalTensor<float> twoEye;
+        twoEye.SetGlobalBuffer((__gm__ float*)g.p[TwoEye]);
+        Muls(ub,ub,2.0f,16384);PipeBarrier<PIPE_ALL>();
+        DataCopy(twoEye,ub,16384);PipeBarrier<PIPE_ALL>();
     }
     for(int j=GetBlockIdx();j<g.h;j+=GetBlockNum()*GetSubBlockNum()){
         if(g.seed) DataCopy(ub,init[j*16384],16384);else Duplicate(ub,0.f,16384);

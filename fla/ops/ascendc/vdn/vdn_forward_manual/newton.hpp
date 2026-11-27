@@ -230,20 +230,6 @@ public:
             "Resident eye plus three 64-row debug regions must fit the UB reservation");
     }
 
-    CATLASS_DEVICE void ScaleAndStore(AscendC::GlobalTensor<float> src,
-                                      AscendC::GlobalTensor<float> dst, float scale)
-    {
-        const unsigned off=AscendC::GetSubBlockIdx()*TILE_ELEMENTS;
-        AscendC::DataCopy(bigInput_, src[off], TILE_ELEMENTS);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID4);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(EVENT_ID4);
-        AscendC::Muls(bigResidual_, bigInput_, scale, TILE_ELEMENTS);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID4);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID4);
-        AscendC::DataCopy(dst[off], bigResidual_, TILE_ELEMENTS);
-        AscendC::PipeBarrier<PIPE_ALL>();
-    }
-
     // The two-eye constant is identical for every matrix and iteration, so it
     // is loaded once per kernel and reused by every call.
     CATLASS_DEVICE void LoadEye(AscendC::GlobalTensor<float> eye)
@@ -311,7 +297,6 @@ private:
 };
 
 struct Params {
-    GM_ADDR rawEye;
     GM_ADDR m;
     GM_ADDR x;
     GM_ADDR eye;
@@ -373,23 +358,6 @@ __global__ __aicore__ void FirstKernel(Params p)
 // Flags stay pairwise counted; the pairing and order are identical on both cores.
 template<uint32_t K_TILE, bool FIRST_SPECIALIZED>
 __aicore__ inline void RunNewton(Params p) {
-#if defined(__DAV_VEC__)
-    {
-        const uint32_t owner = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
-        Arch::Resource<Arch::AtlasA2> temp;
-        VectorPhases prep(temp);
-        AscendC::GlobalTensor<float> eye, twoEye, system;
-        eye.SetGlobalBuffer((__gm__ float*)p.rawEye);
-        twoEye.SetGlobalBuffer((__gm__ float*)p.eye);
-        system.SetGlobalBuffer((__gm__ float*)p.m);
-        if (owner == 0) prep.ScaleAndStore(eye, twoEye, 2.0f);
-        for (uint32_t q=owner;q<p.matrices;q+=AscendC::GetBlockNum()) {
-            auto matrix=system[int64_t(q)*ELEMENTS];
-            prep.ScaleAndStore(matrix,matrix,-1.0f);
-        }
-    }
-#endif
-    AscendC::SyncAll<false>();
 #if defined(__DAV_CUBE__)
     const uint32_t owner = AscendC::GetBlockIdx();
     const uint32_t workers = AscendC::GetBlockNum();
