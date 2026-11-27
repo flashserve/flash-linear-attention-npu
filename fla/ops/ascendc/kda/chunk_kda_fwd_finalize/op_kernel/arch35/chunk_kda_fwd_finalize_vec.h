@@ -49,10 +49,10 @@ public:
         a_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.aqk));
         v_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.vNew));
         h_.SetGlobalBuffer(reinterpret_cast<__gm__ Element *>(args.h));
-        q_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        a_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        v_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
-        h_.SetL2CacheHint(CacheMode::CACHE_MODE_DISABLE);
+        q_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        a_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        v_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
+        h_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
         l1Buffer_ = LocalTensor<uint8_t>(TPosition::A1, 0, 512 * 1024);
     }
 
@@ -70,8 +70,7 @@ public:
         const uint32_t end = WorkEnd(total, workgroup_, args_.tiling.usedCoreNum);
         // 与 AIC 使用相同的主体 chunk / 尾部 4-head 组映射和消费顺序。
         const uint32_t cores = args_.tiling.usedCoreNum;
-        const bool balanceTail = !args_.tiling.isVarLen &&
-            partitions == 1 && total >= cores && total % cores != 0;
+        const bool balanceTail = partitions == 1 && total >= cores && total % cores != 0;
         const uint32_t fullChunksPerCore = total / cores;
         const uint32_t headGroups = CeilDiv(args_.tiling.valueHeadNum, Shape::kHeadsPerGroup);
         const uint32_t tailGroups = (total % cores) * headGroups;

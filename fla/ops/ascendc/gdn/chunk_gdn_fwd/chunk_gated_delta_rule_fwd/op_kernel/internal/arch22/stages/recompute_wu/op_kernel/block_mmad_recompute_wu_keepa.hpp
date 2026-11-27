@@ -12,7 +12,7 @@
 
 #include "kernel_utils/block/block_mmad_pingpong_tla_multi.hpp"
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 namespace Catlass::Gemm::Block {
 
 // WU 私有相邻 U/W 调用保留 A；资源、初始化与退休沿用公共父类。
@@ -449,6 +449,6 @@ protected:
 };
 
 } // namespace Catlass::Gemm::Block
-#endif // __CCE_AICORE__ == 220
+#endif // __NPU_ARCH__ == 2201
 
 #endif // GDN_ARCH22_BLOCK_MMAD_RECOMPUTE_WU_KEEPA_HPP

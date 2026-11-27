@@ -9,20 +9,18 @@ function requireOpenPullRequest(pr) {
   if (pr.draft) throw new Error(`PR #${pr.number} 仍是草稿，请先标记为 ready for review。`);
 }
 
-function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref, workflowSha = pr.base.sha }) {
+function requireProtectedBase({ pr, branch, workflowRef = pr.base.ref }) {
   requireOpenPullRequest(pr);
   if (workflowRef !== pr.base.ref || branch.protected !== true) {
     throw new Error('NPU CI 只允许在 PR 当前受保护的目标分支执行，不支持其他 CI 定义分支。');
   }
-  if (![pr.head.sha, pr.base.sha, branch.commit?.sha, workflowSha].every((sha) => /^[0-9a-f]{40}$/.test(sha || '')) ||
-      branch.commit.sha !== pr.base.sha || workflowSha !== pr.base.sha) {
-    throw new Error('PR base 或 workflow commit 已变化，请重新触发 NPU CI。');
-  }
 }
 
-function requireDispatchIdentity({ pr, inputs, workflowSha, required = false, rerun = false }) {
-  const expected = { expected_head_sha: pr.head.sha, expected_base_ref: pr.base.ref,
-    expected_base_sha: pr.base.sha, expected_workflow_sha: workflowSha };
+function requireDispatchIdentity({ pr, inputs, required = false, rerun = false }) {
+  // The PR head and target branch identify the request. The target branch
+  // commit may advance while a run is queued or being rerun; the device job
+  // merges the current branch and lets Git report any real conflict.
+  const expected = { expected_head_sha: pr.head.sha, expected_base_ref: pr.base.ref };
   if (rerun && Object.keys(expected).some((name) => !inputs[name])) {
     throw new Error('首次手动触发未保存可复用的完整版本输入，不能重新执行 prepare；请新建 Run workflow。已成功 prepare 的 Re-run failed jobs 可继续使用原版本。');
   }
@@ -102,7 +100,7 @@ async function hasCiChanges({ github, context, pr }) {
   }
   const { data: current } = await github.rest.pulls.get({ ...context.repo, pull_number: pr.number });
   requireOpenPullRequest(current);
-  if (current.head.sha !== pr.head.sha || current.base.sha !== pr.base.sha || current.base.ref !== pr.base.ref ||
+  if (current.head.sha !== pr.head.sha || current.base.ref !== pr.base.ref ||
       current.changed_files !== pr.changed_files) throw new Error(`PR #${pr.number} 在检查过程中已变化，请重新触发。`);
   return files.some((file) => [file.filename, file.previous_filename].filter(Boolean).some((path) =>
     !/\.md$/i.test(path) && /^(?:ci|\.github)(?:\/|$)/.test(path)));

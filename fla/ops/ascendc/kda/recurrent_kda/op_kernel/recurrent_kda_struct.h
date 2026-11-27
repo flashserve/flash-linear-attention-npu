@@ -19,6 +19,42 @@
 
 namespace RecurrentKda {
 
+constexpr uint32_t RKDA_A5_WINDOW_TOKENS = 8;
+
+// A6（DAV_9201）静态 UB 引擎的布局常量，host tiling 与 kernel 共用。
+constexpr int64_t RKDA_A6_DIM = 128;
+constexpr int64_t RKDA_A6_TOKEN_TILE = 32;
+constexpr int64_t RKDA_A6_INPUT_BUFFERS = 2;
+constexpr int64_t RKDA_A6_PARAMETER_BUFFERS = 2;
+constexpr int64_t RKDA_A6_FP32_STATE_BANKS = 4;
+constexpr int64_t RKDA_A6_BF16_STATE_BANKS = 4;
+
+constexpr int64_t RkdaA6UbBytes(int64_t stateBanks, int64_t tokenTile, int64_t stateBytes)
+{
+    const int64_t bankBytes = RKDA_A6_DIM * RKDA_A6_DIM * stateBytes;
+    const int64_t slotBytes = 4 * tokenTile * RKDA_A6_DIM * 2 + // q/k/v/out bf16
+                              tokenTile * RKDA_A6_DIM * 4 +     // gate fp32
+                              tokenTile * 32;                   // beta 与标量
+    return stateBanks * bankBytes + RKDA_A6_INPUT_BUFFERS * slotBytes +
+           RKDA_A6_PARAMETER_BUFFERS * RKDA_A6_DIM * 4 +
+           RKDA_A6_DIM * 4 +  // prediction scratch
+           RKDA_A6_DIM * 4;   // V-first out 的 FP32 staging
+}
+
+// A5 static VF configuration, built once by host tiling. Runtime bank/slot
+// ownership remains in the kernel and is never encoded by the host.
+enum RecurrentKdaVfFlags : uint32_t {
+    RKDA_VF_NORM = 1U << 0,
+    RKDA_VF_RAW_GATE = 1U << 1,
+    RKDA_VF_BIAS = 1U << 2,
+    RKDA_VF_SIGMOID = 1U << 3,
+    RKDA_VF_NEGATIVE = 1U << 4,
+    RKDA_VF_SAFE = 1U << 5,
+    RKDA_VF_WRITE_STATE = 1U << 6,
+    RKDA_VF_INDEXED = 1U << 7,
+    RKDA_VF_FUSED = 1U << 8,
+};
+
 #pragma pack(push, 8)
 struct alignas(8) RecurrentKdaTilingData {
     uint32_t vectorCoreNum;
@@ -71,6 +107,9 @@ struct alignas(8) RecurrentKdaTilingData {
     uint64_t keyHeadStride;
     uint64_t valueTokenStride;
     uint64_t valueHeadStride;
+    uint32_t windowSize; // A5 token capacity selected by host tiling; A2/A3 ignore it.
+    uint32_t a5VfFlags; // A2/A3 keep their existing flags and resource paths.
+    uint32_t a5HeadRatio;
 };
 #pragma pack(pop)
 

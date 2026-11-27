@@ -149,7 +149,7 @@ __aicore__ inline uint64_t WyWorkspaceSlotBase(
 #define CHUNK_KDA_BWD_C_CUBE_H
 
 #ifndef CATLASS_ARCH
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -265,7 +265,7 @@ struct WyTileGemmDirect {
             l1B_, tla::MakeLayout<ElementB, LayoutTagL1B>(k, n),
             Catlass::Arch::PositionL1{});
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1A);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (((m | n | k) & 15U) != 0U) {
             // GM->L1 tile copies preserve the aligned tail of a reused L1
             // plane.  A short varlen reduction can therefore feed stale
@@ -292,7 +292,7 @@ struct WyTileGemmDirect {
         copyGmA(l1A, a);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(kEventL1A);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(kEventL1B);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if (((m | n | k) & 15U) != 0U) {
             AscendC::InitConstValueParams<ElementB> clearB(
                 1, static_cast<uint16_t>(kL1PlaneBytes / 32), 0,
@@ -577,7 +577,7 @@ public:
     __aicore__ inline void Process()
     {
         AscendC::SetHF32Mode(false);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ArchTag = Catlass::Arch::Ascend950;
 #else
         using ArchTag = Catlass::Arch::AtlasA2;
@@ -603,7 +603,7 @@ public:
             WyTileGemmDirect<ArchTag, float, Fp32C64Copy>;
         using ElementC64Mmad =
             WyTileGemmDirect<ArchTag, Element, ElementC64Copy>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using ElementC64DualRightMmad =
             WyTileGemmSharedLeftDualRightDirect<
                 ArchTag, Element, ElementC64Copy>;
@@ -618,7 +618,7 @@ public:
         using Fp32SquareLeftTransposeMmad =
             WyTileGemmDirect<ArchTag, float,
                              Fp32SquareLeftTransposeCopy>;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         using SquareDispatchPolicy =
             Catlass::Gemm::MmadPingpong<ArchTag, true, false>;
         using SquareL1Shape =
@@ -653,7 +653,7 @@ public:
               typename Fp32SquareLeftTransposeBlockMmad,
               typename RowMajor, typename ColumnMajor>
     __aicore__ inline void ProcessFused(
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource)
 #else
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource)
@@ -662,7 +662,7 @@ public:
         if ASCEND_IS_AIC {
             AscendC::SetMMLayoutTransform(true);
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 2;
@@ -706,7 +706,7 @@ public:
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             const uint32_t s0Ready = kS0Ready;
             const uint32_t s1Ready = kS1Ready;
             const uint32_t s2Ready = kS2Ready;
@@ -766,14 +766,14 @@ public:
                     tiling_, task.batchIdx, head, task.begin, 128);
                 const uint64_t dhOffset = WyDhOffset(
                     tiling_, task.batchIdx, head, task.chunkIdx);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
 #endif
                 // dk_base is one [C,128] result.  A5 can retain the complete
                 // right operand and FP32 accumulator, so issue one N=128 MMAD
                 // instead of two adjacent N=64 contractions.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 if constexpr (V_DIM != 128) {
                     RunTransposeBToOutput<
                         Fp32C64Mmad, RowMajor, ColumnMajor>(
@@ -793,7 +793,7 @@ public:
                     dk_, tokenK, validLen, 128, 128, V_DIM);
 #endif
             }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if (tiling_.seqlen < 1024) {
                 FenceFixToMte2();
             }
@@ -840,7 +840,7 @@ public:
                 // dW in one direct tile instead of launching two adjacent
                 // N=64 tiles; this also avoids reloading dvScan for the
                 // second half.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 if constexpr (V_DIM == 128) {
                     if (headCount == kWyFusedHeadsPerWindow &&
                         validLen == 64U) {
@@ -956,7 +956,7 @@ public:
             // S6: Zb @ A^T -> Tza.  Keep Tza in the current slot; S7 is an
             // AIC consumer, so an AIC->GM->AIV->GM round trip is unnecessary.
             const uint32_t squarePasses =
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 1U;
 #else
                 tiling_.isVarLen == 0 && validLen == kWyChunkSize &&
@@ -996,7 +996,7 @@ public:
                 BeginFusedMmadPhase();
             }
             // S7: A^T @ Tza and final causal/sign postprocess for dAkk.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if (headCount == 1U) {
                 // The odd-head AIV initializes zaInput before publishing its
                 // normal S3a-consumed credit. Consume that credit before S7
@@ -1035,7 +1035,7 @@ public:
             // publication.  Keep this credit distinct from taskDone: the
             // latter is emitted only after AIV finishes the final dAkk store
             // and is what guards reuse of the whole workspace generation.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if (headCount != 1U) {
                 WaitVectorStage(s3aConsumed);
             }
@@ -1047,13 +1047,13 @@ public:
         // Drain the last generation that still owns workspace before the
         // following Intra phase reuses local resources and event ids.
         const uint32_t outstanding =
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             localGeneration == 0U ? 0U : 1U;
 #else
             localGeneration == 0U ? 0U : 1U;
 #endif
         for (uint32_t i = 0; i < outstanding; ++i) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             WaitVectorStage(
                 kTaskDoneBegin + ((localGeneration - 1U) & 1U));
 #else
@@ -1068,7 +1068,7 @@ public:
 
     __aicore__ inline void PublishVectorStage(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr uint32_t kSubBlockFlagStride = 16;
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(flag);
         AscendC::CrossCoreSetFlag<0x4, PIPE_FIX>(
@@ -1080,7 +1080,7 @@ public:
 
     __aicore__ inline void WaitVectorStage(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr uint32_t kSubBlockFlagStride = 16;
         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(flag);
         AscendC::CrossCoreWaitFlag<0x4, PIPE_FIX>(
@@ -1093,7 +1093,7 @@ public:
 
     __aicore__ inline void WaitZbStage(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         auto &sync = (flag & 1U) == 0U ? zbReadyFlag0_ : zbReadyFlag1_;
         Catlass::Arch::CrossCoreWaitFlag(sync);
 #else
@@ -1103,7 +1103,7 @@ public:
 
     __aicore__ inline void FenceFixToMte2()
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         if ASCEND_IS_AIC {
             constexpr int32_t kFixToMte2Event = 0;
             AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(
@@ -1173,7 +1173,7 @@ public:
 
     template <typename Mmad, typename RowMajor, typename ColumnMajor>
     __aicore__ inline void RunTransposeB(
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource,
 #else
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
@@ -1215,7 +1215,7 @@ public:
 
     template <typename Mmad, typename RowMajor, typename ColumnMajor>
     __aicore__ inline void RunSharedLeftDualTransposeB(
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource,
 #else
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
@@ -1279,7 +1279,7 @@ public:
 
     template <typename Mmad, typename LayoutA, typename LayoutB>
     __aicore__ inline void RunLayouts(
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource,
 #else
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
@@ -1315,7 +1315,7 @@ public:
 
     template <typename Mmad, typename RowMajor, typename ColumnMajor>
     __aicore__ inline void RunTransposeBToOutput(
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         Catlass::Arch::Resource<Catlass::Arch::Ascend950> &resource,
 #else
         Catlass::Arch::Resource<Catlass::Arch::AtlasA2> &resource,
@@ -1362,7 +1362,7 @@ public:
     GM_ADDR chunkIndices_;
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     Catlass::Arch::CrossCoreFlag zbReadyFlag0_{7};
     Catlass::Arch::CrossCoreFlag zbReadyFlag1_{7};
 #endif
@@ -1378,13 +1378,13 @@ public:
 
 #include "kernel_operator.h"
 #include "catlass/arch/cross_core_sync.hpp"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "kernel_utils/vector/regbase.hpp"
 #endif
 
 namespace KDA {
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 static __simd_vf__ inline void KdaBwdCRowDotAccA5(
     __ubuf__ float *dst, __ubuf__ float *lhs, __ubuf__ float *rhs,
     uint16_t rows, uint16_t cols)
@@ -1668,14 +1668,14 @@ public:
         // two explicit MTE2 ping/pong tiles.  Hot independent input pairs can
         // then issue both GM reads before Vector consumes the first tile,
         // matching the proven PR190/PR291 overlap pattern.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         pipe_->InitBuffer(inputQueue_, 1, kIoBytes);
 #else
         pipe_->InitBuffer(inputQueue_, 2, kIoBytes);
 #endif
         pipe_->InitBuffer(outputQueue_, 2, kIoBytes);
         pipe_->InitBuffer(arena_, kArenaBytes);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         pipe_->InitBuffer(matrixInputPing_, kIoBytes);
         pipe_->InitBuffer(matrixInputPong_, kIoBytes);
         InitMatrixInputEvents();
@@ -1695,7 +1695,7 @@ public:
     __aicore__ inline void Process()
     {
         ProcessFused();
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(
             stageVToMte2Event_);
         pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_V>(
@@ -1720,7 +1720,7 @@ private:
 
     __aicore__ inline void WaitCubeStage(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         AscendC::CrossCoreWaitFlag<0x4, PIPE_V>(flag);
         // The ready flag stalls Vector only.  Make subsequent MTE2 loads
         // depend on that wait instead of allowing an early stale GM read.
@@ -1735,7 +1735,7 @@ private:
 
     __aicore__ inline void SignalCubeStage(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // Each AIV publishes its own 0x4 credit.  The paired AIC waits for
         // both physical sub-block flags before advancing the parity slot.
         Catlass::Arch::CrossCoreBarrier<0x1, PIPE_MTE3>();
@@ -1747,7 +1747,7 @@ private:
 
     __aicore__ inline void SignalZbStage(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // Both AIVs finish their disjoint head/row stores, then participate in
         // the same ordinary AIV->AIC notification.  CrossCoreFlag accounts
         // for the paired AIV producers; the AIC consumes the joined credit.
@@ -1761,7 +1761,7 @@ private:
 
     __aicore__ inline void SignalTaskDone(uint32_t flag)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // taskDone protects the complete WY output/workspace generation.
         // Publish it on MTE3 so it cannot overtake the final dk/db/dg/dAkk
         // stores.  A PIPE_V publication can retire at AIC before those GM
@@ -1775,7 +1775,7 @@ private:
 
     __aicore__ inline void ProcessFused()
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         constexpr uint32_t kS0Ready = 0;
         constexpr uint32_t kS1Ready = 1;
         constexpr uint32_t kS2Ready = 2;
@@ -1812,7 +1812,7 @@ private:
         for (uint64_t taskGroupIdx = coreIdx;
              taskGroupIdx < taskGroupCount;
              taskGroupIdx += coreNum, ++localGeneration) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             const uint32_t s0Ready = kS0Ready;
             const uint32_t s1Ready = kS1Ready;
             const uint32_t s2Ready = kS2Ready;
@@ -1846,7 +1846,7 @@ private:
             const WyChunkTask task = GetWyChunkTask(
                 cuSeqlens_, chunkIndices_, tiling_, taskIdx);
             const uint32_t validLen = task.end - task.begin;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             // A5 has two AIV sub-blocks and the steady-state window owns two
             // heads.  Give one complete head to each AIV instead of making
             // both AIVs split every head and then serially visit the second
@@ -1875,7 +1875,7 @@ private:
                 (singleHeadOwner && subBlockIdx != 0U ? headCount : 0U);
             const uint32_t rowLaneEnd =
                 headParallel ? subBlockIdx + 1U : headCount;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if (singleHeadOwner && subBlockIdx == 0U) {
                 // The odd final head has no AIV1 row owner.  Its dAkk plane
                 // is private scratch rather than a framework-zeroed output,
@@ -1895,7 +1895,7 @@ private:
 #endif
             // kE has no AIC dependency.  Build it while AIC produces the
             // independent base GEMMs instead of serializing it behind S2.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             // Dense A5 completes dq_base in Intra Post, where the existing
             // exp2(gk-gk_last) tile can be reused.  Build kE while AIC is
             // still producing S0, then consume the S0 generation before its
@@ -1907,7 +1907,7 @@ private:
             for (uint32_t lane = rowLaneBegin; lane < rowLaneEnd; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
                     tiling_, coreIdx, localGeneration, lane);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 if (tiling_.isVarLen == 0) {
                     // The generic 16-row Intra post path consumes dq_base
                     // from GM.  The retired dense row32 post used to form it
@@ -1924,7 +1924,7 @@ private:
                                rowSubBlockIdx, rowSubBlockNum);
 #endif
             }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if (tiling_.isVarLen == 0) {
                 WaitCubeStage(s0Ready);
             }
@@ -1935,7 +1935,7 @@ private:
 #endif
 
             // S0: consume dq_raw and finish dq_base.
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
             WaitCubeStage(s0Ready);
             for (uint32_t lane = 0; lane < headCount; ++lane) {
                 const uint64_t slot = WyWorkspaceSlotBase(
@@ -1956,7 +1956,7 @@ private:
                                 rowSubBlockIdx, rowSubBlockNum, stateLane, 1,
                                 V_DIM != 128);
             }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if constexpr (V_DIM != 128) {
                 AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(
                     stageMte3ToMte2Event_);
@@ -2004,7 +2004,7 @@ private:
                 BuildZbStage(task, headBase + lane, validLen, slot,
                              rowSubBlockIdx, rowSubBlockNum);
             }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             // Store() queues an asynchronous MTE3 transfer.  Retire it before
             // the ready flag lets AIC consume the in-place Zb tile.
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(
@@ -2048,7 +2048,7 @@ private:
                 FinishDA(task, headBase + lane, validLen, slot,
                          rowSubBlockIdx, rowSubBlockNum);
             }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             // For an odd final head, AIV1 intentionally owns no rows.  It
             // must not publish taskDone before AIV0 has finished every GM
             // write from this workspace generation; otherwise AIC can reuse
@@ -2060,7 +2060,7 @@ private:
             SignalTaskDone(taskDone);
 
         }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         // The following phase reads dk/db/dg immediately.  Connect the final
         // WY stores to the MTE2 pipeline explicitly; SyncAll only synchronizes
         // scalar progress and does not order MTE3 writes before Intra reads.
@@ -2074,7 +2074,7 @@ private:
 #endif
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     // Ascend950's larger per-AIV UB allows a 32-row WY tile.  This halves
     // row-loop, queue and event overhead on the scalar-heavy A5 path while
     // retaining the proven 16-row footprint on A2/A3.
@@ -2096,18 +2096,18 @@ private:
     static constexpr uint32_t kArenaBytes = 8 * kPlaneElements * sizeof(float);
     static constexpr float kLn2 = 0.69314718055994530942f;
     static_assert(
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                       5 * kIoBytes + kArenaBytes
 #else
                       4 * kIoBytes + kArenaBytes
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                       + kDkStateBytes
 #endif
                       <= kUbBudgetBytes,
                    "ChunkKdaBwdC AIV buffers exceed the architecture UB budget");
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline AscendC::LocalTensor<float> DkStateTile(
         uint32_t storageLane, uint32_t ownedRow)
     {
@@ -2123,7 +2123,7 @@ private:
         return arena_.Get<float>()[idx * kPlaneElements];
     }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     __aicore__ inline void InitMatrixInputEvents()
     {
         for (uint32_t slot = 0; slot < 2; ++slot) {
@@ -2419,7 +2419,7 @@ private:
             auto k = Plane(0);
             auto e = Plane(1);
             auto out = Plane(2);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             LoadRowsPair(
                 k, kGm_[tokenBase + row * 128], rows, 128, 128,
                 e, gkGm_[tokenBase + row * 128], rows, 128, 128);
@@ -2427,7 +2427,7 @@ private:
             Load(k, kGm_[tokenBase + row * 128], rows * 128);
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if constexpr (FINISH_DQ) {
                 auto dqRaw = Plane(2);
                 auto keOut = Plane(3);
@@ -2512,7 +2512,7 @@ private:
             const uint32_t rows = row + kRows <= end ? kRows : end - row;
             auto x = Plane(0);
             auto y = Plane(1);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             auto z = stage == 1 && V_DIM == 128 ?
                 DkStateTile(stateLane, row - begin) : Plane(2);
 #else
@@ -2532,7 +2532,7 @@ private:
                 AscendC::PipeBarrier<PIPE_V>();
                 Store(dqGm_[tokenBase + row * 128], z, rows * 128);
             } else if (stage == 1) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 if (loadDkFromOutput) {
                     LoadRows(x, dkGm_[tokenBase + row * 128],
                              rows, 128, 128);
@@ -2551,7 +2551,7 @@ private:
                     AscendC::Adds(z[r * 128], gkLast, 0.0f, 128);
                 }
                 AscendC::PipeBarrier<PIPE_V>();
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
                 Load(y, gkGm_[tokenBase + row * 128], rows * 128);
 #endif
                 AscendC::Sub(z, z, y, rows * 128);
@@ -2559,7 +2559,7 @@ private:
                 Exp2(z, z, rows * 128);
                 AscendC::Mul(z, x, z, rows * 128);
                 AscendC::PipeBarrier<PIPE_V>();
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
                 Store(dkGm_[tokenBase + row * 128], z, rows * 128);
 #else
                 if constexpr (V_DIM != 128) {
@@ -2587,7 +2587,7 @@ private:
             } else {
                 BroadcastRows(brcb, Plane(6)[row - begin], rows);
                 for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                     LoadRowsPair(
                         x, wsFp32_[dVb + row * V_DIM + v0],
                         rows, 128, V_DIM,
@@ -2601,7 +2601,7 @@ private:
                         y, vGm_[tokenBaseV + row * V_DIM + v0],
                         rows, 128, V_DIM);
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                     KdaBwdCDvDbA5(
                         (__ubuf__ float *)z.GetPhyAddr(),
                         (__ubuf__ float *)Plane(7)[row - begin].GetPhyAddr(),
@@ -2629,7 +2629,7 @@ private:
         if (stage == 1) {
             const uint64_t stateBase =
                 (slot + kWyStatePartialOffset) / sizeof(float) +
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 // With two-head A5 parallelism each AIV owns a different
                 // workspace slot and its complete head is partial 0 in that
                 // slot.  Using the physical sub-block index here makes AIV1
@@ -2671,7 +2671,7 @@ private:
             auto ke = Plane(1);
             auto e = Plane(2);
             auto tmp = Plane(3);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             auto acc = V_DIM == 128 ?
                 DkStateTile(stateLane, row - begin) : Plane(4);
 #else
@@ -2681,7 +2681,7 @@ private:
             auto brcb = Plane(6);
             auto qk = Plane(7);
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             LoadRowsPair(
                 dkg, wsFp32_[dKgb + row * 128], rows, 128, 128,
                 ke, wsBf16_[kE + row * 128], rows, 128, 128);
@@ -2693,7 +2693,7 @@ private:
             // dKgb_raw has the opposite sign of mathematical dKgb, so fold
             // the minus sign into each consumer instead of materializing a
             // second full matrix.
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaBwdCMulRowDotSubA5(
                 (__ubuf__ float *)tmp.GetPhyAddr(),
                 (__ubuf__ float *)dbRows[row - begin].GetPhyAddr(),
@@ -2712,7 +2712,7 @@ private:
             // dk_base = dk_state - dKgb_raw * beta * exp2(gk).
             Load(e, gkGm_[tokenBase + row * 128], rows * 128);
             Exp2(e, e, rows * 128);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             if constexpr (V_DIM != 128) {
                 Load(acc, dkGm_[tokenBase + row * 128], rows * 128);
             }
@@ -2745,7 +2745,7 @@ private:
             AscendC::Mul(qk, dkg, e, rows * 128);
             AscendC::PipeBarrier<PIPE_V>();
             MulRowsByScalar(qk, qk, brcb, rows, 128);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
             Load(acc, dkGm_[tokenBase + row * 128], rows * 128);
 #endif
             AscendC::Sub(e, acc, qk, rows * 128);
@@ -2793,7 +2793,7 @@ private:
             auto zv = Plane(1);
             auto zw = Plane(2);
             auto out = Plane(3);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             LoadRowsPair(
                 zv, wsBf16_[zV + row * 64], rows, 64, 64,
                 zw, wsBf16_[zW + row * 64], rows, 64, 64);
@@ -2801,7 +2801,7 @@ private:
             Load(zv, wsBf16_[zV + row * 64], rows * 64);
             Load(zw, wsBf16_[zW + row * 64], rows * 64);
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             // dL[i,j] scales each causal column by beta[j].  Reuse the
             // loaded beta vector for every row; broadcasting beta[i] across
             // a row changes the WY derivative whenever beta is non-uniform.
@@ -2880,17 +2880,17 @@ private:
         for (uint32_t col = 0; col < 128; col += kRows) {
             auto x = Plane(2);
             auto y = Plane(3);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
             auto product = Plane(4);
 #endif
             auto reduced = Plane(5);
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
             auto tileReduced = Plane(6);
 #endif
             AscendC::Duplicate(reduced, 0.0f, kRows);
             AscendC::PipeBarrier<PIPE_V>();
             for (uint32_t v0 = 0; v0 < V_DIM; v0 += 128) {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 LoadRowsPair(
                     x, hGm_[hBase + col * V_DIM + v0],
                     kRows, 128, V_DIM,
@@ -2904,7 +2904,7 @@ private:
                     y, dhGm_[dhBase + col * V_DIM + v0],
                     kRows, 128, V_DIM);
 #endif
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
                 KdaBwdCRowDotAccA5(
                     (__ubuf__ float *)reduced.GetPhyAddr(),
                     (__ubuf__ float *)x.GetPhyAddr(),
@@ -2937,7 +2937,7 @@ private:
         const uint32_t last = validLen - 1U;
         auto state = Plane(0);
         auto gradient = Plane(1);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
         LoadRowsPair(
             state, wsFp32_[stateBase], 1, 128, 128,
             gradient, dgGm_[tokenBase + last * 128], 1, 128, 128);
@@ -2976,7 +2976,7 @@ private:
             const uint32_t rows = row + kRows <= end ? kRows : end - row;
             auto value = Plane(0);
             Load(value, wsFp32_[raw + row * 64], rows * 64);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
             KdaBwdCFinishDAA5(
                 reinterpret_cast<__ubuf__ float *>(value.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float *>(value.GetPhyAddr()),
@@ -3040,7 +3040,7 @@ private:
     GM_ADDR chunkIndices_;
     GM_ADDR workspace_;
     ChunkKdaBwdCTilingData tiling_{};
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     Catlass::Arch::CrossCoreFlag zbReadyFlag0_{7};
     Catlass::Arch::CrossCoreFlag zbReadyFlag1_{7};
 #endif
@@ -3064,7 +3064,7 @@ private:
     AscendC::TQue<AscendC::TPosition::VECIN, 1> inputQueue_;
     AscendC::TQue<AscendC::TPosition::VECOUT, 1> outputQueue_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> arena_;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     AscendC::TBuf<AscendC::TPosition::VECCALC> matrixInputPing_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> matrixInputPong_;
     AscendC::TBuf<AscendC::TPosition::VECCALC> dkStateBuffer_;

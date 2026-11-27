@@ -6,7 +6,7 @@
 // CANN uses this declaration in the generated MIX wrapper.
 #include "lib/matmul_intf.h"
 
-#if !defined(__CCE_AICORE__) || __CCE_AICORE__ != 310
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)
 #include "arch22/chunk_kda_bwd_finalize.h"
 
 extern "C" __global__ __aicore__ void chunk_kda_bwd_finalize(

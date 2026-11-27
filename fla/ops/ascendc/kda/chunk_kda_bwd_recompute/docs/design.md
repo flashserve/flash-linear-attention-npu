@@ -44,13 +44,16 @@ CPU / ATK 标杆与上述公式一致，并对 `A/kbg/vb` 按 Cube 路径先量�
 ## 分核与任务映射
 
 任务单元是 `(chunk, value_head)`，总数 `chunkNum * HV`。Host 按平台
-AIC 数与任务数取 `usedAic`，`scheduleMode = 1`，Mix **1 AIC : 2 AIV**。
+AIC 数与任务数取 `usedAic`，`scheduleMode = 1`；A5 为 Mix **1 AIC : 2 AIV**，
+A6 为 Mix **1 AIC : 1 AIV**。
 
 - A5：`CoreTaskRange` 把任务切成连续 chunk-major 区间，避免
   `task += coreNum` 的跨度跳转打断四 head 旋转。每个 Mix 核内按
   `kHeadRotate = 4` 成组；AIV 按 `h & 1` 独占奇偶 head（slot 0/1）。
-- A2/A3：AIC 上限压到 20（完整 1:2 Mix 组）；Vector 按
-  `taskIdx += usedAic` 循环，子块用 `vecTaskIdx % subBlockNum` 过滤。
+- A2/A3：每组为同一 chunk 的最多 4 个连续 value head。逻辑核数取任务组数和平台可用 AIC 数 中的较小值，组号按核数跨步分配。两个 AIV 分别处理组内偶数和奇数 slot。
+- A6：AIC/AIV 按 1:1 配对；平台查询为零时，Host 从 TilingParse CompileInfo
+  读取 A6 默认 64/64，再取两者较小值。空调用仍启动一个 inert block 用于关闭
+  已初始化事件，但 `usedAic=0`。
 
 平台查询若只回报 1～2 个 AIC，Host 回退到 `aivNum/2`、`GetCoreNum()`，
 再不行落到 A5 的 28。
@@ -81,15 +84,17 @@ AIC MTE2 成为瓶颈。
 非 `useGate && useExp2` 时 A5 走 `ProcessFallback`：仍在片上完成 Vector
 准备，但不同时启用 RegBase 融合快路径。
 
-### A2/A3 路径
+### A2/A3 四 head、每核八 slot 的 GM workspace 设计
 
-Vector 分两段，中间 `SyncAll`：
+一个逻辑核（1 AIC + 2 AIV）独占 A、B 两页 GM，每页对应同一 chunk 的最多四个连续 value head。
+每个 head slot 连续存放 BF16 的 `vb[chunkSize,V]` 和 `kbg[chunkSize,K]`。当前每个 slot 为 32 KiB，
+每页 128 KiB，每核 256 KiB。用户 workspace 按实际启用的逻辑核数分配。
 
-1. `ProcessVb`：写出 workspace 中的 `vb`。
-2. `ProcessGateAndK`：gate cumsum、`qg/kg`，并把 `kbg` 写到 workspace。
-
-Cube 从 GM workspace 读 `kbg/vb`，从输入读 `A`，写出 `w/u`。跨核用
-mode `0x2` 集合 flag（与 A5 的 mode `0x4` 独立 slot 不同）。
+每核从自己的核号开始，按 `usedAic` 跨步取组。页号为本核轮次模 2。AIV0 填 lane 0/2，
+AIV1 填 lane 1/3；无有效 lane 的 AIV 仍参加本页的 mode 2 集合握手。前两轮各取得一张空页，
+第三轮开始必须先等目标页 FREE。两侧完成本页写出后发 READY。AIC 等本页 READY，读 vb 计算 u，
+读 kbg 计算 w。有同页的后续轮次时，待本页全部读取完成后发 FREE。两页独立交接，允许 AIV 在
+AIC 消费当前页时填写下一页。尾 chunk 按有效行数读写，公开输出使用原始张量地址。
 
 ## 存储布局
 
@@ -109,12 +114,13 @@ mode `0x2` 集合 flag（与 A5 的 mode `0x4` 独立 slot 不同）。
 | 平台 | user workspace | 说明 |
 | --- | --- | --- |
 | A5 | 0（另加 SDK 系统 workspace） | `kbg/vb` 留在 L1，不经 GM 中转 |
-| A2/A3 | `2 * B * HV * T * K * sizeof(BF16)` | `[kbg \| vb]` 连续两段 |
+| A6 | 0（另加 SDK 系统 workspace） | arch92 同样在片上完成 `kbg/vb` 中转 |
+| A2/A3 | `usedAic * 2 * 4 * chunk_size * (K + V) * sizeof(BF16)` | 每核双页，每页 4 个 head slot |
 
 `vecRow` 由 Host 按 UB 预算（默认上限约 192 KiB）从 `chunk_size` 向下折半
 选择，保证 Vector 侧多份 TQue/TBuf 同时存活。
 
-### 同步（A5）
+### 同步（A5/A6）
 
 跨核 mode `0x4`：AIV1 的 flag id 为 base+16。Cube **只 wait 生产该 slot
 的那一个 AIV**，不能对同一 head wait 两侧 flag（会死锁）；也不能在无
@@ -127,6 +133,11 @@ mode `0x2` 集合 flag（与 A5 的 mode `0x4` 独立 slot 不同）。
 
 核内 HardEvent 覆盖 MTE2↔V、MTE3↔MTE2、MTE1↔MTE2、M↔MTE1、FIX↔M。
 空任务区间的核不发 flag。
+
+A6 使用单 AIV，slot 0/1 不再映射到两个 AIV 的 `+16` 偏移；ready/free 和
+跨核 handshake 的 ID 由 arch92 的同步表统一给出。A6 arch92 当前只支持
+`input_layout=BNSD/NTD` 的 dense 输入，不支持 A5 后加的 mixed `model_layout`
+组合；Host 对该组合明确返回参数错误，避免静默读错布局。
 
 ## Host / 属性透传
 
@@ -151,7 +162,7 @@ OpDef 输出登记顺序为 `w/u/qg/kg/gk(optional)`。属性：
 | `op_host/` | OpDef、tiling、手写 aclnn / L0 |
 | `op_kernel/arch35/` | A5 Vector RegBase、Cube Catlass MMAD、跨核 flag |
 | `op_kernel/*.h`（非 arch35） | A2/A3 Vector/Cube 与 GM workspace 路径 |
-| `op_kernel/chunk_kda_bwd_recompute.cpp` | Mix 入口按 `__CCE_AICORE__` 选择实现 |
+| `op_kernel/chunk_kda_bwd_recompute.cpp` | Mix 入口按 `__NPU_ARCH__` 选择实现 |
 
 验收与性能数字维护在
 [`tests/atk/chunk_kda_bwd_recompute/README.md`](../../../../../../tests/atk/chunk_kda_bwd_recompute/README.md)。

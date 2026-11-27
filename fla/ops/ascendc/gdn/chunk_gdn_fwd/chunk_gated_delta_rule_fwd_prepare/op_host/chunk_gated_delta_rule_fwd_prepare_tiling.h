@@ -26,7 +26,7 @@ BEGIN_TILING_DATA_DEF(ChunkGatedDeltaRuleFwdPrepareTilingData)
     TILING_DATA_FIELD_DEF(int64_t, queryKeyHeadDim);
     // V. v/u channel. First version is 128 or 256.
     TILING_DATA_FIELD_DEF(int64_t, valueHeadDim);
-    // G = Hv / Hk in {1,2,3,4}. One k' kkt is reused by G value heads.
+    // G = Hv / Hk in [1,16]. One k' kkt is reused by G value heads.
     TILING_DATA_FIELD_DEF(int64_t, valueHeadsPerQueryKeyHead);
     // BT. Tokens per chunk tile. First version is 64.
     TILING_DATA_FIELD_DEF(int64_t, tokensPerChunk);

@@ -9,13 +9,13 @@
 
 /*!
  * \file pre_process_fwd_kernel_merged_kernel.h
- * \brief arch 分派：__CCE_AICORE__ == 310（A5/950）→ arch35/；否则（A2/A3）→ arch22/。
+ * \brief arch 分派：__NPU_ARCH__ == 3510（A5/950）→ arch35/；否则（A2/A3）→ arch22/。
  */
 
 #ifndef PREF_PROCESS_FWD_KERNEL_MERGED_KERNEL_H
 #define PREF_PROCESS_FWD_KERNEL_MERGED_KERNEL_H
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/pre_process_fwd_kernel_merged_vector.h"
 #include "arch35/pre_process_fwd_kernel_merged_cube.h"
 #else

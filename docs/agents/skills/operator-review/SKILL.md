@@ -24,6 +24,23 @@ metadata:
 开始前确认目标 commit、算子名、调用层和验证平台。PR 检视以 diff 为主，同时把同一算子中会被本次
 改动破坏的旧路径纳入范围；全仓审计与 PR 门禁分开报告。
 
+## 平台与架构判据
+
+平台判定是编码红线，必须直接表达目标架构，不得通过 SoC 字符串或自定义平台别名宏间接判断：
+
+| 层 | 唯一采用 | 禁止 |
+| --- | --- | --- |
+| Host | `GetCurNpuArch() == NpuArch::DAV_3510` | `GetSocVersion() == SocVersion::ASCEND950` |
+| Kernel | `#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)` | `#if __CCE_AICORE__ == 310` |
+
+`GDN_BWD_ENABLE_ARCH22` 一类自造 `ENABLE_ARCHxx`/`USE_ARCHxx` 平台宏不能替代上述判据。检视 diff
+时必须同时检查 host 与 kernel 两侧；错误判据可能把错误实现编入或路由到非目标平台，不能只按命名
+风格问题放过。
+
+静态检查覆盖所有 `GetSocVersion()`、`SocVersion::ASCEND950`、`aclrtGetSocName()`、
+`__CCE_AICORE__`、`__DAV_C310__` 和自定义 `ENABLE/USE/IS_ARCHxx` 平台判据；表中表达式只是 A5
+分支的规范写法，A2/A3 分支使用对应的 `DAV_2201` / `2201`。
+
 ## 四层检查
 
 ### 1. 功能正确性

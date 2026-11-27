@@ -675,6 +675,7 @@ globalThis.core = {
         workflow_run_status="completed",
         workflow_run=None,
         workflow_run_error=False,
+        debug=False,
         run_attempt="1",
         files=None,
         pr_author="ci-admin-author",
@@ -699,6 +700,7 @@ globalThis.context = {
   payload: { inputs: {
     pr_number: '527',
     ci_mode: process.env.PREPARE_MODE,
+    debug: process.env.PREPARE_DEBUG,
     ops: process.env.PREPARE_OPS,
     ...JSON.parse(process.env.PREPARE_EXPECTED_SNAPSHOT),
   } },
@@ -773,6 +775,7 @@ globalThis.core = {
                     "NPU_CI_WORKFLOW_REF": "main",
                     "PREPARE_HEAD_SHA": sha,
                     "PREPARE_MODE": mode,
+                    "PREPARE_DEBUG": str(debug).lower(),
                     "PREPARE_OPS": ops,
                     "PREPARE_PR_AUTHOR": pr_author,
                     "PREPARE_AUTHOR_PERMISSION": author_permission,
@@ -823,10 +826,12 @@ globalThis.core = {
         )
         self.assertIn("::group::", run_script)
         self.assertIn('tee "$CI_RAW_LOG_FILE"', run_script)
-        self.assertIn("summarize_npu_ci.py", run_script)
-        self.assertIn("--require-accuracy-report", run_script)
-        self.assertIn("--require-stage-report", run_script)
-        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', run_script)
+        self.assertNotIn("summarize_npu_ci.py", run_script)
+        summary = next(step for step in self.matrix_steps if step.get("id") == "npu_ci_summary")
+        self.assertIn("always()", summary["if"])
+        self.assertIn("--require-accuracy-report", summary["run"])
+        self.assertIn("--require-stage-report", summary["run"])
+        self.assertIn('cat "$CI_SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY"', summary["run"])
         self.assertIn('elif wait "$ci_pid"; then', run_script)
 
     def test_platforms_share_container_tmpdir_and_isolate_host_storage(self):
@@ -857,82 +862,92 @@ globalThis.core = {
         job = workflow["jobs"]["ascend-npu"]
         self.assertTrue(job["strategy"]["fail-fast"])
 
-    def test_proxy_fallback_preserves_direct_first_checkout_and_original_retry_order(self):
-        job = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]["ascend-npu"]
-        self.assertEqual(job["env"]["CI_PROXY_SCRIPT"], "/home/huangjunzhe/ci/vpn-proxy.sh")
-        names = [step.get("name", "") for step in self.matrix_steps]
-        proxy_index = names.index("启动代理并获取端口")
-        proxy_step = self.matrix_steps[proxy_index]
-        self.assertEqual(proxy_step["if"], "steps.checkout_pr_1.outcome == 'failure' && matrix.platform == 'a2'")
-        original_order = ["通过 GitHub API 准备 A5 源码", "拉取当前目标分支代码（第 1 次）",
-                          "启动代理并获取端口", "等待后重试拉取目标分支代码",
-                          "拉取当前目标分支代码（第 2 次）", "再次等待后重试拉取目标分支代码",
-                          "拉取当前目标分支代码（第 3 次）"]
-        self.assertEqual(sorted(original_order, key=names.index), original_order)
-        self.assertNotIn("检查 runner 权限并准备存储目录", names)
-        self.assertNotIn("恢复 runner 工作目录权限", names)
-        for step_name in ("通过 GitHub API 准备 A5 源码", "拉取当前目标分支代码（第 1 次）"):
-            step = next(step for step in self.matrix_steps if step["name"] == step_name)
-            for variable in ("http_proxy", "https_proxy", "all_proxy", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"):
-                self.assertEqual(step["env"][variable], "", (step_name, variable))
-            self.assertEqual(step["env"]["no_proxy"], "*")
-            # GitHub rejects env keys that differ only in case.
-            env_names = [name.casefold() for name in step["env"]]
-            self.assertEqual(len(env_names), len(set(env_names)), step_name)
-            self.assertNotIn("proxyon", step.get("run", ""))
-        for checkout_id in ("checkout_pr_2",):
-            retry = next(step for step in self.matrix_steps if step.get("id") == checkout_id)
-            self.assertNotIn("env", retry)
-        self.assertIn('source "$CI_PROXY_SCRIPT"', proxy_step["run"])
-        self.assertIn("proxyon", proxy_step["run"])
-        scripts = "\n".join(step.get("run", "") for step in self.matrix_steps)
-        self.assertNotIn("/root/", scripts)
-        self.assertNotIn("/etc/profile.d/vpn-proxy.sh", scripts)
-        self.assertNotIn("git config --global", scripts)
-        self.assertNotRegex(scripts, r"(?m)^\s*(?:export\s+)?HOME=")
-        self.assertNotRegex(scripts, r"(?m)^\s*(?:sudo|systemctl)\s")
-
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell test")
     def test_proxy_values_reach_later_steps_and_reject_newlines(self):
         step = next(step for step in self.matrix_steps if step.get("name") == "启动代理并获取端口")
-        values = dict.fromkeys(
-            ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"),
-            "http://user:password@127.0.0.1:7899",
+        merge_script = next(
+            step["run"] for step in self.matrix_steps if step.get("name") == "现场合并 PR 代码"
         )
-        values.update(
-            all_proxy="socks5h://127.0.0.1:7891", ALL_PROXY="socks5h://127.0.0.1:7891",
-            no_proxy="localhost,127.0.0.1,::1", NO_PROXY="localhost,127.0.0.1,::1",
-            PROXY_HTTP_PORT="7899", PROXY_SOCKS_PORT="7891", PROXY_MIXED_PORT="7898",
-        )
-        for bad_value in (None, "http://127.0.0.1:7899\nINJECTED=value", "http://127.0.0.1:7899\rINJECTED=value"):
-            with self.subTest(bad_value=bad_value), tempfile.TemporaryDirectory() as temp_dir:
-                root = Path(temp_dir)
-                proxy_script = root / "proxy script.sh"
-                proxy_values = dict(values)
-                if bad_value is not None:
-                    proxy_values["http_proxy"] = bad_value
-                proxy_script.write_text(
-                    "proxyon() {\n" + "".join(
-                        f"  export {name}={shlex.quote(value)}\n"
-                        for name, value in proxy_values.items()
-                    ) + "}\n",
-                    encoding="utf-8",
-                )
-                github_env = root / "github-env"
-                env = os.environ.copy()
-                env.update(CI_PROXY_SCRIPT=str(proxy_script), GITHUB_ENV=str(github_env))
-                completed = subprocess.run(
-                    ["bash", "-c", step["run"]], env=env,
-                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                )
-                output = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
-                if bad_value is None:
-                    self.assertEqual(completed.returncode, 0, completed.stderr)
-                    self.assertEqual(dict(line.split("=", 1) for line in output.splitlines()), values)
-                else:
-                    self.assertNotEqual(completed.returncode, 0)
-                    self.assertIn("contains a newline", completed.stderr)
-                    self.assertNotIn("INJECTED", output)
+        fetch_function = merge_script[
+            merge_script.index("fetch_with_retry() {"):merge_script.index("fetch_more_history() {")
+        ]
+        scripts = {
+            "checkout fallback": step["run"],
+            "fetch fallback": (
+                "set -euo pipefail\ncalls=0\n"
+                "timeout() { calls=$((calls + 1)); [[ $calls -gt 1 ]]; }\n"
+                "sleep() { :; }\n"
+                + fetch_function + "\nfetch_with_retry origin test-ref\n"
+            ),
+        }
+        values = {
+            "http_proxy": "http://127.0.0.1:7899",
+            "https_proxy": "http://user:password@127.0.0.1:7899",
+            "all_proxy": "socks5h://127.0.0.1:7891",
+            "no_proxy": "localhost,127.0.0.1,::1",
+            "GIT_HTTP_PROXY": "http://127.0.0.1:7899",
+            "GIT_HTTPS_PROXY": "http://127.0.0.1:7899",
+            "PROXY_HTTP_PORT": "7899", "PROXY_SOCKS_PORT": "7891", "PROXY_MIXED_PORT": "7898",
+        }
+        mixed = {**values, **{name.upper(): "http://stale.invalid:1" for name in values if name.islower()}}
+        mixed["http_proxy"] = ""
+        mixed["HTTP_PROXY"] = values["http_proxy"]
+        cases = [
+            ("lowercase", values, values, False),
+            ("uppercase", {name.upper(): value for name, value in values.items()}, values, False),
+            ("mixed lowercase wins and empty lowercase falls back", mixed, values, False),
+            ("missing optional variables", {}, {"no_proxy": ""}, False),
+            ("line feed", {"http_proxy": "http://127.0.0.1:7899\nINJECTED=value"}, {}, True),
+            ("carriage return in uppercase", {"HTTPS_PROXY": "http://127.0.0.1:7899\rINJECTED=value"}, {}, True),
+        ]
+        proxy_names = {*values, "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}
+        for script_name, script in scripts.items():
+            for case_name, proxy_values, expected, invalid in cases:
+                with self.subTest(script=script_name, case=case_name), tempfile.TemporaryDirectory() as temp_dir:
+                    root = Path(temp_dir)
+                    proxy_script = root / "proxy script.sh"
+                    # A missing setting must not resurrect an inherited proxy or
+                    # the wildcard bypass used during the direct fetch attempt.
+                    inherited = {
+                        name: "*" if name.lower() == "no_proxy" else "http://inherited.invalid:1"
+                        for name in proxy_names if not name.startswith("PROXY_")
+                    }
+                    proxy_script.write_text(
+                        "proxyon() {\n  :\n" + "".join(
+                            f"  export {name}={shlex.quote(value)}\n"
+                            for name, value in proxy_values.items()
+                        ) + "}\n",
+                        encoding="utf-8",
+                    )
+                    github_env = root / "github-env"
+                    env = {name: value for name, value in os.environ.items() if name not in proxy_names}
+                    env.update(inherited, CI_PROXY_SCRIPT=str(proxy_script), GITHUB_ENV=str(github_env))
+                    shell_checks = "\n" + "\n".join(
+                        f'[[ "${{{name}-}}" == {shlex.quote(expected.get(name, ""))} ]] || '
+                        f'{{ echo "Canonical {name} unavailable to subprocess" >&2; exit 1; }}'
+                        for name in values
+                    )
+                    shell_checks += (
+                        "\nfor alias in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY; do\n"
+                        '  [[ ! -v "$alias" ]] || { echo "Uppercase proxy alias retained" >&2; exit 1; }\n'
+                        "done\n"
+                    )
+                    completed = subprocess.run(
+                        ["bash", "-c", script + "\nbash -c " + shlex.quote(shell_checks)], env=env,
+                        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+                    output = github_env.read_text(encoding="utf-8") if github_env.exists() else ""
+                    if invalid:
+                        self.assertNotEqual(completed.returncode, 0)
+                        self.assertIn("contains a newline", completed.stderr)
+                        self.assertNotIn("INJECTED", output)
+                        self.assertNotIn("NPU_CI_PROXY_ENABLED", output)
+                    else:
+                        self.assertEqual(completed.returncode, 0, completed.stderr)
+                        pairs = [line.split("=", 1) for line in output.splitlines()]
+                        keys = [name.casefold() for name, _ in pairs]
+                        self.assertEqual(len(keys), len(set(keys)), "Duplicate case-insensitive environment key")
+                        self.assertEqual(dict(pairs), {**expected, "NPU_CI_PROXY_ENABLED": "true"})
 
     def _run_matrix_storage_step(self, name, root, overrides=None):
         step = next(step for step in self.matrix_steps if step["name"].startswith(name))
@@ -1060,12 +1075,16 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
     fi
 """,
         )
-        fixture += "\nrun_case parallelism all false 0 success success,success,skipped,success,success true\n"
+        fixture += "\nrun_case parallelism all false 0 success success,success,success,success,success true\n"
         for soc in ("ascend910b", "ascend950"):
             with self.subTest(soc=soc), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 (root / "ci/tests").mkdir(parents=True)
-                for source in (RUN_CHECKS_PATH, REPO_ROOT / "ci/manage_npu_ci_stage_report.py"):
+                for source in (
+                    RUN_CHECKS_PATH,
+                    REPO_ROOT / "ci/classify_changes.py",
+                    REPO_ROOT / "ci/manage_npu_ci_stage_report.py",
+                ):
                     shutil.copyfile(source, root / "ci" / source.name)
                 (root / "ci/tests/parallelism.sh").write_text(
                     fixture.replace("ascend910b", soc), encoding="utf-8"
@@ -1084,8 +1103,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 )
                 self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
                 builds = [json.loads(line) for line in build_log.read_text().splitlines()]
-                self.assertTrue(any("--pkg" in item["args"] and "-j16" in item["args"] for item in builds))
-                self.assertTrue(any(item["args"] == ["build.sh"] for item in builds))
+                self.assertTrue(any(item["args"] == ["scripts/build_wheel.py"] for item in builds))
                 for build in builds:
                     self.assertEqual(build["env"], {
                         "MAX_JOBS": "16", "CMAKE_BUILD_PARALLEL_LEVEL": "16", "MAKEFLAGS": "-j16",
@@ -1125,13 +1143,13 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             completed, records, env = self._run_matrix_storage_step("清理 ", root)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             recursive_removals = [item[-1] for item in records if item[:2] == ["rm", "-rf"]]
-            self.assertEqual(recursive_removals, [env["CI_HOST_TMPDIR"], env["TMPDIR"] + "/fla-npu-source-42-1"])
+            self.assertEqual(recursive_removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], recursive_removals)
             self.assertNotIn(env["CI_CACHE_ROOT"], recursive_removals)
             self.assertNotIn(env["CI_NPU_LOCK_DIR"], recursive_removals)
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
-    def test_a2_cleanup_does_not_remove_static_tmpdir_or_a5_source_archive(self):
+    def test_a2_cleanup_does_not_remove_static_tmpdir(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "repo" / ".ci-tmp").mkdir(parents=True)
@@ -1143,13 +1161,26 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             self.assertEqual(removals, [env["CI_HOST_TMPDIR"]])
             self.assertNotIn(env["TMPDIR"], removals)
 
-    def test_device_jobs_use_the_pr_ci_without_overlay(self):
+    def test_device_jobs_validate_fetched_pr_locally_after_merge(self):
         device_source = "\n".join(step.get("run", "") for step in self.matrix_steps)
         self.assertNotIn("trusted-ci", device_source)
         self.assertNotIn("rm -rf repo/ci", device_source)
         self.assertNotIn("cp -a", device_source)
-        self.assertTrue(any("git merge --no-ff" in step.get("run", "") for step in self.matrix_steps))
-        self.assertIn('extract_archive(archive_dir / "merge.tar.gz", Path("repo"))', device_source)
+        self.assertFalse(any(step.get("uses", "").startswith("actions/github-script@")
+                             for step in self.matrix_steps))
+        self.assertNotIn("api.github.com", device_source)
+        self.assertNotIn("extract_archive", device_source)
+        merge_index = next(index for index, step in enumerate(self.matrix_steps)
+                           if "git merge --no-ff" in step.get("run", ""))
+        guard_index = next(index for index, step in enumerate(self.matrix_steps)
+                           if step.get("id") == "validate_pr")
+        container_index = next(index for index, step in enumerate(self.matrix_steps)
+                               if step.get("id") == "npu_ci")
+        self.assertLess(merge_index, guard_index)
+        self.assertLess(guard_index, container_index)
+        self.assertEqual(self.matrix_steps[guard_index]["working-directory"], "repo")
+        # Real local Git tests in test_workflow_source_checkout exercise fixed
+        # refs, ancestry, reruns, and denied network access for this guard.
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_admin_author_ci_changes_publish_without_confirmation_parameters(self):
@@ -1189,19 +1220,6 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertTrue(statuses[0]["description"].endswith("..."))
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
-    def test_a5_archive_cleanup_rejects_a_different_tmpdir_before_removing_any_directory(self):
-        for suffix in ("../cache_root", "npu-locks", "fla-npu-source-42-1"):
-            with self.subTest(path=suffix), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                (root / "repo" / ".ci-tmp").mkdir(parents=True)
-                completed, records, _ = self._run_matrix_storage_step(
-                    "清理 ", root, {"TMPDIR": "/home/huangjunzhe/ci/tmp/" + suffix}
-                )
-                self.assertNotEqual(completed.returncode, 0)
-                self.assertIn("Refusing to clean an unexpected source archive directory", completed.stderr)
-                self.assertFalse(any(item[:2] == ["rm", "-rf"] for item in records))
-
-    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_temp_cleanup_rejects_paths_outside_current_platform_run(self):
         for suffix in (
             "", "npu-locks", "container-a2-42-1", "container-a5-41-1",
@@ -1220,16 +1238,15 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
 
     @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
     def test_cleanup_rejects_symlinks_to_unrelated_data(self):
-        for target in ("host-temp", "archive", "log"):
+        for target in ("host-temp", "log"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 log_dir = root / "repo" / ".ci-tmp"
                 log_dir.mkdir(parents=True)
                 unrelated = root / "unrelated"
                 unrelated.mkdir()
-                if target in {"host-temp", "archive"}:
-                    name = "container-a5-42-1" if target == "host-temp" else "fla-npu-source-42-1"
-                    link = root / "runner storage" / "tmp" / name
+                if target == "host-temp":
+                    link = root / "runner storage" / "tmp" / "container-a5-42-1"
                     link.parent.mkdir(parents=True)
                     link.symlink_to(unrelated, target_is_directory=True)
                 else:
@@ -1368,6 +1385,13 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
         self.assertIn("finalize_bootstrap_failure", script)
         self.assertIn("quick|full)", script)
         self.assertNotIn("bash gdn-verify.sh", script)
+
+        tests_only_body = script.split("run_tests_only()", 1)[1].split(
+            "run_gdr_example_st()", 1
+        )[0]
+        self.assertIn("install_latest_arch_wheel", tests_only_body)
+        self.assertNotIn("test.sh", tests_only_body)
+        self.assertIn("existing GDR/Example-ST stage", tests_only_body)
 
     def test_ci_contract_tests_run_outside_the_npu_environment_stage(self):
         run_checks = RUN_CHECKS_PATH.read_text(encoding="utf-8")
@@ -1529,6 +1553,33 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertIn({"kind": "output", "payload": {"name": "should_run", "value": "true"}}, records)
                 self.assertFalse(any(item["kind"] == "workflow_run" for item in records))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_debug_requests_get_fresh_logs_instead_of_reusing_ordinary_runs(self):
+        for state, title, should_run in (
+            ("success", "NPU CI · PR #527", "true"),
+            ("success", "NPU CI · PR #527 · debug", "true"),
+            ("pending", "NPU CI · PR #527", "true"),
+            ("pending", "NPU CI · PR #527 · debug", "false"),
+        ):
+            with self.subTest(state=state, title=title):
+                statuses = [{
+                    "context": name, "state": state, "description": "result (quick,all,A2+A5)",
+                    "target_url": "https://github.com/example/repo/actions/runs/88",
+                    "created_at": "2026-09-14T00:00:00Z",
+                } for name in STATUS_CONTEXTS]
+                run = {
+                    "status": "completed" if state == "success" else "in_progress",
+                    "display_title": title, "event": "workflow_dispatch",
+                    "path": ".github/workflows/ci.yml", "head_sha": "c" * 40, "head_branch": "main",
+                    "repository": {"full_name": "example/repo"},
+                }
+                completed, records = self._run_prepare_script(statuses, debug=True, workflow_run=run)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                outputs = {item["payload"]["name"]: item["payload"]["value"]
+                           for item in records if item["kind"] == "output"}
+                self.assertEqual(outputs["should_run"], should_run)
+                self.assertEqual(outputs["debug"], "true")
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_reuses_same_base_pending_run_with_one_api_read(self):
@@ -1778,7 +1829,7 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         upload = next(
             step
             for step in self.matrix_steps
-            if step.get("uses") == "actions/upload-artifact@v6"
+            if step.get("with", {}).get("name", "").startswith("npu-ci-result-")
         )
         paths = upload["with"]["path"]
         self.assertIn("CI_ACCURACY_REPORT_FILE", paths)
@@ -1866,10 +1917,9 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
         self.assertLess(len(comment), 48000)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_publisher_rejects_changed_head_base_or_pr_lifecycle(self):
+    def test_publisher_rejects_changed_head_or_pr_lifecycle(self):
         changes = {
             "head_changed": {"head": {"sha": "d" * 40}},
-            "base_commit_changed": {"base": {"ref": "main", "sha": "b" * 40}},
             "retargeted": {"base": {"ref": "maintenance", "sha": "c" * 40}},
             "closed": {"state": "closed"},
             "merged": {"merged": True},
@@ -1889,12 +1939,18 @@ globalThis.core = { setFailed: (message) => records.push({ kind: 'failed', paylo
                     self.assertIn("失效", comment)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_publisher_fails_closed_without_current_pr_or_prepared_base_identity(self):
+    def test_publisher_accepts_a_base_commit_advance(self):
+        completed, _, records = self._run_finalize_script(
+            current_pr={"base": {"ref": "main", "sha": "b" * 40}}
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self._assert_statuses(records, ["success"] * len(STATUS_CONTEXTS))
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required")
+    def test_publisher_fails_closed_without_current_pr_or_target_identity(self):
         for options in (
             {"pr_read_error": True},
             {"expected_base_ref": ""},
-            {"expected_base_sha": ""},
-            {"expected_base_sha": "not-a-commit"},
         ):
             with self.subTest(options=options):
                 completed, _, records = self._run_finalize_script(**options)

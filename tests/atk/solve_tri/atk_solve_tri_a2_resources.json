@@ -1,0 +1,450 @@
+[
+ {
+  "id": 208,
+  "default_seed": 20261025,
+  "name": "solve_tri_0208_bf16_bsnd_fixed_align_B1_H32_T11264_C64",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_solve_tri_a2_resources",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "single_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":32,\"T\":11264,\"chunk_size\":64,\"layout\":\"bsnd\",\"num_seqs\":1,\"aligned\":true,\"soc\":\"ascend910b\",\"name\":\"bf16_bsnd_fixed_align_B1_H32_T11264_C64\",\"op\":\"solve_tri\",\"case_id\":208,\"seed\":20261025,\"route\":\"ascendc\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "H",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 11264,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "layout",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bsnd",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "num_seqs",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 208,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261025,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend910b",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "aligned",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ },
+ {
+  "id": 209,
+  "default_seed": 20261026,
+  "name": "solve_tri_0209_bf16_tnd_varlen_align_NS64_H32_T65536_C64",
+  "aclnn_name": null,
+  "triton_name": null,
+  "kernel_name": null,
+  "version": "v2.1",
+  "expected_error_msg": null,
+  "api": "pytorch",
+  "api_type": "executor_solve_tri_a2_resources",
+  "aclnn_api_type": "aclnn_function",
+  "triton_api_type": "triton_function",
+  "fusion_api_type": "fusion_function",
+  "fusion_mode": null,
+  "dist_api_type": "dist_function",
+  "kernel_api_type": "kernel_function",
+  "backward": false,
+  "standard": {
+   "acc": "single_bm",
+   "perf": "not_key",
+   "mem": 1.1
+  },
+  "outputs": null,
+  "inputs": [
+   {
+    "name": "low_precision_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "bf16",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "fp32_marker",
+    "type": "tensor",
+    "required": true,
+    "dtype": "fp32",
+    "shape": [
+     1
+    ],
+    "range_values": [
+     0,
+     0
+    ],
+    "backward": true,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_spec",
+    "type": "attr",
+    "required": true,
+    "dtype": "non_param",
+    "shape": null,
+    "range_values": "{\"dtype\":\"bf16\",\"B\":1,\"H\":32,\"T\":65536,\"chunk_size\":64,\"layout\":\"tnd\",\"num_seqs\":64,\"aligned\":true,\"seqlens\":[1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024],\"soc\":\"ascend910b\",\"name\":\"bf16_tnd_varlen_align_NS64_H32_T65536_C64\",\"op\":\"solve_tri\",\"case_id\":209,\"seed\":20261026,\"route\":\"ascendc\"}",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "dtype",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "bf16",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "B",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "H",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 32,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "T",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 65536,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "chunk_size",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "layout",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "tnd",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "num_seqs",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 64,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "case_id",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 209,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seed",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 20261026,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "soc",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascend910b",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "route",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "ascendc",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "aligned",
+    "type": "attr",
+    "required": true,
+    "dtype": "int",
+    "shape": null,
+    "range_values": 1,
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   },
+   {
+    "name": "seqlens",
+    "type": "attr",
+    "required": true,
+    "dtype": "string",
+    "shape": null,
+    "range_values": "[1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024,1024]",
+    "backward": false,
+    "align_32B": null,
+    "outlier_values": null
+   }
+  ],
+  "acl_json": "",
+  "method_inputs": null,
+  "tensor_input": null,
+  "compute_times": null,
+  "save_name": null,
+  "uuid": null,
+  "downloaded": false,
+  "is_boundary": false,
+  "xrun_cs_name": null,
+  "xrun_data": null,
+  "strategy": null
+ }
+]

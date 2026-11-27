@@ -118,9 +118,6 @@ public:
         this->Attr("use_gate_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("use_beta_sigmoid_in_kernel").AttrType(OPTIONAL).Bool(false);
         this->Attr("allow_neg_eigval").AttrType(OPTIONAL).Bool(false);
-        // Internal dispatch bit set by the V2 L0 wrapper.  It is deliberately
-        // separate from the legacy optional gk input.
-        this->Attr("use_v2").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aicConfig;
         aicConfig.DynamicCompileStaticFlag(true)
@@ -132,6 +129,7 @@ public:
         this->AICore().AddConfig("ascend910b", aicConfig);
         this->AICore().AddConfig("ascend910_93", aicConfig);
         this->AICore().AddConfig("ascend950", aicConfig);
+        this->AICore().AddConfig("ascend960dt", aicConfig);
     }
 };
 

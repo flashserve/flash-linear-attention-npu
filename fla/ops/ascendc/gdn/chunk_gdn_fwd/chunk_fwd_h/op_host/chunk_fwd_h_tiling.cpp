@@ -12,6 +12,9 @@
  * \brief
  */
 
+#include "../op_kernel/chunk_fwd_h_struct.h"
+#include <cstring>
+
 #include "chunk_fwd_h_tiling.h"
 #include <register/op_impl_registry.h>
 #include "tiling_base/data_copy_transpose_tiling.h"
@@ -57,6 +60,7 @@ static constexpr size_t ATTR_LOGICAL_V_HEADS_IDX = 8;
 static constexpr size_t ATTR_LOGICAL_K_DIM_IDX = 9;
 static constexpr size_t ATTR_LOGICAL_V_DIM_IDX = 10;
 static constexpr size_t ATTR_SEQ_CHUNK_COUNTS_IDX = 11;
+static constexpr size_t ATTR_LAYOUT_IDX = 12;
 
 static constexpr int64_t V_DIM_128 = 128;
 static constexpr int64_t K_DIM_128 = 128;
@@ -99,6 +103,8 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     auto gateTensor = useGk ? gkTensor : gTensor;
 
     uint64_t gateDtypeToken = 0;
+    // g/gk 仅支持 BF16/FP32，本处是唯一 dtype 校验门；
+    // 扩展 dtype 时需同步评估 gated 复用支持面。
     OP_CHECK_IF(!ChunkFwdHDtypeToTemplateToken(gateTensor->GetDataType(), gateDtypeToken),
                 OP_LOGE(context->GetNodeName(),
                         "g/gk dtype must be BF16 or FP32, but got dtype=%d.",
@@ -111,6 +117,17 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     bool saveNewValue = *(attrPtr->GetAttrPointer<bool>(ATTR_SAVE_NEW_VALUE_IDX));
     bool useExp2 = *(attrPtr->GetAttrPointer<bool>(ATTR_USE_EXP2_IDX));
     bool stateVFirst = *(attrPtr->GetAttrPointer<bool>(ATTR_STATE_V_FIRST_IDX));
+    const char *qkvLayout = attrPtr->GetStr(ATTR_LAYOUT_IDX);
+    if (qkvLayout == nullptr) {
+        qkvLayout = "BNSD";
+    }
+    OP_CHECK_IF(std::strcmp(qkvLayout, "BNSD") != 0 && std::strcmp(qkvLayout, "BSND") != 0 &&
+                    std::strcmp(qkvLayout, "NTD") != 0 && std::strcmp(qkvLayout, "TND") != 0,
+                OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout, "BNSD, BSND, NTD or TND"),
+                return ge::GRAPH_FAILED);
+    const int64_t layoutValue =
+        (std::strcmp(qkvLayout, "BSND") == 0 || std::strcmp(qkvLayout, "TND") == 0)
+            ? GDN::FwdHLayout::BSND : GDN::FwdHLayout::BNSD;
     int64_t logicalBatch = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_BATCH_IDX));
     int64_t logicalSeqlen = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_SEQLEN_IDX));
     int64_t logicalKHeads = *(attrPtr->GetAttrPointer<int64_t>(ATTR_LOGICAL_K_HEADS_IDX));
@@ -137,6 +154,12 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
                 return ge::GRAPH_FAILED);
 
     const auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_9201 &&
+        layoutValue == GDN::FwdHLayout::BSND) {
+        OP_LOGE_WITH_INVALID_ATTR(context->GetNodeName(), "layout", qkvLayout,
+                                  "BNSD or NTD on DAV_9201");
+        return ge::GRAPH_FAILED;
+    }
 
     ChunkFwdHTilingContext tilingCtx{};
     tilingCtx.seqlen = logicalSeqlen;
@@ -150,12 +173,16 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
         cuSeqlensTensor != nullptr ? cuSeqlensTensor->GetStorageShape().GetDim(0) : 0;
     tilingCtx.useInitialState = useInitialState;
     tilingCtx.storeFinalState = storeFinalState;
+    tilingCtx.layout = layoutValue;
     tilingCtx.chunkSize = chunkSize;
     tilingCtx.aicCoreNum = ascendcPlatform.GetCoreNumAic();
     // gated 复用 eligible（与 kernel 谓词 FwdHGatedReusable 同条件）；仅 DAV_2201
     // ——其余芯片 kernel 无 gated 分支，置 eligible 反致 blockDim/workspace 偏差。
-    tilingCtx.gatedEligible = useG && useExp2 && !stateVFirst &&
-        (gateDtypeToken == CHUNK_FWD_H_TPL_FP32 || gateDtypeToken == CHUNK_FWD_H_TPL_BF16) &&
+    // 域不限（2026-11-10 exp 域复用释放）：useExp2 true/false 均可（域随 tiling
+    // key 的 USE_EXP2 维选实例，epilogue 内 LN2 换算按域取舍）。
+    // vfirst 不限：state 布局经 STATE_V_FIRST 模板维进 kernel，aclnn 层免翻译；
+    // gate dtype 的唯一门为函数头部入口校验；FP32 state 走通用路径保留递推精度。
+    tilingCtx.gatedEligible = useG && resolvedStateDataType == ge::DT_BF16 &&
         ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_2201;
     tilingCtx.libApiWorkSpaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
 
@@ -250,6 +277,7 @@ ge::graphStatus Tiling4ChunkFwdH(gert::TilingContext *context)
     tiling.set_isVariedLen(plainTiling.isVariedLen);
     tiling.set_shapeBatch(plainTiling.shapeBatch);
     tiling.set_tokenBatch(plainTiling.tokenBatch);
+    tiling.set_layout(plainTiling.layout);
     tiling.set_vWorkspaceOffset(plainTiling.vWorkspaceOffset);
     tiling.set_vUpdateWorkspaceOffset(plainTiling.vUpdateWorkspaceOffset);
     tiling.set_kDecayWorkspaceOffset(plainTiling.kDecayWorkspaceOffset);

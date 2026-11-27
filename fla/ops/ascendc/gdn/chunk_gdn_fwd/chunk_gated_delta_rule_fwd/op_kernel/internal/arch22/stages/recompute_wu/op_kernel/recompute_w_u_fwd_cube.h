@@ -21,7 +21,7 @@
 
 using GDN::GdnMegaArch22RecomputeWUTilingData;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #define CATLASS_ARCH 3510
 #else
 #define CATLASS_ARCH 2201
@@ -39,7 +39,7 @@ using GDN::GdnMegaArch22RecomputeWUTilingData;
 #include "tla/layout.hpp"
 #include "tla/tensor.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
 #include "recompute_w_u_fwd_concat_cube.h"
 #include "block_mmad_recompute_wu_keepa.hpp"
 #endif
@@ -72,7 +72,7 @@ public:
     using LayoutW = typename BlockMmadW::LayoutC;
     static constexpr bool kFlattenHeadTasks = kFlattenHeadTasks_;
     static constexpr bool kAbcTaskOrder = kAbcTaskOrder_;
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     static constexpr bool kConcatUW = kStaticBT == 64 && kStaticV == 128 &&
                                       sizeof(ElementA) == 2 && sizeof(ElementVb) == 2;
     using SelectedBlockMmad = std::conditional_t<kConcatUW,
@@ -146,7 +146,7 @@ public:
         }
     };
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     template <bool kFullyPrepared = false>
 #endif
     CATLASS_DEVICE void RunInterleaved(Arch::Resource<ArchTag> &resource, Params const &params)
@@ -163,7 +163,7 @@ public:
         AscendC::GlobalTensor<ElementW> gmW;
         const uint32_t loopBegin = static_cast<uint32_t>(params.taskRange->begin);
         const uint32_t loopEnd = static_cast<uint32_t>(params.taskRange->end);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         if constexpr (kFullyPrepared) {
             if (params.taskRange->begin < params.taskRange->end) {
                 AscendC::CrossCoreWaitFlag<0x2>(SYNC_AIV_AIC_FLAG_3);
@@ -188,7 +188,7 @@ public:
                 auto tensorA = tla::MakeTensor(gmA, params.layoutA, Arch::PositionGM{});
 
                 // === 第一部分：U = A @ Vb ===
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                 if constexpr (!kFullyPrepared) {
 #endif
                     if ((taskIdx & 0b11) == 1) {
@@ -197,7 +197,7 @@ public:
                             AscendC::CrossCoreSetFlag<0x2, PIPE_MTE2>(SYNC_AIC_AIV_FLAG_5);
                         }
                     }
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                 }
 #endif
                 if constexpr (kConcatUW) {
@@ -233,7 +233,7 @@ public:
                         auto tensorBlockU = GetTile(tensorU, tla::MakeCoord(0, 0),
                                                         tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
                         // Compute block-scoped matrix multiply-add
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                         // Host BT64/128 and L1 K256 guarantee one retained A tile for U/W.
                         blockMmad.template operator()<true, false>(
                             tensorBlockA, tensorBlockVb, tensorBlockU, actualBlockShape);
@@ -258,7 +258,7 @@ public:
                                                 tla::MakeShape(actualBlockShape.k(), actualBlockShape.n()));
                     auto tensorBlockW = GetTile(tensorW, tla::MakeCoord(0, 0),
                                                 tla::MakeShape(actualBlockShape.m(), actualBlockShape.n()));
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                     blockMmad.template operator()<false, true>(
                         tensorBlockA, tensorBlockKbgExp, tensorBlockW, actualBlockShape);
 #else
@@ -285,7 +285,7 @@ public:
     template <>
     CATLASS_DEVICE void operator()<AscendC::AIC>(Arch::Resource<ArchTag> &resource, Params const &params)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         if (params.taskRange->fullyPrepared) {
             RunInterleaved<true>(resource, params);
             return;
@@ -304,7 +304,7 @@ template <typename kType, typename betaType, typename L1TileShape, typename L0Ti
           int kStaticV = 0, int kStaticBT = 0>
 class RecomputeWUFwdProcess {
 public:
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using Resource = Arch::Resource<Arch::Ascend950>;
 #else
     using Resource = Arch::Resource<Arch::AtlasA2>;
@@ -412,7 +412,7 @@ __aicore__ void inline RecomputeWUFwdProcess<kType, betaType, L1TileShape, L0Til
     LayoutTagW tagW = LayoutTagW::MakeLayout<kType>(ChunkSize(), K);
     LayoutTagU tagU = LayoutTagU::MakeLayout<kType>(ChunkSize(), ValueDim());
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     using ArchTag = Arch::Ascend950;
     // 950: UnitFlag=true 时 L0C_STAGES 必须为 1（见 block_mmad_pingpong_tla.hpp static_assert）
     using DispatchPolicy = Gemm::MmadPingpongTlaMulti<ArchTag, true, false, 1, true>;

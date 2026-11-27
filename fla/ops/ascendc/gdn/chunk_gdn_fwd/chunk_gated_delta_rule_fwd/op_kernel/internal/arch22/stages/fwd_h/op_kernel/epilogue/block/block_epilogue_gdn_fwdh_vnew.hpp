@@ -52,7 +52,7 @@ public:
     using WSElementInput = typename WSInputType_::Element;
     using FinalStateElement = typename FinalStateType_::Element;
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     static constexpr bool kSharedLowResident = !kGated && scalarGated &&
         std::is_same<FinalStateElement, float>::value &&
         (std::is_same<UElementInput, half>::value || std::is_same<UElementInput, bfloat16_t>::value) &&
@@ -108,7 +108,7 @@ public:
     CATLASS_DEVICE
     ~BlockEpilogue() {}
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
     // 仅同owner BT64私有实例调用；默认构造布局与原fallback保持。
     CATLASS_DEVICE void ConfigureOwnerLocal(Arch::Resource<ArchTag> &resource)
     {
@@ -529,7 +529,7 @@ private:
     uint32_t ApplyDecay(AscendC::LocalTensor<float> dst, AscendC::LocalTensor<float> values,
                     AscendC::LocalTensor<float> gate, uint32_t extra, uint32_t rows, uint32_t cols)
     {
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
         auto coefficients = shareBuffer_.template ReinterpretCast<float>();
         AscendC::Brcb(coefficients, gate, static_cast<uint8_t>(CeilDiv(extra + rows, 8)), {1, 8});
         AscendC::PipeBarrier<PIPE_V>();

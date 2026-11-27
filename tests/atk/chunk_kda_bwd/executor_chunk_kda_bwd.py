@@ -28,9 +28,10 @@ def build_inputs(kwargs):
         values["cu_seqlens"], values["chunk_indices"] = None, None
     if not with_bias:
         values["dt_bias"] = None
-    # The selected original path fixes the head-major public layouts.
-    values["input_layout"] = "NTD" if packed else "BNSD"
-    values["output_layout"] = values["input_layout"]
+    # npu_chunk_kda_bwd exposes a single `layout` kwarg (BNSD/BSND/NTD/TND)
+    # after PR #993 unified the fwd/bwd layout interfaces; it no longer
+    # accepts separate input_layout/output_layout keys.
+    values["layout"] = "NTD" if packed else "BNSD"
     return values
 
 

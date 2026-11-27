@@ -69,7 +69,7 @@ __aicore__ inline void RunChunkKdaBwd(
         userWorkspace +
             KdaBwdWorkspaceByteOffset(tiling.kernelBWorkspaceOffset),
         tiling.kernelB);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     if (tiling.kernelC.useGateInKernel != 0 &&
         tiling.kernelC.deferGatePost != 0) {
         if ASCEND_IS_AIV {

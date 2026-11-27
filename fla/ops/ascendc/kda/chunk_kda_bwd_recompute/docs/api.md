@@ -154,7 +154,7 @@ u   = A @ vb
 
 | 维度 | 支持 |
 | --- | --- |
-| SoC | 注册 A2 / A3 / A5；ATK 与性能验收以 A5 为主 |
+| SoC | 注册 A2 / A3 / A5 / A6；A6 走 arch92 和 1:1 MIX，正式验收待补齐 |
 | `K` / `V` | 固定 `128` |
 | `chunk_size` | 固定 `64` |
 | head | `0 < HK <= HV` 且 `HV % HK == 0` |
@@ -162,7 +162,7 @@ u   = A @ vb
 | layout | `input_layout ∈ {BNSD, NTD}`；独立入口张量为 dense BNSD rank-4 |
 | 变长 | 可选 `cu_seqlens` + `chunk_indices`；当前 ATK 主路径为定长 |
 
-A2/A3 tiling 要求公开 `gk` 输出缓冲存在；A5 允许 `gk` 为空并由 L2 分配
+A2/A3 tiling 要求公开 `gk` 输出缓冲存在；A5/A6 允许 `gk` 为空并由 L2 分配
 内部占位。在整体 `chunk_kda_bwd` 的 A2/A3 编排中，本算子位于
 `Recompute → FwdH → Prepare → Dhu → Finalize` 链的起点，见
 [`../chunk_kda_bwd/docs/A2A3_design.md`](../chunk_kda_bwd/docs/A2A3_design.md)。

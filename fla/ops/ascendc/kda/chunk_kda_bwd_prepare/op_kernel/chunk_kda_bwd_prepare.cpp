@@ -7,7 +7,7 @@
 #include "lib/matmul_intf.h"
 #include "chunk_kda_bwd_prepare_struct.h"
 #include "chunk_kda_bwd_prepare_tiling_key.h"
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "arch35/chunk_kda_bwd_prepare_cube.h"
 #include "arch35/chunk_kda_bwd_prepare_vector.h"
 #else
@@ -24,7 +24,7 @@ __global__ __aicore__ void chunk_kda_bwd_prepare(
     REGISTER_TILING_DEFAULT(KDA::ChunkKdaBwdPrepareTilingData);
     GET_TILING_DATA_WITH_STRUCT(KDA::ChunkKdaBwdPrepareTilingData, tilingData, tiling);
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 310
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     (void)workspace;
     if ASCEND_IS_AIC {
         if (tilingData.stateVFirst != 0) {

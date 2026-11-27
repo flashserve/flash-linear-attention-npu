@@ -1,3 +1,5 @@
+#include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "aclnn_chunk_kda_bwd_finalize.h"
 #include "chunk_kda_bwd_finalize.h"
 
@@ -16,12 +18,24 @@ using namespace op;
 
 namespace {
 
+static constexpr const char *OP_NAME = "aclnnChunkKdaBwdFinalize";
+
 aclnnStatus CheckRequired(const aclTensor *tensor, DataType dtype, const char *name)
 {
-    CHECK_COND(tensor != nullptr, ACLNN_ERR_PARAM_NULLPTR, "%s must not be nullptr", name);
-    CHECK_COND(IsContiguous(tensor), ACLNN_ERR_PARAM_INVALID, "%s must be contiguous", name);
-    CHECK_COND(tensor->GetDataType() == dtype, ACLNN_ERR_PARAM_INVALID,
-               "%s has invalid dtype", name);
+    if (tensor == nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, name, "required tensor must not be nullptr");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (!IsContiguous(tensor)) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, name, "tensor must be contiguous");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (tensor->GetDataType() != dtype) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, name, ge::TypeUtils::DataTypeToSerialString(tensor->GetDataType()),
+            ge::TypeUtils::DataTypeToSerialString(dtype));
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     return ACLNN_SUCCESS;
 }
 
@@ -43,74 +57,169 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     const aclTensor *dALogOut, const aclTensor *dDtBiasOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    CHECK_COND(workspaceSize != nullptr && executor != nullptr,
-               ACLNN_ERR_PARAM_NULLPTR, "workspaceSize/executor must not be nullptr");
-    CHECK_COND(!allowNegEigval || useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
-               "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+    if (workspaceSize == nullptr || executor == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "workspaceSize,executor");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (allowNegEigval && !useBetaSigmoidInKernel) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "allowNegEigval", "true",
+            "allowNegEigval=true requires useBetaSigmoidInKernel=true");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 #ifndef KDA_BWD_STAGES_ARCH22
-    CHECK_COND(!useBetaSigmoidInKernel, ACLNN_ERR_PARAM_INVALID,
-               "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+    if (useBetaSigmoidInKernel) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "useBetaSigmoidInKernel", "true",
+            "A5 finalize: useBetaSigmoidInKernel=true is reserved but not supported");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 #endif
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(q, "q"),
              {k, "k"}, {v, "v"}, {akk, "akk"},
              {vNew, "v_new"}, {h, "h"}, {dh, "dh"}, {dvScan, "dv_scan"},
              {dqOut, "dq"}, {dkOut, "dk"}, {dvOut, "dv"}}) {
-        CHECK_RET(CheckRequired(item.first, DataType::DT_BF16, item.second) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.first, DataType::DT_BF16, item.second);
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
-    CHECK_COND(beta != nullptr &&
-                   (beta->GetDataType() == DataType::DT_BF16 || beta->GetDataType() == DataType::DT_FLOAT),
-               ACLNN_ERR_PARAM_INVALID, "beta must be BF16 or FP32");
-    CHECK_RET(CheckRequired(beta, beta->GetDataType(), "beta") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckRequired(dBetaOut, beta->GetDataType(), "d_beta") == ACLNN_SUCCESS,
-              ACLNN_ERR_PARAM_INVALID);
+    if (beta == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "beta");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (beta->GetDataType() != DataType::DT_BF16 && beta->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "beta", ge::TypeUtils::DataTypeToSerialString(beta->GetDataType()),
+            "beta must be BF16 or FP32");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    {
+        const aclnnStatus checkStatus = CheckRequired(beta, beta->GetDataType(), "beta");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
+    };
+    {
+        const aclnnStatus checkStatus = CheckRequired(dBetaOut, beta->GetDataType(), "d_beta");
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
+    };
     for (const auto &item : {
              std::pair<const aclTensor *, const char *>(gk, "gk"),
              {dAqk, "d_aqk"}, {dqRaw, "dq_raw"}, {aLog, "a_log"},
              {dtBias, "dt_bias"}, {dALogOut, "d_a_log"}, {dDtBiasOut, "d_dt_bias"}}) {
-        CHECK_RET(CheckRequired(item.first, DataType::DT_FLOAT, item.second) == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.first, DataType::DT_FLOAT, item.second);
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
     for (const auto &item : {
              std::pair<const aclTensor *, const aclTensor *>(rawG, dGOut)}) {
-        CHECK_COND(item.first && (item.first->GetDataType() == DataType::DT_FLOAT ||
-                       item.first->GetDataType() == DataType::DT_BF16),
-                   ACLNN_ERR_PARAM_INVALID, "gate parameters must be BF16 or FP32");
-        CHECK_RET(CheckRequired(item.first, item.first->GetDataType(), "gate parameter") == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
-        CHECK_RET(CheckRequired(item.second, item.first->GetDataType(), "gate gradient") == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        if (item.first == nullptr ||
+            (item.first->GetDataType() != DataType::DT_FLOAT &&
+             item.first->GetDataType() != DataType::DT_BF16)) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                OP_NAME, "rawG",
+                item.first == nullptr ? "nullptr" : ge::TypeUtils::DataTypeToSerialString(item.first->GetDataType()),
+                "gate parameters must be BF16 or FP32");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.first, item.first->GetDataType(), "gate parameter");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
+        {
+            const aclnnStatus checkStatus = CheckRequired(item.second, item.first->GetDataType(), "gate gradient");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
-    CHECK_COND((qRstdOptional == nullptr) == (kRstdOptional == nullptr),
-               ACLNN_ERR_PARAM_INVALID, "q_rstd and k_rstd must appear together");
+    if ((qRstdOptional == nullptr) != (kRstdOptional == nullptr)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "q_rstd,k_rstd",
+            std::string(qRstdOptional == nullptr ? "q_rstd=absent" : "q_rstd=present") + "," +
+                (kRstdOptional == nullptr ? "k_rstd=absent" : "k_rstd=present"),
+            "q_rstd and k_rstd must appear together");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (qRstdOptional != nullptr) {
-        CHECK_RET(CheckRequired(qRstdOptional, DataType::DT_FLOAT, "q_rstd") == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
-        CHECK_RET(CheckRequired(kRstdOptional, DataType::DT_FLOAT, "k_rstd") == ACLNN_SUCCESS,
-                  ACLNN_ERR_PARAM_INVALID);
+        {
+            const aclnnStatus checkStatus = CheckRequired(qRstdOptional, DataType::DT_FLOAT, "q_rstd");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
+        {
+            const aclnnStatus checkStatus = CheckRequired(kRstdOptional, DataType::DT_FLOAT, "k_rstd");
+            if (checkStatus != ACLNN_SUCCESS) {
+                return checkStatus;
+            }
+        };
     }
-    CHECK_COND((cuSeqlensOptional != nullptr || chunkIndicesOptional == nullptr),
-               ACLNN_ERR_PARAM_INVALID,
-               "chunk_indices requires cu_seqlens");
+    if (cuSeqlensOptional == nullptr && chunkIndicesOptional != nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "chunkIndicesOptional", "chunkIndicesOptional requires cuSeqlensOptional");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const auto rank = q->GetViewShape().GetDimNum();
-    CHECK_COND(rank == 3 || rank == 4, ACLNN_ERR_PARAM_INVALID, "q must have rank 3 or 4");
+    if (rank != 3 && rank != 4) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            OP_NAME, "q", std::to_string(rank), "q must have rank 3 or 4");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     const bool rank3 = rank == 3;
-    CHECK_COND(outputLayout != nullptr &&
-                   (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") == 0 ||
-                    std::strcmp(outputLayout, rank3 ? "TND" : "BSND") == 0),
-               ACLNN_ERR_PARAM_INVALID, "output_layout does not match input rank");
-    CHECK_COND(!useBetaSigmoidInKernel || beta->GetDataType() == DataType::DT_FLOAT,
-               ACLNN_ERR_PARAM_INVALID, "beta sigmoid backward requires saved FP32 beta_eff");
-    CHECK_COND(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)) &&
-                   lowerBound >= -5.0 && static_cast<float>(lowerBound) < 0.0f,
-               ACLNN_ERR_PARAM_INVALID, "scale/lower_bound must be finite");
-    CHECK_COND(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst,
-               ACLNN_ERR_PARAM_INVALID, "public finalize requires C=64, safe_gate/use_gate/use_exp2=true and K-first state");
+    if (outputLayout == nullptr) {
+        OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "outputLayout");
+        return ACLNN_ERR_PARAM_NULLPTR;
+    }
+    if (std::strcmp(outputLayout, rank3 ? "NTD" : "BNSD") != 0 &&
+        std::strcmp(outputLayout, rank3 ? "TND" : "BSND") != 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "outputLayout", outputLayout,
+            rank3 ? "outputLayout must be NTD or TND for rank-3 q"
+                  : "outputLayout must be BNSD or BSND for rank-4 q");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (useBetaSigmoidInKernel && beta->GetDataType() != DataType::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            OP_NAME, "beta", ge::TypeUtils::DataTypeToSerialString(beta->GetDataType()),
+            "beta sigmoid backward requires saved FP32 beta_eff");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(std::isfinite(static_cast<float>(scale)) && std::isfinite(static_cast<float>(lowerBound)) &&
+          lowerBound >= -5.0 && static_cast<float>(lowerBound) < 0.0f)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "scale,lowerBound",
+            std::to_string(scale) + "," + std::to_string(lowerBound),
+            "scale must be finite and lowerBound must be in [-5,0)");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (!(chunkSize == 64 && safeGate && useGateInKernel && useExp2 && !stateVFirst)) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "chunkSize,safeGate,useGateInKernel,useExp2,stateVFirst",
+            std::to_string(chunkSize) + "," + (safeGate ? "true" : "false") + "," +
+                (useGateInKernel ? "true" : "false") + "," + (useExp2 ? "true" : "false") + "," +
+                (stateVFirst ? "true" : "false"),
+            "public finalize requires C=64, safeGate/useGateInKernel/useExp2=true and stateVFirst=false");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
 
     auto uniqueExecutor = CREATE_EXECUTOR();
-    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    if (uniqueExecutor.get() == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME,
+                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        return ACLNN_ERR_INNER_CREATE_EXECUTOR;
+    }
     auto result = l0op::ChunkKdaBwdFinalize(
         q, k, v, gk, rawG, beta, aLog, dtBias, akk, vNew, h, dh,
         dvScan, dAqk, dqRaw, qRstdOptional, kRstdOptional,
@@ -120,7 +229,10 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
         dqOut, dkOut, dvOut, dBetaOut, dGOut, dALogOut, dDtBiasOut,
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
-        CHECK_RET(tensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        if (!(tensor != nullptr)) {
+            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+            return ACLNN_ERR_INNER_NULLPTR;
+        }
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);
@@ -130,7 +242,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
 extern "C" aclnnStatus aclnnChunkKdaBwdFinalize(
     void *workspace, uint64_t workspaceSize, aclOpExecutor *executor, aclrtStream stream)
 {
-    CHECK_COND(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS,
-               ACLNN_ERR_INNER, "ChunkKdaBwdFinalize launch failed");
+    if (!(CommonOpExecutorRun(workspace, workspaceSize, executor, stream) == ACLNN_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: " "ChunkKdaBwdFinalize launch failed", __func__);
+        return ACLNN_ERR_INNER;
+    }
     return ACLNN_SUCCESS;
 }

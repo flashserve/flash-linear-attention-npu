@@ -8,7 +8,12 @@
 #include "register/op_impl_registry.h"
 
 namespace optiling {
+// Ascend960DT_968B7 defaults; valid platform queries take precedence.
+constexpr uint32_t kA6DefaultAicNum = 64;
+constexpr uint32_t kA6DefaultAivNum = 64;
+
 struct ChunkKdaBwdRecomputeCompileInfo {
+    // Legacy defaults; TilingParse replaces these for A6.
     uint32_t aicNum = 28;
     uint32_t aivNum = 56;
 };

@@ -183,9 +183,9 @@ __simd_vf__ inline void StageV0Vf(
         RegTensor<float> qHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
-        Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
-        Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
         if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
+            Load128AsFp32(qLow, qHigh, q + row * Shape::kHeadDim);
+            Load128AsFp32(kLow, kHigh, k + row * Shape::kHeadDim);
             RegTensor<float> qSquareLow;
             RegTensor<float> qSquareHigh;
             RegTensor<float> kSquareLow;
@@ -214,7 +214,7 @@ __simd_vf__ inline void StageV0Vf(
             Duplicate(one, 1.0F, scalarMask);
             Div(qSumLow, one, qSumLow, scalarMask);
             Div(kSumLow, one, kSumLow, scalarMask);
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     qRstd + row, qSumLow, scalarMask);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -232,7 +232,7 @@ __simd_vf__ inline void StageV0Vf(
             Mul(kHigh, kHigh, kScale, mask);
         } else {
             // Identity 模式仅在需要反向保存量时产生公开的 rstd=1。
-            if constexpr (CompilePolicy::outputMode != OutputMode::None) {
+            if constexpr (CompilePolicy::outputRecomputeAux) {
                 RegTensor<float> one;
                 Duplicate(one, 1.0F, scalarMask);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
@@ -241,8 +241,10 @@ __simd_vf__ inline void StageV0Vf(
                     kRstd + row, one, scalarMask);
             }
         }
-        Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
-        Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
+        if constexpr (CompilePolicy::normMode == QkNormMode::L2) {
+            Store128FromFp32(q + row * Shape::kHeadDim, qLow, qHigh);
+            Store128FromFp32(k + row * Shape::kHeadDim, kLow, kHigh);
+        }
 
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
@@ -413,29 +415,32 @@ __simd_callee__ inline void ComputeStageV1KMinusBand(
                                      ? validRows
                                      : prefixRows;
     const uint16_t computeRows = bandBegin < validRows ? rowsInChunk : 0;
+    // gRef 的 band 参考行与 row 无关：每 chunk-head 由 2xN 次装载降为 2 次。
+    RegTensor<float> refLow;
+    RegTensor<float> refHigh;
+    LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
+    LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
     for (uint16_t row = 0; row < computeRows; ++row) {
         RegTensor<float> gateLow;
         RegTensor<float> gateHigh;
-        RegTensor<float> refLow;
-        RegTensor<float> refHigh;
+        RegTensor<float> expLow;
+        RegTensor<float> expHigh;
         RegTensor<float> kLow;
         RegTensor<float> kHigh;
         RegTensor<float> outLow;
         RegTensor<float> outHigh;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             gateLow, gateHigh, g + row * Shape::kHeadDim);
-        LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
-        LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
-        Sub(refLow, refLow, gateLow, mask);
-        Sub(refHigh, refHigh, gateHigh, mask);
+        Sub(expLow, refLow, gateLow, mask);
+        Sub(expHigh, refHigh, gateHigh, mask);
         constexpr float lower =
             Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
         constexpr float upper =
             Domain::StoredBound(ExpDomain::kV1Bf16UpperBase2);
-        ExpPair<CompilePolicy::useExp2>(refLow, refHigh, lower, upper);
+        ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
         Load128AsFp32(kLow, kHigh, kHat + row * Shape::kHeadDim);
-        Mul(outLow, kLow, refLow, mask);
-        Mul(outHigh, kHigh, refHigh, mask);
+        Mul(outLow, kLow, expLow, mask);
+        Mul(outHigh, kHigh, expHigh, mask);
         Store128FromFp32(
             kMinus + prefixBase + row * Shape::kHeadDim,
             outLow, outHigh);
@@ -464,6 +469,11 @@ __simd_callee__ inline void ComputeStageV1PlusBand(
     const uint16_t computeRows = validRows > kBandBegin
                                      ? bandEnd - kBandBegin
                                      : 0;
+    // gRef 的 band 参考行与 row 无关：每 chunk-head 由 2xN 次装载降为 2 次。
+    RegTensor<float> refLow;
+    RegTensor<float> refHigh;
+    LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
+    LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
     for (uint16_t bandRow = 0; bandRow < computeRows; ++bandRow) {
         constexpr float lower =
             Domain::StoredBound(ExpDomain::kV1Bf16LowerBase2);
@@ -476,12 +486,8 @@ __simd_callee__ inline void ComputeStageV1PlusBand(
         RegTensor<float> kHigh;
         RegTensor<float> expLow;
         RegTensor<float> expHigh;
-        RegTensor<float> refLow;
-        RegTensor<float> refHigh;
         LoadAlign<float, LoadDist::DIST_DINTLV_B32>(
             expLow, expHigh, g + row * Shape::kHeadDim);
-        LoadAlign(refLow, gRef + BAND * Shape::kHeadDim);
-        LoadAlign(refHigh, gRef + BAND * Shape::kHeadDim + 64);
         Sub(expLow, expLow, refLow, mask);
         Sub(expHigh, expHigh, refHigh, mask);
         ExpPair<CompilePolicy::useExp2>(expLow, expHigh, lower, upper);
@@ -734,27 +740,24 @@ __simd_vf__ inline void StageV6Vf(
         Load128AsFp32(qLow, qHigh, qHat + row * 128);
         Load128AsFp32(kLow, kHigh, kHat + row * 128);
 
-        RegTensor<float> posLow;
-        RegTensor<float> posHigh;
         RegTensor<float> kPosLow;
         RegTensor<float> kPosHigh;
-        Adds(posLow, gateLow, 0.0F, mask);
-        Adds(posHigh, gateHigh, 0.0F, mask);
         constexpr float lower =
             Domain::StoredBound(ExpDomain::kV6LowerBase2);
         constexpr float upper =
             Domain::StoredBound(ExpDomain::kV6UpperBase2);
-        ExpPair<CompilePolicy::useExp2>(posLow, posHigh, lower, upper);
-        Mul(qLow, qLow, posLow, mask);
-        Mul(qHigh, qHigh, posHigh, mask);
-        Mul(kPosLow, kLow, posLow, mask);
-        Mul(kPosHigh, kHigh, posHigh, mask);
+        // kg 消费 (gLast - g)：必须在 ExpPair 覆写 gate 之前成形。
+        Sub(lastLow, lastLow, gateLow, mask);
+        Sub(lastHigh, lastHigh, gateHigh, mask);
+        ExpPair<CompilePolicy::useExp2>(gateLow, gateHigh, lower, upper);
+        Mul(qLow, qLow, gateLow, mask);
+        Mul(qHigh, qHigh, gateHigh, mask);
+        Mul(kPosLow, kLow, gateLow, mask);
+        Mul(kPosHigh, kHigh, gateHigh, mask);
         Store128FromFp32(qg + row * 128, qLow, qHigh);
         // 第一次舍入先落到最终 kBetaG 物理区，第二阶段再回读 FP32。
         Store128FromFp32(kBetaG + row * 128, kPosLow, kPosHigh);
 
-        Sub(lastLow, lastLow, gateLow, mask);
-        Sub(lastHigh, lastHigh, gateHigh, mask);
         ExpPair<CompilePolicy::useExp2>(lastLow, lastHigh, lower, upper);
         Mul(kLow, kLow, lastLow, mask);
         Mul(kHigh, kHigh, lastHigh, mask);
@@ -884,7 +887,7 @@ public:
         const bool fourHeadGroupPreservesGva =
             headsPerQk != 0 && Shape::kHeadsPerGroup % headsPerQk == 0;
         const bool balanceDenseTail =
-            !args_.tiling.isVarLen && HeadPartitionCount(args_.tiling) == 1 &&
+            HeadPartitionCount(args_.tiling) == 1 &&
             fourHeadGroupPreservesGva && chunkWork >= coreCount &&
             chunkWork % coreCount != 0;
         if (!balanceDenseTail) {

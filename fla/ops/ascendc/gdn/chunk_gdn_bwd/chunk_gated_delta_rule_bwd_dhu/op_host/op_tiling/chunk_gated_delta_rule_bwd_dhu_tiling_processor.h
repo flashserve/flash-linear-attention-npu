@@ -15,6 +15,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
+#include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -25,10 +26,13 @@
 #include "tiling_base/tiling_templates_registry.h"
 
 #include "../../op_kernel/chunk_gated_delta_rule_bwd_dhu_struct.h"
+#include <string>
 
 using GDN::ChunkGatedDeltaRuleBwdDhuTilingData;
 
 namespace optiling {
+
+static constexpr const char *OP_NAME = "ChunkGatedDeltaRuleBwdDhu";
 
 static constexpr size_t DIM_NUM_1 = 1;
 static constexpr size_t DIM_NUM_3 = 3;
@@ -82,6 +86,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     bool hasGk;
     bool useExp2;
     bool stateVFirst;
+    int64_t layout;
     bool hasDh0;
     bool isArch35;
     bool stage0Debug;
@@ -90,6 +95,7 @@ struct ChunkGatedDeltaRuleBwdDhuTilingContext {
     uint64_t ubSize;
     uint32_t aicCoreNum;
     size_t sysWorkspaceSize;
+    bool isArch92 = false;
 };
 
 class ChunkGatedDeltaRuleBwdDhuTilingProcessor {
@@ -123,16 +129,19 @@ public:
     ge::graphStatus Process()
     {
         if (PreCheck() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "PreCheck", "invalid", "ChunkGatedDeltaRuleBwdDhu PreCheck failed.");
+
             return ge::GRAPH_FAILED;
         }
         if (CommonTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "CommonTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu CommonTiling failed.");
+
             return ge::GRAPH_FAILED;
         }
         if (IsVariableLength()) {
             if (VariableLenTiling() != ge::GRAPH_SUCCESS) {
-                OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "VariableLenTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.");
+
                 return ge::GRAPH_FAILED;
             }
             tiling_.isVariable = 1;
@@ -144,7 +153,8 @@ public:
             tiling_.isVariable = 0;
         }
         if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE(ctx_.nodeName, "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx_.nodeName, "WorkspaceTiling", "invalid", "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.");
+
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -155,19 +165,24 @@ private:
                                              const char *inputName)
     {
         if (curShape == nullptr) {
-            OP_LOGE(ctx_.nodeName, "Input %s is required, but got nullptr.", inputName);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, inputName, "required input must not be nullptr");
             return ge::GRAPH_FAILED;
         }
         const gert::Shape storageShape = curShape->GetStorageShape();
         size_t dimNum = storageShape.GetDimNum();
         if (dimNum != validDimNum) {
-            OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim num should be %zu, but got %zu.",
-                    inputName, validDimNum, dimNum);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                ctx_.nodeName, inputName, std::to_string(dimNum),
+                "rank must be " + std::to_string(validDimNum));
             return ge::GRAPH_FAILED;
         }
         for (size_t dimIndex = 0; dimIndex < dimNum; ++dimIndex) {
             if (storageShape.GetDim(dimIndex) == 0) {
-                OP_LOGE(ctx_.nodeName, "Check input %s shape failed, dim %zu is 0.", inputName, dimIndex);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ctx_.nodeName,
+                    (std::string(inputName) + ".dim[" + std::to_string(dimIndex) + "]").c_str(),
+                    "0", "shape dimensions must be non-zero");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -180,9 +195,10 @@ private:
         const size_t dim1 = shape1.GetDim(dimIndex);
         const size_t dim2 = shape2.GetDim(dimIndex);
         if (dim1 != dim2) {
-            OP_LOGE(ctx_.nodeName,
-                    "Compare input shape of %s and %s failed, dim %zu should be same, but got %zu and %zu.",
-                    inputName1, inputName2, dimIndex, dim1, dim2);
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, (std::string(inputName1) + "," + inputName2).c_str(),
+                std::to_string(dim1) + "," + std::to_string(dim2),
+                "dim " + std::to_string(dimIndex) + " should be same");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -222,33 +238,28 @@ private:
         return align == 0 ? bytes : bytes / align * align;
     }
 
-    uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize) const
+    uint64_t VectorTileBytes(uint64_t row, uint64_t maxDim, uint64_t qSize, uint64_t slots) const
     {
-        // 不含 state 缓冲（tile 态/驻留态由调用方 GetVecRow 按路径叠加
-        // StateTileBytes / ResidentStateBytes）；output 行数下限 16 为
-        // main 侧 cd357a66 融合接口引入的输出 buffer 约束
+        // The output slots also hold the 16-row state transpose tiles.
         const uint64_t outputRows = std::max<uint64_t>(row, 16UL);
-        uint64_t bytes = 2 * Align32(row * maxDim * qSize) +
-                         2 * Align32(outputRows * maxDim * qSize) +
+        uint64_t bytes = slots * Align32(row * maxDim * qSize) +
+                         slots * Align32(outputRows * maxDim * qSize) +
                          2 * Align32(row * maxDim * DTYPE_SIZE_FLOAT);
         if (ctx_.qDataType == ge::DT_BF16) {
-            bytes += 2 * Align32(row * static_cast<uint64_t>(tiling_.V) * qSize);
+            bytes += slots * Align32(row * static_cast<uint64_t>(tiling_.V) * qSize);
         }
         return bytes;
     }
 
-    uint64_t StateTileBytes(uint64_t row) const
+    uint64_t StateTileBytes(uint64_t row, uint64_t slots) const
     {
-        // GM 往返路径：state ping/pong 按行 tile 分配
-        return 2 * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
+        return slots * Align32(row * static_cast<uint64_t>(tiling_.V) * DTYPE_SIZE_FLOAT);
     }
 
-    uint64_t ResidentStateBytes() const
+    uint64_t ResidentStateBytes(uint64_t slots) const
     {
-        // 驻留路径：state ping/pong 按全量 [K,V] fp32 分配（每个 subblock 最多
-        // 2 个 owned head，ping/pong 复用为 owned head 槽位）
-        return 2 * Align32(static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) *
-                           DTYPE_SIZE_FLOAT);
+        return slots * Align32(static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) *
+                               DTYPE_SIZE_FLOAT);
     }
 
     int64_t GetVecRow(uint64_t qSize, bool &stateResident) const
@@ -258,28 +269,26 @@ private:
         const uint64_t gateSize = DtypeSize(ctx_.gDataType);
         const uint64_t gateFactorResidentCount = ctx_.hasG ? 3UL : 1UL;
         const uint64_t maxRows = static_cast<uint64_t>(tiling_.K);
-        const uint64_t fixedBytes =
-            2 * Align32(gateElems * gateSize) +
-            gateFactorResidentCount *
-                Align32(static_cast<uint64_t>(HEADS_PER_TASK) * gateElems * DTYPE_SIZE_FLOAT);
+        const uint64_t slots = ctx_.isArch92 ? GDN::DhuArch92::SLOT_COUNT : 2U;
+        const uint64_t gateHeads = ctx_.isArch92 ? GDN::DhuArch92::HEADS_PER_TASK : HEADS_PER_TASK;
+        const uint64_t fixedBytes = slots * Align32(gateElems * gateSize) +
+            gateFactorResidentCount * Align32(gateHeads * gateElems * DTYPE_SIZE_FLOAT);
         stateResident = false;
-        // 驻留路径仅在 arch35（A5）kernel 中实现，其他 arch 保持 GM 往返原行为；
-        // kernel FillFloatRegbase 的元素计数为 uint16，须 K*V <= 65535；
-        // stateVFirst 时 kernel 驻留 dh0 分支无转置输出，须走 GM 往返
-        const bool allowResident = ctx_.isArch35 && !ctx_.stateVFirst &&
-            static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V) <= 65535UL;
+        // FillFloatRegbase accepts a uint16 element count. V-first uses the GM state path.
+        const bool allowResident = (ctx_.isArch35 || ctx_.isArch92) && !ctx_.stateVFirst &&
+            maxRows * static_cast<uint64_t>(tiling_.V) <= 65535UL;
         if (ctx_.ubSize > UB_GUARD_BYTES) {
             if (allowResident) {
-                const uint64_t residentBytes = ResidentStateBytes();
+                const uint64_t residentBytes = ResidentStateBytes(slots);
                 uint64_t row = maxRows;
                 while (row > 8) {
-                    if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + residentBytes +
+                    if (fixedBytes + VectorTileBytes(row, maxDim, qSize, slots) + residentBytes +
                             UB_GUARD_BYTES <= ctx_.ubSize) {
                         break;
                     }
                     row /= 2;
                 }
-                if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + residentBytes +
+                if (fixedBytes + VectorTileBytes(row, maxDim, qSize, slots) + residentBytes +
                         UB_GUARD_BYTES <= ctx_.ubSize) {
                     stateResident = true;
                     return static_cast<int64_t>(row);
@@ -287,7 +296,7 @@ private:
             }
             uint64_t row = maxRows;
             while (row > 8) {
-                if (fixedBytes + VectorTileBytes(row, maxDim, qSize) + StateTileBytes(row) +
+                if (fixedBytes + VectorTileBytes(row, maxDim, qSize, slots) + StateTileBytes(row, slots) +
                         UB_GUARD_BYTES <= ctx_.ubSize) {
                     break;
                 }
@@ -332,12 +341,16 @@ private:
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG == ctx_.hasGk) {
-            OP_LOGE(ctx_.nodeName, "Exactly one of g and gk must be provided, but hasG=%d hasGk=%d.",
-                    static_cast<int>(ctx_.hasG), static_cast<int>(ctx_.hasGk));
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "g,gk",
+                std::string("hasG=") + (ctx_.hasG ? "1" : "0") + ",hasGk=" + (ctx_.hasGk ? "1" : "0"),
+                "exactly one of g and gk must be provided");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.gDataType != ge::DT_FLOAT && ctx_.gDataType != ctx_.qDataType) {
-            OP_LOGE(ctx_.nodeName, "The dtype of g or gk must be float32 or match q and k.");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                ctx_.nodeName, "g/gk", ge::TypeUtils::DataTypeToSerialString(ctx_.gDataType),
+                "the dtype of g or gk must be float32 or match q and k");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.hasG) {
@@ -356,18 +369,42 @@ private:
 
     ge::graphStatus CommonTiling()
     {
-        const gert::Shape qShape = ctx_.qShape->GetStorageShape();
-        const gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        gert::Shape qShape = ctx_.qShape->GetStorageShape();
+        gert::Shape kShape = ctx_.kShape->GetStorageShape();
+        if ((ctx_.layout == GDN::DhuLayout::BSND)) {
+            const int64_t tokens = qShape.GetDim(DIM_1);
+            qShape.SetDim(DIM_1, qShape.GetDim(DIM_2));
+            qShape.SetDim(DIM_2, tokens);
+            const int64_t kTokens = kShape.GetDim(DIM_1);
+            kShape.SetDim(DIM_1, kShape.GetDim(DIM_2));
+            kShape.SetDim(DIM_2, kTokens);
+        }
         const gert::Shape wShape = ctx_.wShape->GetStorageShape();
         gert::Shape dOShape = ctx_.dOShape->GetStorageShape();
         const gert::Shape dvShape = ctx_.dvShape->GetStorageShape();
-        doTokenMajor_ = ctx_.isArch35 && dOShape.GetDimNum() == DIM_NUM_4 &&
-                        dvShape.GetDimNum() == DIM_NUM_4 &&
-                        dOShape.GetDim(DIM_0) == dvShape.GetDim(DIM_0) &&
-                        dOShape.GetDim(DIM_1) == dvShape.GetDim(DIM_2) &&
-                        dOShape.GetDim(DIM_2) == dvShape.GetDim(DIM_1) &&
-                        dOShape.GetDim(DIM_3) == dvShape.GetDim(DIM_3) &&
-                        dvShape.GetDim(DIM_1) != dvShape.GetDim(DIM_2);
+        const bool tokenMajorLayout = dOShape.GetDimNum() == DIM_NUM_4 &&
+            dvShape.GetDimNum() == DIM_NUM_4 &&
+            dOShape.GetDim(DIM_0) == dvShape.GetDim(DIM_0) &&
+            dOShape.GetDim(DIM_1) == dvShape.GetDim(DIM_2) &&
+            dOShape.GetDim(DIM_2) == dvShape.GetDim(DIM_1) &&
+            dOShape.GetDim(DIM_3) == dvShape.GetDim(DIM_3) &&
+            dvShape.GetDim(DIM_1) != dvShape.GetDim(DIM_2);
+        if (ctx_.isArch92 && tokenMajorLayout) {
+            const std::string actualLayout =
+                "dO=[" + std::to_string(dOShape.GetDim(DIM_0)) + "," +
+                std::to_string(dOShape.GetDim(DIM_1)) + "," +
+                std::to_string(dOShape.GetDim(DIM_2)) + "," +
+                std::to_string(dOShape.GetDim(DIM_3)) + "],dv=[" +
+                std::to_string(dvShape.GetDim(DIM_0)) + "," +
+                std::to_string(dvShape.GetDim(DIM_1)) + "," +
+                std::to_string(dvShape.GetDim(DIM_2)) + "," +
+                std::to_string(dvShape.GetDim(DIM_3)) + "]";
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                ctx_.nodeName, "dO,dv", actualLayout.c_str(),
+                "Ascend960DT requires matching non-token-major [B,HV,T,V] layouts");
+            return ge::GRAPH_FAILED;
+        }
+        doTokenMajor_ = ctx_.isArch35 && tokenMajorLayout;
         if (doTokenMajor_) {
             dOShape = dvShape;
         }
@@ -381,6 +418,7 @@ private:
             return ge::GRAPH_FAILED;
         }
 
+        tiling_.layout = ctx_.layout;
         tiling_.B = static_cast<int64_t>(qShape.GetDim(DIM_0));
         tiling_.HK = static_cast<int64_t>(qShape.GetDim(DIM_1));
         tiling_.T = static_cast<int64_t>(qShape.GetDim(DIM_2));
@@ -390,7 +428,10 @@ private:
         tiling_.scale = static_cast<float>(ctx_.scale);
         if (doTokenMajor_ && tiling_.V > 0 &&
             tiling_.HV > std::numeric_limits<uint32_t>::max() / tiling_.V) {
-            OP_LOGE(ctx_.nodeName, "invalid d_o: token-major row stride exceeds uint32_t; HV*V must fit");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "HV,V",
+                std::to_string(tiling_.HV) + "," + std::to_string(tiling_.V),
+                "token-major row stride must fit in uint32_t (HV*V)");
             return ge::GRAPH_FAILED;
         }
 
@@ -442,13 +483,21 @@ private:
         tiling_.hasDh0 = ctx_.hasDh0 ? 1 : 0;
         tiling_.hasGk = ctx_.hasGk ? 1 : 0;
         if (ctx_.hasGk && !ctx_.useExp2) {
-            OP_LOGE(ctx_.nodeName, "use_exp2 must be true when gk is provided.");
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                ctx_.nodeName, "gk,useExp2", "gk present, useExp2=false",
+                "use_exp2 must be true when gk is provided");
             return ge::GRAPH_FAILED;
         }
         tiling_.useExp2 = ctx_.useExp2 ? 1 : 0;
         tiling_.stateVFirst = ctx_.stateVFirst ? 1 : 0;
 
         if (tiling_.K != K_SIZE_128) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx_.isArch92 && tiling_.V != GDN::DhuArch92::VALUE_DIM) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "V", std::to_string(tiling_.V),
+                "128 on Ascend960DT (DAV_9201)");
             return ge::GRAPH_FAILED;
         }
         if (tiling_.V != V_SIZE_128 && tiling_.V != V_SIZE_256) {
@@ -501,13 +550,14 @@ private:
     ge::graphStatus WorkspaceTiling()
     {
         const uint32_t maxBlockDim = ctx_.aicCoreNum == 0 ? 1U : ctx_.aicCoreNum;
-        const int64_t maxHeads = std::min<int64_t>(HEADS_PER_TASK, tiling_.HV);
+        const int64_t maxHeadsPerTask = ctx_.isArch92 ? GDN::DhuArch92::HEADS_PER_TASK : HEADS_PER_TASK;
+        const int64_t maxHeads = std::min(maxHeadsPerTask, tiling_.HV);
         int64_t bestHeads = maxHeads;
         int64_t bestCost = std::numeric_limits<int64_t>::max();
         for (int64_t heads = 1; heads <= maxHeads; ++heads) {
             const int64_t taskNum = tiling_.seqNum * CeilDiv(tiling_.HV, heads);
             const int64_t rounds = CeilDiv(taskNum, std::min<int64_t>(maxBlockDim, taskNum));
-            const int64_t aivChains = (heads + 1) / 2;
+            const int64_t aivChains = ctx_.isArch92 ? heads : (heads + 1) / 2;
             const int64_t cost = rounds * (std::max(20 * heads, 32 * aivChains) + 5);
             if (cost <= bestCost) {
                 bestCost = cost;
@@ -524,7 +574,7 @@ private:
         tiling_.dh0ClearCoreNum = 0;
         tiling_.dh0ClearElemsPerCore = 0;
         tiling_.dh0ClearTailElems = 0;
-        if (ctx_.hasDh0) {
+        if (ctx_.hasDh0 && !ctx_.isArch92) {
             const uint64_t dh0Elems =
                 static_cast<uint64_t>(tiling_.seqNum) * static_cast<uint64_t>(tiling_.HV) *
                 static_cast<uint64_t>(tiling_.K) * static_cast<uint64_t>(tiling_.V);

@@ -7,6 +7,7 @@
 |产品      | 是否支持 |
 |:----------------------------|:-----------:|
 |<term>Ascend 950PR/Ascend 950DT</term>|      √     |
+|<term>Ascend 960DT（`ascend960dt`）</term>|      √     |
 |<term>Atlas A3 训练系列产品/Atlas A3 推理系列产品</term>|      √     |
 |<term>Atlas A2 训练系列产品/Atlas A2 推理系列产品</term>|      √     |
 |<term>Atlas 200I/500 A2 推理产品</term>|      ×     |
@@ -174,12 +175,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRule(
     <tr>
       <td>gk</td>
       <td>输入</td>
-      <td>衰减系数，公式中的αk=e^gk</td>
-      <td><ul><li>不支持空Tensor。</li><li>如果传入nullptr，则表示全0的tensor。</li></td>
-      <td>FLOAT32</td>
-      <td>ND</td>
-      <td>(T, Nv, Dk)</td>
-      <td>√</td>
+      <td>ABI 保留参数。</td>
+      <td>必须传入 nullptr，非空值返回参数错误。</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+      <td>×</td>
     </tr>
     <tr>
       <td>numAcceptedTokens</td>

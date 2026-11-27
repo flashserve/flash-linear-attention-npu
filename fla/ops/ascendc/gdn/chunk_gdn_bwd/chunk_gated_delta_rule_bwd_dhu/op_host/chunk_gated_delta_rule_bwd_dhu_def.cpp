@@ -122,6 +122,7 @@ public:
         this->Attr("chunk_size").AttrType(OPTIONAL).Int(64);
         this->Attr("use_exp2").AttrType(OPTIONAL).Bool(false);
         this->Attr("state_v_first").AttrType(OPTIONAL).Bool(false);
+        this->Attr("layout").AttrType(OPTIONAL).String("BNSD");
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)
@@ -137,6 +138,7 @@ public:
         this->AICore().AddConfig("ascend910b", aicoreConfig);
         this->AICore().AddConfig("ascend910_93", aicoreConfig);
         this->AICore().AddConfig("ascend950", aicoreConfig);
+        this->AICore().AddConfig("ascend960dt", aicoreConfig);
     }
 };
 

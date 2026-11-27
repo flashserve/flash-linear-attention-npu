@@ -17,9 +17,15 @@
 
 ## 合入检视
 
-PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能力处理，不再设置自定义检视 status。仓库管理员应在分支保护中配置 required approvals 为 `2`，并保留 stale review dismiss 和 last push approval。
+PR 合入前仍需要 2 个 approval。该要求由 GitHub 分支保护原生能力处理，不再设置自定义检视 status。
 
-`.github/CODEOWNERS` 用于 GitHub 原生 Code Owners review。全仓默认请求维护账号检视，ABI 敏感路径会在 `CODEOWNERS` 末尾覆盖为仅 `@weinachuan`。
+仓库级 branch ruleset `Code Owners review` 以 `~ALL` 为目标，自动覆盖既有分支和后续新建分支，并启用 required Code Owners review。`.github/CODEOWNERS` 的全仓 Code Owner 池固定为 `@weinachuan`、`@weiwei-612`、`@chen-linxin`、`@Ensley0304`、`@zhangshuolei-hfut`；ABI 敏感路径会在 `CODEOWNERS` 末尾覆盖为仅 `@weinachuan`。从已更新分支新建的分支会继承该配置。
+
+required Code Owners review 保证每个 PR 至少获得一名 Code Owner approval。`Code Owner Approval / 2 designated reviewers` status check 进一步要求两名不同指定 Code Owner 在当前 PR 上保持有效 approval；其他账号的 approval 保留在 PR 中但不计入这两名，因此一个指定 Code Owner 加一个名单外 approval 不能通过门禁。
+
+该检查始终读取 PR 当前目标分支中的 `CODEOWNERS`，不使用可能过期的 `base.sha`。当 `CODEOWNERS`、检查脚本或 workflow 合入默认分支时，workflow 会自动重新计算所有面向默认分支的 open PR，因此已有 PR 无需等待新的 review 或 push 事件即可应用最新名单和检查逻辑。
+
+`pull_request_review` 在 fork PR 上使用只读权限上下文，不能直接写审批状态。review 事件先由无写权限的 `codeowner-review-trigger.yml` 记录 PR 编号，再由默认分支上的受信任 `workflow_run` 读取该编号并写回状态。
 
 ## ABI 兼容性
 
@@ -52,13 +58,15 @@ NPU 资源有限，`NPU CI` 不会由 PR 新建、重开或 push 新 commit 自�
 
 A5 job 使用 `self-hosted,linux,npu,ascend950,flash-linear-attention-npu-a5` 标签，不限制 CPU 架构，可由 x64 或 ARM64 原生 A5 runner 承接。一次触发仍只有 A2、A5 两个设备 job；A5 只选择一台匹配 runner，不增加第三项架构门禁。每台 A5 需预置 `fla-npu-ci:9.1.0-950` 的本机原生架构镜像，并使用配套 CANN 9.1.0、Python 3.12、PyTorch/torch_npu 2.12.0；不得用 QEMU 或跨架构镜像替代原生 NPU 验证。
 
+A2/A5 共用 Git 源码获取流程：首次 checkout 直连，失败后启用主机 `CI_PROXY_SCRIPT` 的 `proxyon` 并重试；fetch 目标分支和 PR head、补充浅克隆历史也有有限超时及代理重试。源码现场合并后、启动容器前，设备只读取本地 Git，核对 prepare 固定的 base/head SHA、已获取的分支 ref 及两个 commit 的合并祖先关系，不调用 GitHub API。运行中的远程 head 监控通过 Git ref 尽力查询，连接失败只告警并继续。PR 是否仍 open、非草稿、未合并及目标分支是否变化，由 GitHub-hosted prepare/finalize 检查；本地 Git 无法证明这些实时元数据，finalize 无法确认时不发布成功。
+
 PR 合入前，当前 head commit 的 6 个 NPU 状态和自动执行的 `CI 契约测试` 必须全部成功；当 PR 更新 commit 后，旧 commit 上的 CI 成功状态自动失效，需要 CI 触发名单中的账号重新触发 NPU CI。
 
 新版 CI 在复用成功结果或等待已有任务前，还会读取该任务的运行信息，确认目标分支及 base commit 与本次请求一致；无法确认时启动新验证。最终发布结果前再次检查 PR 状态和 head/base，运行期间目标分支切换或 base commit 更新会使本次结果失效。
 
 默认分支的 [`.github/npu-ci-users.json`](../.github/npu-ci-users.json) 独立维护可触发用户名；仓库读写权限不直接赋予触发权。默认评论分发和新版手动执行均校验初次触发人的名单，PR 自身修改名单不会授予权限。
 
-Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍检查原 PR 状态和固定版本；旧 workflow 的重跑行为保持原样。
+Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状态及固定 head/base/workflow 版本。目标 workflow 支持完整四个 `expected_*` 输入时，评论触发自动携带快照，版本未变化时可使用 `Re-run all jobs`。新版 Actions 手动首次默认不填快照；此类运行重新执行 prepare（`Re-run all jobs` 或 prepare 失败后重跑）会被拒绝，应新建 `Run workflow`，避免取到新的 head。`Re-run failed jobs` 若复用已成功的 prepare，则可正常重试，设备仍离线检查原固定源码版本，finalize 再检查当前 PR 状态；旧 workflow 的重跑行为保持原样。
 
 默认评论入口和新版 CI 会检查非 Markdown 的 `ci/` 或 `.github/` 变更：只有 PR 创建者（`pr.user.login`）具有该仓库 Admin 权限才允许执行，否则门禁直接失败。PR 作者无需位于 CI 触发名单，初次触发人仍须在名单中：名单内只读用户在新版 CI 中可以触发 Admin 作者的 PR，名单内 Admin 不能替非 Admin 作者放行 CI 修改。文件检测读取完整列表并检查重命名两侧；列表不完整、作者权限读取失败均拒绝。纯 CI 文件变更检测本身不新增编译规则。
 
@@ -68,8 +76,10 @@ Actions 重跑权限由 GitHub 平台控制。新版 CI 重跑仍检查 PR 状�
 
 | 触发入口 | 所需权限 |
 | --- | --- |
-| PR 评论 `/run-npu-ci` | 默认分支 CI 名单；不要求仓库 write 权限 |
-| 新版 CI 的 Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备仓库 write 权限 |
+| PR 评论 `/run-npu-ci`、`/package` | 默认分支 `.github/npu-ci-users.json` 名单；不要求仓库 write/Admin 权限 |
+| 新版 NPU CI / Package Build 的 Actions 页面、CLI 或 REST 手动分发 | 默认分支 CI 名单，并具备 GitHub 平台要求的仓库 write 权限 |
+
+`/package` 与 `/run-npu-ci` 共用名单校验，名单始终从默认分支读取，PR 或出包分支中的名单不能自行授权。Package 执行门禁同时校验原评论请求人；手动分发只校验实际触发者，不接受冒用 `requested_by`。两个入口均保留独立的 CI 修改作者规则：涉及 `ci/` 或 `.github/` 非 Markdown 修改时，PR 作者必须是仓库 Admin，触发人仍只需在名单中。
 
 GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)；REST 的 fine-grained token 还须具有 `Actions: write`，classic PAT 或 OAuth token 须具有 `repo` scope，见[分发 API 权限要求](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)。涉及 CI 文件修改时，默认评论入口和新版 workflow 均要求 PR 作者具有仓库 Admin 权限。
 
@@ -80,8 +90,18 @@ GitHub 要求[手动运行 workflow 的用户具有仓库 write 权限](https://
 /run-npu-ci
 /run-npu-ci quick
 /run-npu-ci full
+/run-npu-ci quick debug
 /run-npu-ci quick ops=causal_conv1d,chunk_bwd_dv_local
+/run-npu-ci quick debug ops=causal_conv1d,chunk_bwd_dv_local
 ```
+
+`debug` 是可选的日志调试参数，不改变 `quick/full` 或算子选择；省略模式时仍为 `quick`。
+不设置时保持原有日志输出与保留方式。设置后仅在清理前将本次已有的原始 CI 日志
+和 `dist/fla-npu-build.log` 保存为独立 artifact，保留 7 天；控制台输出和构建参数不变。
+Actions 手动触发入口提供同名布尔输入，默认关闭。旧目标分支尚未声明该输入时，
+显式 `debug` 请求会提示不支持，不会静默丢弃参数。
+调试请求不复用已完成的成功结果，以便生成本次日志；已有同模式、同算子范围的调试运行
+处于排队或执行中时仍避免重复启动。
 
 默认评论入口和新版 CI 仅接受 open、未合并且非草稿的 PR，目标分支必须受 GitHub 分支保护。`NPU CI` 的 workflow 文件位于该目标分支的 `.github/workflows/ci.yml`。默认分支上的 `NPU CI 评论分发` workflow 校验请求人后，通过 `workflow_dispatch.ref` 启动 PR 当前目标分支（`pr.base.ref`）上的 `ci.yml`，不支持 `ci_ref` 或 `branch` 覆盖。新版 CI 的 Actions 页面、CLI 和 REST 手动分发也必须选择 PR 当前目标分支。
 

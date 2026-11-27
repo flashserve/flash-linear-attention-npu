@@ -129,8 +129,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd -npu_device_id=0 -
 
 历史测试文件名保留，当前内容验证 Stable 参数转发和实际输出契约；ACLNN 原型由 `aclnn_abi_contract.py` 与共享 ABI 检查器验证。
 
-前向新增 q_hat、k_hat、q_rstd、k_rstd，追加在原六项之后。
-关闭核内 L2Norm 时 hats 为输入对象别名，rstd 为 None；开启时 rstd 固定为 FP32 `[B,Hk,T]`。
+前向十元组的后四项是 q_hat、k_hat、q_rstd、k_rstd。`disable_recompute=false` 时 g_cumsum、A、q_hat、k_hat 和两个 rstd 为 None。`true` 且核内做了 L2 时后四项是新张量，rstd 为 FP32 `[B,Hk,T]`；`chunkSize=64/128` 关闭核内 L2 时 q_hat、k_hat 是输入别名，rstd 为 None。本目录的 64/128 套只比较 o、final_state、g_cumsum 和 A，因此调用时保持 `disable_recompute=true`。chunkSize=32 的导出见 `chunk32/README.md`。
 
 安装包含本次修改的完整 wheel 后运行：
 

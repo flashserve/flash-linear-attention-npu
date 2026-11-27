@@ -1,4 +1,4 @@
-# RecurrentGatedDeltaRule A2/A3 统一实现
+# RecurrentGatedDeltaRule 统一实现
 
 方案设计规则版本：V2
 
@@ -6,11 +6,23 @@
 
 接口契约见 [api.md](api.md)。将既有融合实现迁入 arch22，移除历史 A2/A3 kernel，
 保留两个 host ABI。该迁移不改变融合实现的计算、任务划分、地址规划和同步协议。
-`useV2` 仅区别 host 参数契约，不再选择 A2/A3 实现；A5 继续使用 arch35。
-CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；固定原输入值域及混合容差。
+host 统一按融合契约校验 dtype 与属性，不再设置版本选择字段或隐藏属性。A2/A3 与 A5
+分别编译 arch22 和 arch35，各架构内部的两个 host ABI 进入同一实现。
+CPU 标杆独立实现递推及开关预处理，比较 out 和完整 State；保持原输入值域及 ATK 原生双标杆标准。
 性能采用 msprof `Task Duration(us)`，本次没有额外性能提升目标。
 
-## 2. Stage 0–N 完整详设
+## 2. A2/A3 Stage 0–N 完整详设
+
+### TilingKey 模板与跨架构契约
+
+A2/A3 与 A5 共享模板参数顺序：State、g、beta 的 dtype，随后为 Q/K L2 norm、
+kernel gate、beta sigmoid、negative eigenvalue 四个布尔参数。host 仅通过
+`GET_TPL_TILING_KEY` 选择实例；beta sigmoid 关闭时将 negative eigenvalue 规范化为 false。
+因此 128 个注册模板中有 96 个可达 key，另外 32 个组合不由 host 选择。
+A2/A3 将四个布尔参数传入 arch22 模板，在 Stage 0 使用 `if constexpr` 选择归一化、
+门控和 beta 预处理。数学公式、dtype 舍入、UB 布局、任务划分和全部同步保持当前设计。
+旧 fast-launch 的三个 dtype 参数调用使用全 false 的默认属性，保持原有非融合语义。
+每个可达 key 的输入、SDK 生成的数值 key 和实际 host 选择由专用 ATK 用例建立映射。
 
 令 B 为请求数，T 为总 token 数，HK/HV 为 QK/value head 数，K=V=128。
 任务域为 `[0,B*HV)`：`batch=task/HV`，`hv=task%HV`，`hk=hv/(HV/HK)`。
@@ -23,7 +35,8 @@ host 按可用 AIV 数限制 blockDim，任务按连续区间均匀分配。
 每次窗口最多 8 token。Q/K/V 按各自 stride 搬入双 raw bank，转为 FP32。
 Q/K 可选归一化并对 Q 乘 scale。beta 与 g 按窗口收集、转换，完成可选 sigmoid/
 softplus 门控；使用非正指数实现稳定 sigmoid，softplus 修正小尾部舍入损失。
-g=None 时不读取 gate。空序列不进入计算及窗口同步。
+g=None 时直接依据输入地址跳过 gate 读取，不在 tiling 中另存存在性标志。
+空序列不进入计算及窗口同步。
 
 ### Stage 1：Vector，逐 token 递推与写回
 
@@ -52,6 +65,52 @@ V 内读写复用使用 PIPE_V barrier；跨 pipe 依赖由硬事件表达。
 
 ### 验证范围
 
-200 条合法精度用例，覆盖 8 个模板 dtype 组合、12 个合法开关组合、变长/零长度序列、
-accepted token、State padding/offset/转置、QKV 行 padding、窗口 8/9/16/17 边界。
-确定性和内存各使用 50 条代表用例；额外验证 gk 拒绝与两个 host ABI 的有效控制。
+本次 A2/A3 使用 513 条合法用例，覆盖四个布尔属性、三类可变 dtype、变长/零长度序列、
+accepted token、State padding/offset/转置、QKV view，以及窗口和长序列边界。
+另用 96 条专用用例逐个覆盖 host 可达 TilingKey；每条沿用原矩阵的输入规格与 seed，
+key 数值由 CANN SDK 生成，并通过实际 host 日志核对，不能仅凭属性组合推断覆盖。
+精度使用 `cv_fused_double_benchmark` 比较 NPU DUT、FP32 bench 和 FP64 golden，
+阈值和输入值域保持不变；执行数、精度结果及失败复检记录见当前 ATK README。
+
+## 3. A5 arch35 流水
+
+A5 任务域同样为 `[0,B*HV)`，每个 work 只处理一个 batch 的一个 value head。
+每 tile 为 4 token，Q/K/V、beta 和可选 g 使用双输入 buffer；递推 State 使用三个
+FP32 bank 轮换。MTE2 预取下一 tile 或下一 task 的初始 State，Vector 顺序推进 token，
+MTE3 写回已完成 token 的 out 和 checkpoint。State 为 BF16 时额外使用一份 State IO
+buffer，BF16 舍入不反馈到后续 token。
+
+A5 使用静态 UB Tensor，显式 mutex 管理 MTE2/Vector/MTE3 所有权，不依赖
+`--cce-auto-sync=on`。VF 按 tiling dtype 与融合属性模板化，单次调用完成 gate/beta
+处理、两行 State 并行更新、output dot-product 和 State 写回。rank-1/rank-2 State
+索引、accepted token、Q/K/V stride 和 State stride 均直接由统一 tiling 数据驱动。
+
+A5 回归使用 223 条 ATK 矩阵，并使用 issue 679 的 36 个模型 shape 检查性能；最终
+验收数据必须来自合并后的统一算子，不能沿用 standalone V2 的历史记录。
+
+## 4. A6 arch92 流水
+
+A6（`ascend960dt`，`__NPU_ARCH__ == 9201`）复用 A5 的任务域与 tile 划分：任务域
+`[0,B*HV)`，每 tile 4 token，Q/K/V 双输入 buffer，递推 State 使用三个 FP32 bank 轮换。
+与 A5 的差异在于：
+
+- 不使用 `TPipe`，UB 由 `InitBuffers` 以静态偏移一次性划分（`TPosition::VECCALC` 上的
+  `LocalTensor`），host 侧 `CalUbSize` 按同一布局核算预算。
+- 除 A5 的 State bank 与输入 buffer 外，额外占用一块 BF16 State 转换缓冲（`stateIo_`，
+  State 为 BF16 时启用）以及跨步搬运暂存（`stridedStaging_` / `stridedOffsets_`）。
+- 四个融合开关不作为模板参数，`RGDRV2` 在构造时从 tiling 数据读取
+  `useQkL2NormInKernel` / `useGateInKernel` / `useBetaSigmoidInKernel` / `allowNegEigval`，
+  再按运行时分支分派 VF；因此 TilingKey 只编入三个 dtype 维度。
+- 跨 MTE2/Vector/MTE3 的依赖由显式 mutex 管理，不依赖 `--cce-auto-sync=on`。
+
+A6 回归使用 `tests/atk/recurrent_gated_delta_rule/atk_recurrent_gated_delta_rule_a6.json`
+中的 23 条 V2 专项用例（`RGDR-V001`~`RGDR-V023`），由
+`gen_recurrent_gated_delta_rule.py --a6` 生成。该矩阵的 `soc` 属性为 `ascend960dt`，
+已列入 `recurrent_gated_delta_rule.yaml` 的合法取值。
+
+执行前需确认 Python 侧入口能力，当前稳定入口
+`fla_npu.ops.ascendc.recurrent_gated_delta_rule` 只暴露 V1 主机 ABI：
+它不接受 `A_log` / `dt_bias` 与四个融合开关参数，也要求 `g` 或 `gk` 至少提供一个，
+且 dtype 白名单为 beta=BF16、g=FP32。因此矩阵中依赖这些能力的用例必须先打通
+`aclnnRecurrentGatedDeltaRuleV2` 的 Python 绑定，否则会在进入算子前失败，
+不能计入 A6 验收结果。kernel 侧（arch92）本身已支持无 gate 与全部 8 组 dtype 组合。

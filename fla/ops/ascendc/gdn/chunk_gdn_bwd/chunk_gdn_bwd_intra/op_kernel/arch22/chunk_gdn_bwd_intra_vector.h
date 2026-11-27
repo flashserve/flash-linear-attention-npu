@@ -4,6 +4,8 @@
  */
 #ifndef CHUNK_GDN_BWD_INTRA_ARCH22_VECTOR_H
 #define CHUNK_GDN_BWD_INTRA_ARCH22_VECTOR_H
+
+#include "../chunk_gdn_bwd_intra_struct.h"
 #include "chunk_gdn_bwd_intra_common.h"
 #include <type_traits>
 
@@ -51,7 +53,8 @@ public:
                 Convert(beta, rawBeta, CHUNK_TOKENS);
                 AscendC::PipeBarrier<PIPE_V>();
                 ScaleInputs(m, hv, part, Record(core, t_->cg, r), gate, beta);
-                const int64_t leader = ChunkGdnBwdIntraLeaderR<G>(m.hvBegin, r);
+                const int64_t leader = ChunkGdnBwdIntraLeaderR<G>(
+                    m.hvBegin, r, t_->groupSize);
                 if (!scoreSeen[leader]) {
                     Wait(static_cast<uint16_t>(leader));
                     scoreSeen[leader] = true;
@@ -72,17 +75,40 @@ private:
         int64_t hv, int64_t part, bool loadK)
     {
         const uint32_t begin = part * VECTOR_PART_TOKENS;
-        const uint32_t rows = m.validTokens > begin ? m.validTokens - begin : 0;
-        const uint32_t count = (rows < VECTOR_PART_TOKENS ? rows : VECTOR_PART_TOKENS) * HEAD_DIM;
+        const uint32_t remaining = m.validTokens > begin ? m.validTokens - begin : 0;
+        const uint32_t rows = remaining < VECTOR_PART_TOKENS ? remaining : VECTOR_PART_TOKENS;
+        const uint32_t count = rows * HEAD_DIM;
         if (count == 0) return;
-        const uint64_t vv = ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv)
-            * t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
+        const uint64_t vv = (t_->layout == GDN::IntraLayout::BSND)
+            ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
+               t_->valueHeads + hv) * HEAD_DIM
+            : ((static_cast<uint64_t>(m.batch) * t_->valueHeads + hv) *
+               t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
         if (loadK) {
-            const uint64_t kk = ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / G)
-                * t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
-            AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
+            const uint64_t kk = (t_->layout == GDN::IntraLayout::BSND)
+                ? ((static_cast<uint64_t>(m.batch) * t_->seqlen + m.tokenStart + begin) *
+                   t_->qkHeads + hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize)) * HEAD_DIM
+                : ((static_cast<uint64_t>(m.batch) * t_->qkHeads + hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize)) *
+                   t_->seqlen + m.tokenStart + begin) * HEAD_DIM;
+            if (!(t_->layout == GDN::IntraLayout::BSND)) {
+                AscendC::DataCopy(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], count);
+            } else {
+                AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),
+                    static_cast<uint32_t>(HEAD_DIM * sizeof(MainT)),
+                    static_cast<uint32_t>((t_->qkHeads - 1) * HEAD_DIM * sizeof(MainT)), 0, 0};
+                AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+                AscendC::DataCopyPad(Slice<MainT>(UB_K_RAW_OFFSET), k_[kk], cp, pad);
+            }
         }
-        AscendC::DataCopy(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], count);
+        if (!(t_->layout == GDN::IntraLayout::BSND)) {
+            AscendC::DataCopy(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], count);
+        } else {
+            AscendC::DataCopyExtParams cp{static_cast<uint16_t>(rows),
+                static_cast<uint32_t>(HEAD_DIM * sizeof(MainT)),
+                static_cast<uint32_t>((t_->valueHeads - 1) * HEAD_DIM * sizeof(MainT)), 0, 0};
+            AscendC::DataCopyPadExtParams<MainT> pad{false, 0, 0, 0};
+            AscendC::DataCopyPad(Slice<MainT>(UB_V_RAW_OFFSET), v_[vv], cp, pad);
+        }
     }
 
     template <typename T>
@@ -143,7 +169,9 @@ private:
             AscendC::Cast(vf, vi, AscendC::RoundMode::CAST_NONE, validRows * HEAD_DIM);
             Fence<AscendC::HardEvent::V_MTE2>();
             if (hv + 1 < m.hvBegin + m.validHeads) {
-                const bool nextHk = (hv + 1) / G != hv / G;
+                const bool nextHk =
+                    (hv + 1) / ChunkGdnBwdIntraGroup<G>(t_->groupSize) !=
+                    hv / ChunkGdnBwdIntraGroup<G>(t_->groupSize);
                 PrefetchRaw(m, hv + 1, part, nextHk);
             }
             Exponent(coeff, gate, CHUNK_TOKENS);

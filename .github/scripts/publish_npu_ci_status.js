@@ -21,7 +21,6 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
   const commentId = process.env.NPU_COMMENT_ID || '';
   const sha = process.env.NPU_EXPECTED_HEAD_SHA;
   const expectedBaseRef = process.env.NPU_EXPECTED_BASE_REF || '';
-  const expectedBaseSha = process.env.NPU_EXPECTED_BASE_SHA || '';
   const expectedRunId = process.env.NPU_EXPECTED_RUN_ID;
   const expectedRunAttempt = process.env.NPU_EXPECTED_RUN_ATTEMPT;
   const matrixResult = process.env.NPU_MATRIX_RESULT || 'failure';
@@ -793,8 +792,8 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       repo: context.repo.repo,
       pull_number: Number(prNumber),
     });
-    if (!expectedBaseRef || !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
-      invalidReason = '缺少或无效的固定 PR base 信息，本次 A2+A5 结果失效';
+    if (!expectedBaseRef) {
+      invalidReason = '缺少 PR 目标分支信息，本次 A2+A5 结果失效';
     } else if (currentPr.state !== 'open' || currentPr.merged || currentPr.merged_at) {
       invalidReason = 'PR 已关闭或合入，本次 A2+A5 结果失效';
     } else if (currentPr.draft) {
@@ -803,8 +802,6 @@ module.exports = async function publishNpuCiStatus({ github, context, core }) {
       invalidReason = 'PR head 已变化，本次 A2+A5 结果失效';
     } else if (currentPr.base?.ref !== expectedBaseRef) {
       invalidReason = 'PR 目标分支已变化，本次 A2+A5 结果失效';
-    } else if (currentPr.base?.sha !== expectedBaseSha) {
-      invalidReason = 'PR base commit 已变化，本次 A2+A5 结果失效';
     }
   } catch (error) {
     invalidReason = '无法确认 PR 状态或 head/base，本次 A2+A5 结果失效';

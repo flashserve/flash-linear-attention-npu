@@ -36,6 +36,18 @@ attn_out = cast_bf16(fp32(qg_scaled @ h) + fp32(Aqk @ v_new))
 `qg_scaled` 也已缩放，因此 Finalize 不再乘 `scale`。尾 chunk 只消费有效
 token 行和有效 key 列。
 
+## 支持范围
+
+| 产品 | `--soc` | 平台档位 | AIV 搬运模板 |
+| --- | --- | --- | --- |
+| A2 | `ascend910b` | Arch22（DAV_2201） | AIC-only |
+| A3 | `ascend910_93` | Arch22（DAV_2201） | AIC-only |
+| A5 | `ascend950` | Arch35（DAV_3510） | AIC-only / MIX AIC 1:2 |
+| A6 | `ascend960dt` | Arch92（DAV_9201，`__NPU_ARCH__=9201`） | AIC-only / MIX AIC 1:1 |
+
+数据类型固定 BF16，`K=V=128`，`chunk_size=64`；不支持的 SoC 在 tiling 阶段
+直接返回失败，不会退化成其他平台档位。
+
 ## 输入输出
 
 输入 tensor 必须使用非私有 ND descriptor，非连续视图由 L2 连续化；
@@ -69,8 +81,9 @@ chunk 数之和。`Aqk` 最后一维始终是 64，包括尾 chunk。
 
 ## 调用边界
 
-独立算子支持 A2 (`ascend910b`)、A3 (`ascend910_93`) 和 A5
-(`ascend950`)。算子定义和 aclnn 接口属于本目录；公共 Python 入口
+独立算子支持 A2 (`ascend910b`)、A3 (`ascend910_93`)、A5
+(`ascend950`) 和 A6 (`ascend960dt`)，详细档位见[支持范围](#支持范围)。算子定义和
+aclnn 接口属于本目录；公共 Python 入口
 `fla_npu.ops.ascendc.chunk_kda_fwd_finalize` 由 Stable-ABI 适配层提供，
 适配代码在 `torch_custom/fla_npu/csrc/src/stable_chunk_kda_fwd_finalize.cpp`，
 Python wrapper 在 `torch_custom/fla_npu/fla_npu/ops/ascendc/_stable.py`，

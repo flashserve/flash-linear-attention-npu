@@ -12,6 +12,7 @@
 #include "stable/layout_math.h"
 
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <stdexcept>
 #include <tuple>
@@ -182,8 +183,16 @@ run_npu_chunk_kda_fwd(
       (chunk_size == 32 || cu_strictly_increasing);
   const int64_t work_items =
       heads * layout_math::chunks(cu, ci, chunk_size, tokens);
+  // A6（Ascend960DT / DAV_9201）没有融合单 kernel（aclnnChunkKdaFwd 未注册），
+  // 只有三算子组合（V2）可用。work_items 门控只是 A2/A3/A5 上 V2 与 V1 融合
+  // 的性能取舍；A6 无 V1 可退，故绕过工作量门槛，v2_scenario 即走 V2。
+  using SocNameFn = const char* (*)();
+  const auto soc_name = reinterpret_cast<SocNameFn>(
+      fla_npu_stable::Runtime::instance().symbol("aclrtGetSocName"));
+  const char* soc = soc_name ? soc_name() : nullptr;
+  const bool arch960 = soc && std::strstr(soc, "Ascend960");
   const bool use_v2 = v2_scenario &&
-                      (switches_requested ||
+                      (switches_requested || arch960 ||
                        work_items >= kChunkKdaFwdV2MinWorkItems);
 
   if (chunk_size == 32 && wants_saved) {

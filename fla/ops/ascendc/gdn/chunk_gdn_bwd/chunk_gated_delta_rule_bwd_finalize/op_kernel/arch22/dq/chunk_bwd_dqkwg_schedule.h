@@ -12,7 +12,7 @@
 #include <cstdint>
 
 // 原合法、已分配输入域内的整数调度资格；不扩展旧地址或 metadata 支持范围。
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
 __aicore__
 #endif
 inline constexpr bool DqkwgUseU32Schedule(

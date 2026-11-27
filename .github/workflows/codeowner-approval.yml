@@ -1,0 +1,86 @@
+name: Code Owner Approval
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/CODEOWNERS
+      - .github/scripts/codeowner_approval_gate.js
+      - .github/workflows/codeowner-approval.yml
+      - .github/workflows/codeowner-review-trigger.yml
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - edited
+  workflow_run:
+    workflows:
+      - Code Owner Approval Review Trigger
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: codeowner-approval-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: Code Owner Approval
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'pull_request_review' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出受信任的目标分支检查脚本
+        uses: actions/checkout@v6
+        with:
+          # pull_request_target uses the PR target branch; push/workflow_run use
+          # the current trusted branch. Never execute the PR merge tree.
+          ref: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          sparse-checkout: |
+            .github/scripts/codeowner_approval_gate.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: 下载受信任的 review 触发信息
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: codeowner-review-pr
+          path: .codeowner-trigger
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: 计算指定 Code Owner approval
+        uses: actions/github-script@v8
+        env:
+          CODEOWNER_APPROVAL_SCRIPT: ${{ github.workspace }}/.github/scripts/codeowner_approval_gate.js
+          CODEOWNER_TRIGGER_PATH: ${{ github.workspace }}/.codeowner-trigger/pr-number.txt
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const gate = require(process.env.CODEOWNER_APPROVAL_SCRIPT);
+            try {
+              let pullNumber;
+              if (context.eventName === 'workflow_run') {
+                pullNumber = gate.parsePullNumber(
+                  fs.readFileSync(process.env.CODEOWNER_TRIGGER_PATH, 'utf8'),
+                );
+              }
+              await gate.run({ github, context, core, pullNumber });
+            } catch (error) {
+              core.setFailed(error.message);
+            }

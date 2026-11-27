@@ -24,9 +24,10 @@ class CiAuthorizationTest(unittest.TestCase):
     def run_entry(self, entry="helper", **options):
         scripts = {
             "dispatch": workflow_script("npu-ci-comment-dispatch.yml", "dispatch"),
+            "package-dispatch": workflow_script("npu-ci-comment-dispatch.yml", "dispatch-package"),
+            "package-guard": workflow_script("package.yml", "guard"),
             "prepare": workflow_script("ci.yml", "prepare", "prepare"),
             "default": workflow_script("npu-ci-default-status.yml", "mark-not-run"),
-            "guard": workflow_script("ci.yml", "ascend-npu", "validate_pr"),
             "helper": "result = await auth[settings.method]({github, context, pr, ...settings.args});",
         }
         wrapper = r"""
@@ -37,14 +38,16 @@ const record = (kind, payload) => records.push({kind, payload});
 const files = (settings.files || ['fla/example.cpp']).map((file) =>
   typeof file === 'string' ? {filename:file,status:'modified'} : file);
 const pr = {number:527, state:'open', draft:false, changed_files:settings.file_count ?? files.length,
+  merge_commit_sha:'c'.repeat(40),
   html_url:'https://github.com/example/repo/pull/527',user:{login:settings.author || 'ci-author'},
   base:{ref:settings.base_ref || 'main',sha:'c'.repeat(40)},head:{sha:'a'.repeat(40),repo:{full_name:'example/fork'}},...settings.initial_pr};
 const context = {actor:settings.actor || 'ci-user',serverUrl:'https://github.com',runId:99,runNumber:12,
+  ref:'refs/heads/main',
   repo:{owner:'example',repo:'repo'},payload:{repository:{default_branch:'main'},
     action:settings.action || 'synchronize',pull_request:pr,issue:{number:pr.number},
     changes:settings.changes,
-    comment:{body:settings.command || '/run-npu-ci quick'},
-    inputs:{pr_number:'527',ci_mode:'quick',...settings.inputs}}};
+    comment:{body:settings.command || (settings.entry.startsWith('package-') ? '/package' : '/run-npu-ci quick')},
+    inputs:{pr_number:'527',ci_mode:'quick',build_repo:'example/repo',build_sha:'c'.repeat(40),...settings.inputs}}};
 const listFiles = () => {};
 const listStatuses = () => {};
 const listComments = () => {};
@@ -79,6 +82,7 @@ const github = {
         return {data:{permission:(settings.permissions || {})[username] || 'read'}};
       },
       getBranch:async () => ({data:{protected:settings.protected !== false,commit:{sha:settings.branch_sha || pr.base.sha}}}),
+      getCommit:async () => ({data:{}}),
       createCommitStatus:async (payload) => record('status',payload),
       listCommitStatusesForRef:listStatuses,
     },
@@ -94,6 +98,7 @@ const github = {
   },
 };
 const core = {notice:(payload) => record('notice',payload),warning:(payload) => record('warning',payload),
+  info:(payload) => record('info',payload),
   setFailed:(payload) => record('failed',payload),setOutput:(name,value) => record('output',{name,value})};
 (async () => {
   let result;
@@ -106,12 +111,10 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
 })();
 """.replace("SCRIPT_BODY", scripts[entry])
         env = os.environ.copy()
-        env.update(TEST_OPTIONS=json.dumps(options), NPU_CI_AUTH_SCRIPT=str(HELPER),
+        env.update(TEST_OPTIONS=json.dumps({"entry":entry, **options}), NPU_CI_AUTH_SCRIPT=str(HELPER),
                    NPU_CI_CHECKS_SCRIPT=str(ROOT / '.github/scripts/npu_ci_checks.js'),
                    NPU_CI_WORKFLOW_SHA=options.get("workflow_sha", "c" * 40),
-                   NPU_CI_WORKFLOW_REF=options.get("workflow_ref", options.get("base_ref", "main")), NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)),
-                   NPU_CI_PR_NUMBER="527", NPU_CI_HEAD_SHA="a"*40, NPU_CI_BASE_SHA="c"*40,
-                   NPU_CI_BASE_REF="main")
+                   NPU_CI_WORKFLOW_REF=options.get("workflow_ref", options.get("base_ref", "main")), NPU_CI_RUN_ATTEMPT=str(options.get("attempt", 1)))
         completed = subprocess.run(["node"], input=wrapper, text=True, encoding="utf-8",
                                    capture_output=True, cwd=ROOT, env=env, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -121,28 +124,60 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         return [item["payload"] for item in result["records"] if item["kind"] == kind]
 
     def test_listed_reader_can_dispatch_without_repository_permission_lookup(self):
-        result = self.run_entry("dispatch")
-        self.assertNotIn("error", result)
-        self.assertEqual(len(self.records(result, "dispatch")), 1)
-        self.assertEqual(self.records(result, "permission"), [])
-        allowlist = self.records(result, "content")[0]
-        self.assertEqual((allowlist["path"], allowlist["ref"]), (".github/npu-ci-users.json", "main"))
+        for entry in ("dispatch", "package-dispatch", "package-guard"):
+            with self.subTest(entry=entry):
+                result = self.run_entry(entry, base_ref="v26.10.0")
+                self.assertNotIn("error", result)
+                self.assertFalse(self.records(result, "failed"))
+                if entry != "package-guard":
+                    self.assertEqual(len(self.records(result, "dispatch")), 1)
+                self.assertEqual(self.records(result, "permission"), [])
+                allowlist = self.records(result, "content")[0]
+                self.assertEqual((allowlist["path"], allowlist["ref"]), (".github/npu-ci-users.json", "main"))
 
     def test_repository_admin_outside_list_cannot_dispatch(self):
-        result = self.run_entry("dispatch", actor="outsider", permissions={"outsider":"admin"})
-        self.assertIn("npu-ci-users.json", result["error"])
-        self.assertEqual(self.records(result, "dispatch"), [])
+        for entry in ("dispatch", "package-dispatch", "package-guard"):
+            with self.subTest(entry=entry):
+                result = self.run_entry(entry, actor="outsider", permissions={"outsider":"admin"})
+                self.assertIn("npu-ci-users.json", result["error"])
+                self.assertEqual(self.records(result, "dispatch"), [])
 
     def test_allowlist_is_case_insensitive(self):
-        result = self.run_entry("dispatch", actor="CI-USER")
-        self.assertNotIn("error", result)
+        for entry in ("dispatch", "package-dispatch", "package-guard"):
+            with self.subTest(entry=entry):
+                result = self.run_entry(entry, actor="CI-USER")
+                self.assertNotIn("error", result)
+                self.assertFalse(self.records(result, "failed"))
 
     def test_missing_or_invalid_allowlist_fails_closed(self):
-        for options in ({"list_error":True}, {"config":{"users":[]}}, {"config":{"users":["invalid/name"]}}):
-            with self.subTest(options=options):
-                result = self.run_entry("dispatch", **options)
-                self.assertIn("error", result)
-                self.assertEqual(self.records(result, "dispatch"), [])
+        for entry in ("dispatch", "package-dispatch", "package-guard"):
+            for options in ({"list_error":True}, {"config":{"users":[]}}, {"config":{"users":["invalid/name"]}}):
+                with self.subTest(entry=entry, options=options):
+                    result = self.run_entry(entry, **options)
+                    self.assertIn("error", result)
+                    self.assertEqual(self.records(result, "dispatch"), [])
+
+    def test_package_ci_changes_check_author_admin_separately_from_requester(self):
+        for entry in ("package-dispatch", "package-guard"):
+            with self.subTest(entry=entry):
+                allowed = self.run_entry(entry, files=["ci/run.sh"], permissions={"ci-author":"admin"})
+                self.assertNotIn("error", allowed)
+                self.assertFalse(self.records(allowed, "failed"))
+                self.assertEqual(self.records(allowed, "permission"), ["ci-author"])
+                denied = self.run_entry(entry, files=[".github/workflows/package.yml"],
+                                        permissions={"ci-user":"admin"})
+                self.assertIn("PR 作者", denied["error"])
+                self.assertEqual(self.records(denied, "dispatch"), [])
+
+    def test_package_guard_checks_comment_requester_and_ignores_manual_spoofing(self):
+        allowed = self.run_entry("package-guard", actor="github-actions[bot]", inputs={"requested_by":"ci-user"})
+        self.assertNotIn("error", allowed)
+        self.assertFalse(self.records(allowed, "failed"))
+        for actor, requester in (("github-actions[bot]", "outsider"), ("outsider", "ci-user")):
+            with self.subTest(actor=actor):
+                denied = self.run_entry("package-guard", actor=actor, inputs={"requested_by":requester})
+                self.assertIn("outsider", denied["error"])
+                self.assertEqual(self.records(denied, "info"), [])
 
     def test_prepare_ignores_spoofed_requester_input_for_human_actor(self):
         result = self.run_entry("prepare", actor="outsider", inputs={"requested_by":"ci-admin"})
@@ -171,6 +206,49 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         workflow_read = next(item for item in self.records(result, "content")
                              if item["path"] == ".github/workflows/ci.yml")
         self.assertEqual(workflow_read["ref"], "c"*40)
+
+    def test_comment_debug_is_optional_and_combines_with_mode_and_ops(self):
+        for command, mode, ops, debug in (
+            ("/run-npu-ci", "quick", "", False),
+            ("/run-npu-ci quick", "quick", "", False),
+            ("/run-npu-ci full", "full", "", False),
+            ("/run-npu-ci debug", "quick", "", True),
+            ("/run-npu-ci quick debug", "quick", "", True),
+            ("/run-npu-ci full debug ops=chunk_fwd_o", "full", "chunk_fwd_o", True),
+            ("/run-npu-ci debug quick ops=chunk_fwd_o", "quick", "chunk_fwd_o", True),
+        ):
+            with self.subTest(command=command):
+                result = self.run_entry("dispatch", command=command)
+                self.assertNotIn("error", result)
+                self.assertFalse(self.records(result, "failed"))
+                inputs = self.records(result, "dispatch")[0]["inputs"]
+                self.assertEqual(inputs["ci_mode"], mode)
+                self.assertEqual(inputs["ops"], ops)
+                if debug:
+                    self.assertEqual(inputs["debug"], "true")
+                else:
+                    self.assertNotIn("debug", inputs)
+
+    def test_debug_duplicate_or_unsupported_target_is_not_silently_ignored(self):
+        duplicate = self.run_entry("dispatch", command="/run-npu-ci quick debug debug")
+        self.assertIn("只能指定一次", self.records(duplicate, "failed")[0])
+        self.assertEqual(self.records(duplicate, "dispatch"), [])
+        legacy = "on:\n  workflow_dispatch:\n    inputs:\n      pr_number:\n        required: true\n"
+        unsupported = self.run_entry("dispatch", command="/run-npu-ci quick debug", workflow_text=legacy)
+        self.assertIn("尚不支持 debug", self.records(unsupported, "failed")[0])
+        self.assertEqual(self.records(unsupported, "dispatch"), [])
+
+    def test_prepare_normalizes_boolean_debug_and_rejects_invalid_values(self):
+        for value in (True, False, "true", "false", None):
+            with self.subTest(value=value):
+                result = self.run_entry("prepare", inputs={} if value is None else {"debug": value})
+                self.assertNotIn("error", result)
+                self.assertFalse(self.records(result, "failed"))
+                outputs = {item["name"]: item["value"] for item in self.records(result, "output")}
+                self.assertEqual(outputs["debug"], "true" if value in (True, "true") else "false")
+        invalid = self.run_entry("prepare", inputs={"debug": "verbose"})
+        self.assertIn("必须为 true 或 false", self.records(invalid, "failed")[0])
+        self.assertEqual(self.records(invalid, "status"), [])
 
     def test_custom_ci_ref_cannot_select_an_unapproved_workflow(self):
         for parameter in ("ci_ref=malicious", "branch=malicious", "ci_ref=main", "ci_modified=true", "head=" + "a"*40):
@@ -249,32 +327,38 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                     self.assertEqual(self.records(result, "dispatch"), [])
                     self.assertEqual(self.records(result, "status"), [])
 
-    def test_prepare_rejects_head_base_or_workflow_changes_after_dispatch(self):
+    def test_prepare_rejects_head_or_target_changes_but_allows_base_advance(self):
         expected = {"requested_by":"ci-user", "expected_head_sha":"a"*40,
                     "expected_base_ref":"main", "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-        for field, old_value in (("expected_head_sha", "d"*40), ("expected_base_ref", "release"),
-                                 ("expected_base_sha", "d"*40), ("expected_workflow_sha", "d"*40)):
+        for field, old_value in (("expected_head_sha", "d"*40), ("expected_base_ref", "release")):
             with self.subTest(field=field):
                 result = self.run_entry("prepare", actor="github-actions[bot]", files=["ci/run_checks.sh"],
                                         inputs={**expected, field:old_value}, permissions={"ci-admin":"admin"})
                 self.assertIn("触发快照", result["error"])
                 self.assertEqual(self.records(result, "status"), [])
                 self.assertFalse(any(item["name"] == "ci_approval_key" for item in self.records(result, "output")))
+        result = self.run_entry("prepare", actor="github-actions[bot]", files=["fla/example.cpp"],
+                                workflow_sha="d"*40, branch_sha="d"*40,
+                                inputs=expected)
+        self.assertNotIn("error", result)
+        self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
 
-    def test_bot_dispatch_cannot_omit_any_identity_field(self):
+    def test_bot_dispatch_requires_head_and_target_identity(self):
         expected = {"requested_by":"ci-user", "expected_head_sha":"a"*40, "expected_base_ref":"main",
                     "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-        for field in ("expected_head_sha", "expected_base_ref", "expected_base_sha", "expected_workflow_sha"):
+        for field in ("expected_head_sha", "expected_base_ref"):
             with self.subTest(field=field):
                 result = self.run_entry("prepare", actor="github-actions[bot]", inputs={**expected, field:""})
                 self.assertIn("触发快照", result["error"])
 
-    def test_manual_workflow_cannot_run_another_ref_or_outdated_base(self):
-        for options in ({"workflow_ref":"other"}, {"workflow_sha":"d"*40}, {"branch_sha":"d"*40}):
+    def test_manual_workflow_cannot_run_another_ref_but_allows_outdated_base(self):
+        result = self.run_entry("prepare", workflow_ref="other")
+        self.assertIn("error", result)
+        self.assertEqual(self.records(result, "status"), [])
+        for options in ({"workflow_sha":"d"*40}, {"branch_sha":"d"*40}):
             with self.subTest(options=options):
                 result = self.run_entry("prepare", **options)
-                self.assertIn("error", result)
-                self.assertEqual(self.records(result, "status"), [])
+                self.assertNotIn("error", result)
 
     def test_ci_documentation_does_not_need_admin_author(self):
         result = self.run_entry("dispatch", files=["ci/README.MD", ".github/notes.md"])
@@ -322,18 +406,8 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(self.records(result, "status"), [])
         self.assertIn("profile unavailable", self.records(result, "warning")[0])
 
-    def test_device_version_guard_rejects_stale_head_base_or_closed_pr(self):
-        current = {"number":527,"state":"open","draft":False,
-                   "head":{"sha":"a"*40},"base":{"ref":"main","sha":"c"*40}}
-        for change in ({"head":{"sha":"d"*40}}, {"base":{"ref":"release","sha":"c"*40}},
-                       {"base":{"ref":"main","sha":"d"*40}}, {"state":"closed"}, {"draft":True}, {"merged":True}, {"merged_at":"2026-11-04T00:00:00Z"}):
-            with self.subTest(change=change):
-                result = self.run_entry("guard", current_pr={**current,**change})
-                self.assertIn("prepare", result["error"])
-
-
     def test_rerun_preserves_initial_authorization_without_reloading_allowlist(self):
-        for entry in ("dispatch", "prepare"):
+        for entry in ("dispatch", "prepare", "package-dispatch", "package-guard"):
             with self.subTest(entry=entry):
                 snapshot = {"expected_head_sha":"a"*40, "expected_base_ref":"main",
                             "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
@@ -342,15 +416,17 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
                 self.assertFalse(any(item["path"] == ".github/npu-ci-users.json"
                                      for item in self.records(result, "content")))
                 self.assertEqual(self.records(result, "permission"), [])
-                if entry == "dispatch":
+                if entry in ("dispatch", "package-dispatch"):
                     self.assertEqual(len(self.records(result, "dispatch")), 1)
-                else:
+                elif entry == "prepare":
                     self.assertIn({"name":"should_run","value":"true"}, self.records(result, "output"))
+                else:
+                    self.assertTrue(self.records(result, "info"))
 
-    def test_manual_rerun_without_complete_snapshot_refuses_new_prepare(self):
+    def test_manual_rerun_without_head_or_target_snapshot_refuses_new_prepare(self):
         snapshot = {"expected_head_sha":"a"*40, "expected_base_ref":"main",
                     "expected_base_sha":"c"*40, "expected_workflow_sha":"c"*40}
-        for inputs in ({}, *({**snapshot, name:""} for name in snapshot)):
+        for inputs in ({}, {**snapshot, "expected_head_sha":""}, {**snapshot, "expected_base_ref":""}):
             with self.subTest(inputs=inputs):
                 result = self.run_entry("prepare", attempt=2, list_error=True, inputs=inputs)
                 self.assertIn("新建 Run workflow", result["error"])
@@ -413,23 +489,6 @@ const core = {notice:(payload) => record('notice',payload),warning:(payload) => 
         self.assertEqual(self.records(allowed, "status"), [])
         rejected = self.run_entry("default", files=["ci/run_checks.sh"], statuses=statuses)
         self.assertEqual([status["state"] for status in self.records(rejected, "status")], ["failure"] * 6)
-
-    def test_device_version_guard_precedes_all_source_steps_on_both_platforms(self):
-        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-        guard = workflow["jobs"]["ascend-npu"]["steps"][0]
-        self.assertEqual(guard["id"], "validate_pr")
-        self.assertNotIn("if", guard)
-        self.assertNotIn("NPU_CI_TRIGGERING_ACTOR", guard["env"])
-
-    def test_device_version_guard_keeps_authorization_without_permission_reads(self):
-        for attempt in (1, 2):
-            with self.subTest(attempt=attempt):
-                result = self.run_entry("guard", attempt=attempt, actor="outside-list", list_error=True,
-                                        permission_error=True, files=["ci/run.sh"])
-                self.assertNotIn("error", result)
-                self.assertEqual(self.records(result, "content"), [])
-                self.assertEqual(self.records(result, "permission"), [])
-
 
 if __name__ == "__main__":
     unittest.main()

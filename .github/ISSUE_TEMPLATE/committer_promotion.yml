@@ -1,0 +1,104 @@
+name: Committer 晋升申请
+description: 提交 Committer 晋升申请，并说明拟负责的算子领域及贡献证明
+title: "[Committer 晋升]: "
+labels:
+  - committer-promotion
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢申请成为 Committer。请按算子颗粒度填写拟负责领域，并提供可公开核验的贡献证明。
+
+        申请需同时满足：
+
+        - 在拟负责领域累计至少 10 个已合入 PR；
+        - 累计至少 30 条有效代码检视意见；
+        - 明确拟负责的一个或多个算子领域，并具备对应领域的独立分析和检视能力。
+
+        有效检视意见应指出可执行的功能正确性、兼容性、性能、内存、测试或文档问题，并形成明确结论或推动代码、文档、测试变更。重复意见、无实际影响的措辞建议和未经过分析确认的内容不计入有效数量。
+
+        请勿填写账号、主机名、内网地址、绝对路径、临时目录、日志路径、token 或其他敏感信息。
+  - type: textarea
+    id: operator_domains
+    attributes:
+      label: 拟负责的算子领域
+      description: 请按算子颗粒度列出领域范围、对应标签或代码责任范围；涉及多个算子时逐项说明，不要只填写“算子库整体”。
+      placeholder: |
+        示例：
+
+        - 算子：`chunk_kda_fwd`
+          - 现有标签：`op:chunk_kda_fwd`
+          - 责任范围：Kernel、Tiling、Host、aclnn、PyTorch 入口、测试和文档
+        - 算子：`chunk_kda_bwd`
+          - 现有标签：`op:chunk_kda_bwd`
+          - 责任范围：反向 Kernel、Tiling、精度与回归测试
+    validations:
+      required: true
+  - type: textarea
+    id: merged_prs
+    attributes:
+      label: 已合入 PR（不少于 10 个）
+      description: 请列出拟负责领域内至少 10 个已合入 PR，并说明每个 PR 的主要职责和结果。
+      value: |
+        | 序号 | PR | 对应算子领域 | 主要改动与职责 | 合入状态 |
+        | --- | --- | --- | --- | --- |
+        | 1 | # |  |  | 已合入 |
+        | 2 | # |  |  | 已合入 |
+        | 3 | # |  |  | 已合入 |
+        | 4 | # |  |  | 已合入 |
+        | 5 | # |  |  | 已合入 |
+        | 6 | # |  |  | 已合入 |
+        | 7 | # |  |  | 已合入 |
+        | 8 | # |  |  | 已合入 |
+        | 9 | # |  |  | 已合入 |
+        | 10 | # |  |  | 已合入 |
+    validations:
+      required: true
+  - type: textarea
+    id: review_comments
+    attributes:
+      label: 有效检视意见（不少于 30 条）
+      description: 请提供至少 30 条公开可核验的检视意见链接，并说明问题类型、影响及最终处理结果。
+      value: |
+        | 序号 | PR / 检视链接 | 对应算子领域 | 问题类型 | 问题摘要与结果 |
+        | --- | --- | --- | --- | --- |
+        | 1 |  |  |  |  |
+        | 2 |  |  |  |  |
+        | 3 |  |  |  |  |
+        | ... |  |  |  |  |
+        | 30 |  |  |  |  |
+    validations:
+      required: true
+  - type: textarea
+    id: domain_contribution
+    attributes:
+      label: 领域贡献与独立检视能力
+      description: 请结合实际案例说明在拟负责算子上定位复杂问题、形成检视结论、推动修复和防止回归的能力。
+      placeholder: |
+        建议覆盖：
+        - 代表性的正确性、精度、性能、内存或兼容性问题；
+        - 如何定位根因并推动修改；
+        - 在测试、文档、构建或 CI 方面形成的长期改进；
+        - 对该算子后续演进和维护的规划。
+    validations:
+      required: true
+  - type: textarea
+    id: additional_support
+    attributes:
+      label: 补充材料与评审意见（可选）
+      description: 可填写现有 Committer 推荐意见、领域评审意见、公开设计文档或其他能够支持申请的公开链接。
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: 申请确认
+      options:
+        - label: 我确认所列 PR 均已合入，且贡献属于拟负责的算子领域。
+          required: true
+        - label: 我确认检视意见数量不少于 30 条，且不包含重复、无实际影响或未经分析确认的内容。
+          required: true
+        - label: 我确认拟负责领域已落实到算子颗粒度，并同意在晋升后承担对应检视和责任范围内的工作。
+          required: true
+        - label: 我确认申请内容可公开，且未包含账号、主机名、内网地址、绝对路径、临时目录、日志路径、token 或其他敏感信息。
+          required: true

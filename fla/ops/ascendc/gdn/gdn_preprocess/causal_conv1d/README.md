@@ -4,6 +4,7 @@
 
 | 产品 | 支持 |
 | --- | :---: |
+| Ascend 960DT | √ |
 | Ascend 950PR/Ascend 950DT | √ |
 | Atlas A3 训练/推理系列 | √ |
 | Atlas A2 训练/推理系列 | √ |

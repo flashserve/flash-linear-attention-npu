@@ -30,6 +30,7 @@
 #include "aclnn_kernels/reshape.h"
 #include "opdev/tensor_view_utils.h"
 #include "recurrent_gated_delta_rule_check.h"
+#include "op_common/log/log.h"
 
 using namespace op;
 
@@ -38,6 +39,7 @@ extern "C" {
 #endif
 
 namespace {
+static constexpr const char *OP_NAME = "aclnnRecurrentGatedDeltaRule";
 constexpr size_t QUERY_DIM_NUM = 3;
 constexpr size_t KEY_DIM_NUM = 3;
 constexpr size_t VALUE_DIM_NUM = 3;
@@ -103,9 +105,6 @@ static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
     if (params.g != nullptr) {
         if (!rgdn_check::Type(params.g, G_TYPE_SUPPORT_LIST, "g", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
-    if (params.gk != nullptr) {
-        if (!rgdn_check::Type(params.gk, G_TYPE_SUPPORT_LIST, "gk", op::ToString(G_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
-    }
     if (params.num_accepted_tokens != nullptr) {
         if (!rgdn_check::Type(params.num_accepted_tokens, ACC_TO_TYPE_SUPPORT_LIST, "num_accepted_tokens", op::ToString(ACC_TO_TYPE_SUPPORT_LIST).GetString(), "aclnnRecurrentGatedDeltaRule")) { return false; };
     }
@@ -116,6 +115,11 @@ static inline bool CheckDtypeVaild(const RecurrentGatedDeltaRuleParams &params)
 
 static aclnnStatus CheckParams(RecurrentGatedDeltaRuleParams &params)
 {
+    if (params.gk != nullptr) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecurrentGatedDeltaRule", "gk", "gk is not supported");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     // 检查输入参数是否在支持的数据类型范围内
     if (!(CheckDtypeVaild(params))) { return ACLNN_ERR_PARAM_INVALID; };
 
@@ -167,7 +171,12 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     RecurrentGatedDeltaRuleParams params {query, key, value, beta, stateRef, actualSeqLengths, ssmStateIndices, g, gk, numAcceptedTokens,scaleValue, out};
 
     if (!(CheckNotNull(params))) { return ACLNN_ERR_PARAM_INVALID; };
-    if (!(CheckParams(params) == ACLNN_SUCCESS)) { return ACLNN_ERR_PARAM_INVALID; };
+    {
+        const aclnnStatus checkStatus = CheckParams(params);
+        if (checkStatus != ACLNN_SUCCESS) {
+            return checkStatus;
+        }
+    };
     auto ret = PreProcess(params);
     if (!(ret == ACLNN_SUCCESS)) { return ret; };
 
@@ -179,9 +188,6 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleGetWorkspaceSize(const aclTensor *query,
     auto ssmStateIndices_ = l0op::Contiguous(ssmStateIndices, uniqueExecutor.get());
     if (g != nullptr) {
         g = l0op::Contiguous(g, uniqueExecutor.get());
-    }
-    if (gk != nullptr) {
-        gk = l0op::Contiguous(gk, uniqueExecutor.get());
     }
     if (numAcceptedTokens != nullptr) {
         numAcceptedTokens = l0op::Contiguous(numAcceptedTokens, uniqueExecutor.get());
@@ -290,7 +296,7 @@ aclnnStatus aclnnRecurrentGatedDeltaRuleV2GetWorkspaceSize(
         queryView, keyView, valueView, betaContiguous, stateView, lengthsContiguous, indicesContiguous,
         gContiguous, nullptr, acceptedContiguous, aLogContiguous, biasContiguous, scaleValue,
         useQkL2NormInKernel, useGateInKernel, useBetaSigmoidInKernel, allowNegEigval, uniqueExecutor.get());
-    if (!(outRet != nullptr)) { return ACLNN_ERR_INNER_NULLPTR; };
+    if (outRet == nullptr) { return ACLNN_ERR_INNER_NULLPTR; }
     if (l0op::ViewCopy(outRet, out, uniqueExecutor.get()) == nullptr) { REPORT_INNER_ERR_MSG("EZ9999", "RecurrentGatedDeltaRuleV2: output ViewCopy failed"); return ACLNN_ERR_INNER_NULLPTR; }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
     uniqueExecutor.ReleaseTo(executor);

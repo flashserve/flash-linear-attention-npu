@@ -56,18 +56,19 @@ seed_third_party() {
     fi
 
     echo "[CI] Seeding third_party cache from $seed_dir"
-    cp -an "$seed_dir"/. "$third_party_dir"/
-}
-
-remove_known_partial_cache() {
-    if [[ -d "$third_party_dir/catlass" && ! -f "$third_party_dir/catlass/include/catlass/catlass.hpp" ]]; then
-        echo "[CI][WARN] Removing incomplete catlass cache."
-        rm -rf "$third_party_dir/catlass"
-    fi
-    if [[ -d "$third_party_dir/opbase" && ! -d "$third_party_dir/opbase/.git" ]]; then
-        echo "[CI][WARN] Removing suspicious opbase cache."
-        rm -rf "$third_party_dir/opbase"
-    fi
+    local source destination
+    while IFS= read -r -d '' source; do
+        # Pinned Git dependencies are validated/fetched separately below. Never
+        # restore them blindly from an image built against an older source tree.
+        case "${source##*/}" in catlass|opbase) continue ;; esac
+        destination="$third_party_dir/${source##*/}"
+        # A checkout may have moved headers since the image was built. Copying
+        # missing files back would resurrect removed headers as untracked files.
+        if [[ -d "$source/.git" && -e "$destination" ]]; then
+            continue
+        fi
+        cp -an "$source" "$third_party_dir"/
+    done < <(find "$seed_dir" -mindepth 1 -maxdepth 1 -print0)
 }
 
 tmp_detail="$(mktemp)"
@@ -91,4 +92,8 @@ else
 fi
 
 seed_third_party
-remove_known_partial_cache
+dependency_args=(--repo-dir "$repo_dir" --cache-dir "$third_party_dir")
+if [[ "${CI_SEED_THIRD_PARTY:-true}" == "true" ]]; then
+    dependency_args+=(--seed-dir "$seed_dir")
+fi
+python3 "$repo_dir/ci/prepare_ci_dependencies.py" "${dependency_args[@]}"

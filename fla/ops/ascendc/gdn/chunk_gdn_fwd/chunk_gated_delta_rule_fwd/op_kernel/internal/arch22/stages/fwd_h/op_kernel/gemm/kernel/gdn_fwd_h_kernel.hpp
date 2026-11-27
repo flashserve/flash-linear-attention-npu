@@ -14,7 +14,6 @@
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
-#include "catlass/debug.hpp"
 #include "catlass/epilogue/block/block_epilogue.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_update.hpp"
 #include "../../epilogue/block/block_epilogue_gdn_fwdh_vnew.hpp"
@@ -703,7 +702,7 @@ public:
                 BlockMmadKV blockMmadKV(resource);
                 BlockMmadWH blockMmadWHTail(resource);
                 BlockMmadKVTail blockMmadKVTail(resource);
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                 if (waveIdx == 0) {
                     AscendC::SyncAll<false>();
                 } else {
@@ -945,7 +944,7 @@ public:
 
                 }
 
-#if defined(__CCE_AICORE__) && __CCE_AICORE__ == 220
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201)
                 if (waveIdx == 0) {
                     AscendC::SyncAll<false>();
                 } else {
