@@ -20,7 +20,7 @@
 
 flash-linear-attention-npu 算子库由天津大学主导开发，是一个面向昇腾架构的高性能线性注意力算子库，对标 Flash-Linear-Attention 项目，旨在为昇腾平台提供高效的线性注意力计算实现。
 
-所有 AscendC 算子统一通过 Stable ABI 调用。wheel 声明 `torch>=2.7.1`、`torch_npu>=2.7.1` 运行时依赖；源码构建不自动安装框架，使用 `--no-deps` 安装 wheel 时也需自行准备与 CANN/Python 配套的 torch、torch_npu 和 triton-ascend。Stable launcher 构建仍需要 torch 的链接库；不需要 torchnpugen 或 legacy 扩展。依赖匹配关系与检查方式见下文 Step 1 / Step 2。
+所有 AscendC 算子统一通过 Stable ABI 调用。新构建的 wheel 声明 `torch==2.12.0+cpu`、`torch_npu==2.12.0` 运行时依赖，避免 pip 为 torch 引入 NVIDIA/CUDA 库；CPU 版 torch 配合 torch_npu 仍使用 Ascend NPU。源码构建不自动安装框架，使用 `--no-deps` 安装 wheel 时也需自行准备与 CANN/Python 配套的 torch、torch_npu 和 triton-ascend。Stable launcher 构建仍需要 torch 的链接库；不需要 torchnpugen 或 legacy 扩展。依赖匹配关系与检查方式见下文 Step 1 / Step 2。
 
 <a id="quick-start"></a>
 
@@ -62,11 +62,19 @@ npu-smi info
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh   # 每次进入新 shell / Docker / venv 都要重新执行
 
-# 本仓不自动安装 torch / torch_npu / triton-ascend，需按 CANN 与 Python 版本自行安装
+# 新 wheel 的默认框架组合；torch 2.12.0 要求 Python >=3.10，建议 Python 3.12
+python -m pip install "torch==2.12.0+cpu" --index-url https://download.pytorch.org/whl/cpu
+python -m pip install "torch_npu==2.12.0"
+# triton-ascend 仍需按 CANN 与 Python 版本自行安装
 
 python -m pip install -r requirements.txt
 python scripts/check_npu_env.py            # 无 NPU 的纯构建环境可加 --build-only
 ```
+
+`+cpu` 包来自 PyTorch CPU 下载源。若让 pip 自动安装 wheel 的依赖，需要添加
+`--extra-index-url https://download.pytorch.org/whl/cpu`；未配置该源且本地没有匹配包时，
+安装会失败，不会回退到 CUDA 版。`--no-deps` 会跳过这些依赖约束，需自行保证环境正确。
+Stable ABI 的最低兼容版本仍为 torch 2.7.1，与新 wheel 默认安装的固定版本分别维护。
 
 #### 2.2 安装
 

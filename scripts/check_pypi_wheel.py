@@ -51,7 +51,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from stable_build_policy import validate_build_stamp  # noqa: E402
+from stable_build_policy import validate_build_stamp, validate_runtime_requirements  # noqa: E402
 
 # Measured on the release build image: glibc 2.34 is what the launcher
 # (dlopen/dlsym/dlerror) and the OPP host libraries need under the pinned Ubuntu
@@ -309,15 +309,11 @@ def check_wheel(
                 f"{wheel.name}: Requires-Python {requires_python!r} does not cover 3.9"
             )
         requires = fields.get("Requires-Dist", [])
-        # Every wheel declares these mandatory runtime dependencies;
-        # a launcher that is not backed by the declaration would fail at
-        # import time on an environment pip was told was fine.
-        for pin in ("torch>=2.7.1", "torch_npu>=2.7.1"):
-            if pin not in requires:
-                raise CheckFailure(
-                    f"{wheel.name}: the launcher needs {pin!r} in Requires-Dist "
-                    f"(got: {', '.join(requires) or '<none>'})"
-                )
+        # Use the same CPU runtime policy as both wheel build entry points.
+        try:
+            validate_runtime_requirements(requires)
+        except (RuntimeError, ValueError) as exc:
+            raise CheckFailure(f"{wheel.name}: {exc}") from exc
 
         def find(pattern: str) -> list[str]:
             regex = re.compile(pattern)

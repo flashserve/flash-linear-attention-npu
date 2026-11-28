@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 from contextlib import nullcontext
+from email import message_from_string
 import hashlib
 import os
 import queue
@@ -29,8 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from stable_build_policy import (  # noqa: E402
-    LAUNCHER_FILES, RUNTIME_REQUIREMENTS, reject_legacy_artifacts,
+    LAUNCHER_FILES, reject_legacy_artifacts,
     validate_build_options, validate_launcher_payload, validate_build_stamp,
+    validate_runtime_requirements,
 )
 
 # 一键编包的阶段划分与权重。权重和实际耗时大致同量级：编译算子占大头。
@@ -460,20 +462,17 @@ def _inject_runtime_pins(wheel_path: Path) -> None:
         raise RuntimeError("Wheel contains an unsupported legacy extension")
     validate_build_stamp(next(blob for name, blob in blobs.items()
                               if name.endswith("fla_npu/ops/ascendc/_stable_hash.py")))
-    pins = RUNTIME_REQUIREMENTS
     meta_name = next(name for name in blobs
                      if name.endswith(".dist-info/METADATA"))
     meta = blobs[meta_name].decode("utf-8")
-    pins = [pin for pin in pins if f"Requires-Dist: {pin}" not in meta]
+    pins = validate_runtime_requirements(
+        message_from_string(meta).get_all("Requires-Dist", []), allow_missing=True)
     if not pins:
         return
-    lines = meta.splitlines()
-    insert_at = len(lines)
-    for index, line in enumerate(lines):
-        if line.startswith("Requires-Dist:"):
-            insert_at = index + 1
-    lines[insert_at:insert_at] = [f"Requires-Dist: {pin}" for pin in pins]
-    blobs[meta_name] = ("\n".join(lines) + "\n").encode("utf-8")
+    # Only headers declare dependencies; a README body may mention the same pins.
+    headers, separator, body = meta.replace("\r\n", "\n").partition("\n\n")
+    headers = headers.rstrip("\n") + "\n" + "\n".join(f"Requires-Dist: {pin}" for pin in pins)
+    blobs[meta_name] = (headers + (separator + body if separator else "\n")).encode("utf-8")
 
     record_name = next(name for name in blobs if name.endswith(".dist-info/RECORD"))
     digest = base64.urlsafe_b64encode(
