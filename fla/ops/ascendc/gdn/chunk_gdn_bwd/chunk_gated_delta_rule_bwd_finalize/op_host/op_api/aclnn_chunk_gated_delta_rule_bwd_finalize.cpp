@@ -91,8 +91,16 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     const aclTensor *dbetaOut, const aclTensor *dgOut,
     uint64_t *workspaceSize, aclOpExecutor **executor)
 {
-    // A2/A3 使用私有 Host 路径；A5 保留原有校验条件、连续化和 executor 流程。
-    if (GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201) {
+    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    if (npuArch != NpuArch::DAV_2201 && npuArch != NpuArch::DAV_3510 && npuArch != NpuArch::DAV_9201) {
+        const std::string actual = std::to_string(static_cast<int32_t>(npuArch));
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            OP_NAME, "npuArch", actual.c_str(), "DAV_2201, DAV_3510 or DAV_9201");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+
+    // A2/A3 使用私有 Host 路径，A5/A6 共享校验和 executor 流程。
+    if (npuArch == NpuArch::DAV_2201) {
         const uint64_t outputAliasMask = GDN::FinalizeHostArch22::GetOutputAliasMask(
                 {q, k, v, vNew, dO, du, g, beta, h, dh, a,
                  qRstdOptional, kRstdOptional, betaRawOptional, nullptr, nullptr},
@@ -134,13 +142,6 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
             workspaceSize == nullptr ? "workspaceSize" : "executor";
         OP_LOGE_WITH_INVALID_INPUT(OP_NAME, param_name);
         return ACLNN_ERR_PARAM_NULLPTR;
-    }
-    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (npuArch != NpuArch::DAV_3510) {
-        const std::string actual = std::to_string(static_cast<int32_t>(npuArch));
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "npuArch", actual.c_str(), "DAV_2201 or DAV_3510");
-        return ACLNN_ERR_PARAM_INVALID;
     }
 
     if (chunkSize != 64) {

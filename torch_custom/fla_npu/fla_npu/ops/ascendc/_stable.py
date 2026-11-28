@@ -1923,7 +1923,7 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
         scale=None, chunk_size=64, use_qk_l2_norm_in_kernel=False,
         use_beta_sigmoid_in_kernel=False, use_gate_in_kernel=False,
         state_v_first=False, use_exp2=True):
-    """Dispatch A2/A3 explicitly and preserve the Ascend950 finalize path."""
+    """Dispatch A2/A3 explicitly; A5/A6 share the original finalize call."""
 
     import torch
 
@@ -1942,10 +1942,10 @@ def npu_chunk_gated_delta_rule_bwd_finalize(
             use_gate_in_kernel=use_gate_in_kernel,
             state_v_first=state_v_first, use_exp2=use_exp2,
         )
-    if not device_name.startswith("Ascend950"):
+    if not device_name.startswith(("Ascend950", "Ascend960")):
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd_finalize only supports Ascend "
-            f"950, got {device_name}.")
+            f"950 or 960, got {device_name}.")
     if use_gate_in_kernel:
         raise RuntimeError(
             "npu_chunk_gated_delta_rule_bwd_finalize: use_gate_in_kernel only "

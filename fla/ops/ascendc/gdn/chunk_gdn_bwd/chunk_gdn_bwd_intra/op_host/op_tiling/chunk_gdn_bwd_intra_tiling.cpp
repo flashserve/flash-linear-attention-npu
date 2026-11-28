@@ -241,7 +241,7 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     }
 
     const uint32_t aicCores = platform.GetCoreNumAic();
-    const uint32_t cores = arch92 ? std::min<uint32_t>(aicCores, platform.GetCoreNumAiv()) : aicCores;
+    const uint32_t cores = std::min<uint32_t>(aicCores, platform.GetCoreNumAiv());
     IntraSchedule schedule;
     if (!BuildIntraSchedule(chunkCount, valueHeads, qkHeads, cores, arch22, arch92,
                             platform.GetLibApiWorkSpaceSize(), schedule)) {
