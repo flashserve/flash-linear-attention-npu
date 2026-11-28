@@ -2,6 +2,97 @@
 
 方案设计规则版本：`V2`（#810 增量沿用评审确认的完整 HV owner 映射）
 
+## A6（Ascend 960DT / arch92）实现
+
+本节沿用已确认的 A6 设计：S0–S15 公式、BF16 舍入边界、两种 state 存储、
+固定/变长序列和公开 layout 均与 A5 一致。A6 的目标范围见 [api.md](api.md)。
+本次仅编码，不执行构建、精度、性能或 sanitizer 验证；以下结构不代表设备测试结论。
+
+工程按 `arch92/{common,cube,policy,struct,vector,vf}` 独立组织：
+VF 数学实现取自主线 A5，Cube 和调度按 A6 资源与同步设计实现。
+工程组织参考 [PR #1388](https://github.com/flashserve/flash-linear-attention-npu/pull/1388)
+的 A6 分派方式和 [PR #1401](https://github.com/flashserve/flash-linear-attention-npu/pull/1401)
+的目录划分；不沿用 #1401 的执行与同步实现。
+
+### 核分配、head 窗口与 workspace
+
+- AIC:AIV=1:1，两个引擎以相同 blockIdx/grid-stride 领取 task。
+  可用核对数为 `min(availableAic, availableAiv)`，blockDim 取核对数与任务数的较小值。
+- G=HV/HK≤3 时，取不超过 `min(floor(3/G), ceil(Nchunk*HK/Cavail))`
+  且整除 HK 的最大 p，每个 task 包含 p 个完整 HK 组、共 pG 个 HV。
+- G≥4 时，一个 task 独占一个 (chunk,HK)，每窗最多三个 HV；
+  `hvBase=hk*G+3w`、`n=min(3,G-3w)`。全部 stage 按 r 顺序成组执行。
+- S14 的 q 缓存以 HK 为键，每个物理窗重新失效。尾窗只操作有效 resident/event。
+- 七区保持 A5 的次序和语义；令 `J=64*128*2`、`R=blockDim*3*3*J`，
+  区 k 的字节偏移为 `k*R+(core*9+(windowSerial%3)*3+r)*J`。
+  windowSerial 按每个有效物理窗递增，跨 task 连续。矩阵保留 16-KiB record stride。
+- G≤4 使用 7R；G>4 额外使用两套每核 64-KiB FP32 区，分别容纳 dq/dk。
+  Host/kernel 共享 arch92 policy 中的 head、窗口及区域数量，并检查字节数溢出。
+- G=4 的前三个 HV 与第四个 HV 分属两窗；保留两窗 region2/3 partial，
+  末窗 S15 按 hv0→hv3 依次进行原 BF16 归约。
+- G>4 按全局 `localHv=hv-hk*G` 的奇偶向两个 FP32 区累加，各奇偶路内
+  顺序递增；每笔 atomic MTE3 完成后才复用 scratch。最终固定合并 even+odd，
+  一次转 BF16 后执行可选 norm。新 HK 开始先清零两区。
+
+### 本地资源
+
+每个 head 对应固定 resident r，L0 则按发射序号模 3 轮转。
+
+| 层级 | 规划与容量 |
+| --- | --- |
+| UB | 三份大向量/矩阵/state 和阶段别名；最高地址 0x5D000，即 372 KiB |
+| L1 | 三份 A/do/q、dh、dA/ds、h、du/k、kbg/doG、vb/vDecay、dw0；最高地址 0x72000，即 456 KiB |
+| L0A/B/C | 各三槽，单槽 16 KiB，共 48 KiB；N=128 的 GEMM 沿 N 分两个 64 列 tile |
+
+UB 地址与别名：
+
+| 张量 | 字节起点 | 单槽步长 | 生命周期 |
+| --- | --- | --- | --- |
+| k / dqAcc | 0x00000 | 16 KiB | S0–S14 / S15 |
+| v / ds / dkBase | 0x0C000 | 16 / 8 / 16 KiB | S0–S6 / S11–S12 / S13–S14 |
+| gateDA | 0x18000 | 8 KiB | S0–S12 |
+| vb/dvb/dkbT/dqHv | 0x1E000 | 16 KiB | 按 S0/S3/S12/S13 变更语义 |
+| dAu / doG / q / dkAcc | 0x2A000 | 8 / 16 / 16 / 16 KiB | S1–S4 / S12 / S14 / S15 |
+| kbg/dAw0 / a2 | 0x30000 | 16 / 8 KiB | S0/S3–S4 / S5–S8 |
+| kb | 0x3C000 | 16 KiB | S2–S9 |
+| dA2 | 0x48000 | 8 KiB | S7–S8 |
+| dkbg0/dkPrepare | 0x4E000 | 16 KiB | S7–S14 |
+| h / dh | 0x1E000 / 0x36000 | 各 32 KiB | S10 |
+| vDecay / dkIntra | 0x36000 | 16 KiB | S12 / S13–S14 |
+| dkb / FP32 scratch | 0x42000 | 16 KiB / 单份 32 KiB | S12 / S14–S15 |
+| 八组小向量 | 0x5B800 | 每 head 256 B，每组 768 B | 按 A5 生命周期复用 |
+
+L1 起点依次为 `A=0x00000, dh=0x0C000, dA=0x24000, h=0x2A000,
+du/k=0x42000, kbg/v_new/doG=0x4E000, vb/kb/vDecay=0x5A000, dw0=0x66000`。
+向量、矩阵、状态槽步长分别为 16、8、32 KiB。
+Host 查询实际 UB/L1 可用容量，不足时拒绝进入 kernel。
+
+### 同步与别名释放
+
+- mode-4 ID 1 是 V→C 有序链，依次传递 S0、S4、S8、S12 的逐 head ready，
+  最后传递一次 S14 free；ID 3 是 C→V 链，依次传递 S1、S3、S7、S11、S13 ready。
+  满窗分别为 13、15 次，各次通知都有同序等待；不使用双 AIV 的 non-owner 或汇合分支。
+- 跨核等待显式指定 mode 和实际消费 pipe。V→C 通知在 MTE3，GM 输入等待在 MTE2；
+  C→V 通知在 Fixpipe，普通 VF 等待在 V。S12 在 MTE2 等 S11 通知，
+  使 S9 GM 输出和 ds0 都可用后再读取。
+- S10 搬入前等待整组 S8 的 V/MTE3 最后读操作；S12 覆盖 state 区前等待全部 S10 V 完成。
+  S13 的 dkBase 与其他 head 的紧密 ds 槽存在重叠，因此先收齐本窗全部 S12 ready，
+  再开始任何 S13 Fixpipe。
+- S14 free 在全组最后消费者完成后发布；AIC 进入下窗前必须消费。
+  下窗 S1 的首次 CV 写还要等待新 S0，保护旧 S15 别名区。
+- Vector 三套 MTE2→V、V→MTE3、MTE3→V；两组三套 MTE3→MTE2；
+  state V→MTE2 三套，S15 scratch 另有一套。只归还本窗实际消费过的槽。
+- Cube 使用两组三份 resident MTE1↔MTE2 事件、三份 L1 Fixpipe→MTE1 事件，
+  L0A/L0B 各三份 M→MTE1，以及 L0C 三份 FIX→M / M→FIX。
+  stage 别名复用已经闭环的事件，所有事件通过 AllocEventID/ReleaseEventID 管理。
+- S13 对每个 N tile 先算 doG@H，再在同一 FP32 L0C 累加 ds@k，
+  最后才转 BF16。GM→L1 和 L1→L0 保留 CATLASS layout/转置 view，不增加实体转置。
+
+当前主线锁定的 CATLASS `3a6b66970ea1469fb566eb5f50afa9a469606e92`
+已提供 `CATLASS_ARCH=9201`、`Ascend960DT`、resource、tile copy、
+MMAD 与单目的 Fixpipe 特化。本实现使用这些原生接口，Fixpipe 固定 subBlockId=0。
+无需修改 third_party 或把 A6 宏设置为 3510。
+
 ## A5 G>4 增量（#810）
 
 接口范围以 [api.md](api.md) 为准。下文旧分组/partial/S15 描述适用于 G≤4；

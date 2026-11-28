@@ -1,4 +1,5 @@
 #include <cstring>
+#include "../../op_kernel/arch92/chunk_gated_delta_rule_bwd_finalize_policy.h"
 #include "chunk_gated_delta_rule_bwd_finalize_tiling.h"
 #include "../chunk_gated_delta_rule_bwd_finalize_validation.h"
 
@@ -165,7 +166,7 @@ ge::graphStatus ValidateShapes(gert::TilingContext *context,
     tiling.headRatio = tiling.HV / tiling.HK;
     if (tiling.HV % tiling.HK != 0 || tiling.headRatio < 1 || tiling.headRatio > FinalizeHost::kA5PublishedMaxG) {
         const std::string actual = "HK=" + std::to_string(tiling.HK) + ", HV=" + std::to_string(tiling.HV);
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV/HK", actual, "integer in [1, 16] on A5");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "HV/HK", actual, "integer in [1, 16] on A5/A6");
         return ge::GRAPH_FAILED;
     }
 
@@ -263,10 +264,14 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     if (npuArch == NpuArch::DAV_2201) {
         return gdn_finalize_arch22::Tiling(context, routePlatform);
     }
-    if (npuArch != NpuArch::DAV_3510) {
+    bool isArch92 = false;
+#ifdef GDN_FINALIZE_ENABLE_ARCH92
+    isArch92 = npuArch == NpuArch::DAV_9201;
+#endif
+    if (npuArch != NpuArch::DAV_3510 && !isArch92) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             context->GetNodeName(), "npuArch", std::to_string(static_cast<int32_t>(npuArch)),
-            "only DAV_3510 reaches this path; DAV_2201 uses the arch22 private tiling");
+            "DAV_3510 or DAV_9201 required; DAV_2201 uses the arch22 private tiling");
         return ge::GRAPH_FAILED;
     }
     // 必选输入判空必须先于 ValidateShapes 的 rank 检查：
@@ -340,7 +345,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     } else {
         tiling->seqNum = tiling->B;
         tiling->chunkNumForT = CeilDiv(tiling->T, tiling->chunkSize);
-        if (tiling->headRatio > 4 && tiling->B > std::numeric_limits<int64_t>::max() / tiling->chunkNumForT) {
+        if ((isArch92 || tiling->headRatio > 4) && tiling->B > std::numeric_limits<int64_t>::max() / tiling->chunkNumForT) {
             const std::string actual = "B=" + std::to_string(tiling->B) +
                 ", chunksPerSequence=" + std::to_string(tiling->chunkNumForT);
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "chunk count", actual,
@@ -357,7 +362,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
         return ge::GRAPH_FAILED;
     }
 
-    if (tiling->headRatio > 4 &&
+    if ((isArch92 || tiling->headRatio > 4) &&
         (!AddressFits({tiling->B, tiling->HV, tiling->T, tiling->K}) ||
          !AddressFits({tiling->B, stateChunkNum, tiling->HV, tiling->K, tiling->V}))) {
         const std::string actual = "B=" + std::to_string(tiling->B) + ", HV=" + std::to_string(tiling->HV) +
@@ -369,8 +374,22 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     }
 
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
-    const uint32_t aicCoreNum = std::max<uint32_t>(1, platform.GetCoreNumAic());
-    constexpr int64_t maxHeadsPerTask = 4;
+    uint32_t aicCoreNum = std::max<uint32_t>(1, platform.GetCoreNumAic());
+    if (isArch92) {
+        aicCoreNum = std::min(platform.GetCoreNumAic(), platform.GetCoreNumAiv());
+        uint64_t ubBytes = 0;
+        uint64_t l1Bytes = 0;
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, l1Bytes);
+        if (aicCoreNum == 0 || ubBytes < FinalizeArch92::UB_TOTAL_BYTES ||
+            l1Bytes < FinalizeArch92::L1_TOTAL_BYTES) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "A6 core/UB/L1 capacity",
+                std::to_string(aicCoreNum) + "," + std::to_string(ubBytes) + "," + std::to_string(l1Bytes),
+                "A6 requires paired AIC/AIV cores, at least 372 KiB UB and 456 KiB L1");
+            return ge::GRAPH_FAILED;
+        }
+    }
+    const int64_t maxHeadsPerTask = isArch92 ? FinalizeArch92::HEAD_COUNT : 4;
     if (tiling->totalChunkNum > std::numeric_limits<int64_t>::max() / tiling->HK) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(context->GetNodeName(), "chunkCount,HK",
             std::to_string(tiling->totalChunkNum) + "," + std::to_string(tiling->HK),
@@ -379,7 +398,7 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     }
     const int64_t totalGvaTaskNum = tiling->totalChunkNum * tiling->HK;
     if (tiling->headRatio > maxHeadsPerTask) {
-        // One logical task owns a complete (chunk, HK); four HVs per window.
+        // One logical task owns a complete (chunk, HK); maxHeadsPerTask HVs per window.
         tiling->taskGroupSize = maxHeadsPerTask;
         tiling->headGroupNum = tiling->HK;
         tiling->taskNum = totalGvaTaskNum;
@@ -565,15 +584,23 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleBwdFinalize(gert::TilingContext *conte
     tiling->stateVFirst = stateVFirstValue ? 1 : 0;
 
     const uint32_t blockDim = std::max<uint32_t>(1, std::min<uint64_t>(aicCoreNum, tiling->taskNum));
-    // AIC/AIV 最多跨一个 task group 重叠。每个 AIC 使用两套固定
-    // HEAD window 奇偶轮转，避免 workspace 随逻辑 task 数增长。
+    // A5 uses two four-head banks; A6 uses three three-head banks. Every
+    // valid physical window advances the bank serial on both engines.
     const uint64_t vectorBytes = static_cast<uint64_t>(tiling->chunkSize) * tiling->K * sizeof(uint16_t);
-    constexpr uint64_t workspaceBufferCount = 8; // 2 windows * 4 HEADs
-    constexpr uint64_t workspaceRegionCount = 7;
+    const uint64_t workspaceBufferCount = isArch92 ? FinalizeArch92::WORKSPACE_BUFFER_COUNT : 8;
+    const uint64_t workspaceRegionCount = isArch92 ? FinalizeArch92::WORKSPACE_REGION_COUNT : 7;
     const uint64_t privateBytes = tiling->headRatio > 4 ?
         static_cast<uint64_t>(blockDim) * 2 * GDN::GVA_ACC_CORE_BYTES : 0;
-    const uint64_t userWorkspace = static_cast<uint64_t>(blockDim) *
-        workspaceBufferCount * workspaceRegionCount * vectorBytes + privateBytes;
+    const uint64_t regionBytesPerCore = workspaceBufferCount * workspaceRegionCount * vectorBytes;
+    const uint64_t accumulatorBytesPerCore = tiling->headRatio > 4 ? 2 * GDN::GVA_ACC_CORE_BYTES : 0;
+    const uint64_t bytesPerCore = regionBytesPerCore + accumulatorBytesPerCore;
+    if (isArch92 && static_cast<uint64_t>(blockDim) >
+        static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / bytesPerCore) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "workspace bytes",
+            std::to_string(blockDim), "A6 workspace byte offsets must fit in int64_t");
+        return ge::GRAPH_FAILED;
+    }
+    const uint64_t userWorkspace = static_cast<uint64_t>(blockDim) * regionBytesPerCore + privateBytes;
     if (userWorkspace > std::numeric_limits<size_t>::max() - platform.GetLibApiWorkSpaceSize()) {
         const std::string actual = "userBytes=" + std::to_string(userWorkspace) +
             ", systemBytes=" + std::to_string(platform.GetLibApiWorkSpaceSize());

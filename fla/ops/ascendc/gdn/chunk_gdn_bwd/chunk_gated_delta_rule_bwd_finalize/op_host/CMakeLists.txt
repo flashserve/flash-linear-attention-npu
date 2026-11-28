@@ -19,3 +19,16 @@ if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
         OPTIONS -mllvm -cce-aicore-dcci-before-kernel-end=false
     )
 endif()
+
+if("${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_gated_delta_rule_bwd_finalize.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/op_tiling/chunk_gated_delta_rule_bwd_finalize_tiling.cpp
+        PROPERTIES COMPILE_DEFINITIONS GDN_FINALIZE_ENABLE_ARCH92
+    )
+    add_ops_compile_options(
+        OP_NAME ChunkGatedDeltaRuleBwdFinalize
+        COMPUTE_UNIT Ascend960DT_968B7
+        OPTIONS --cce-no-dcache-flush
+    )
+endif()
