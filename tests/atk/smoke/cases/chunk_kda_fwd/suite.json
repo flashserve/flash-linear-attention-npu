@@ -1,0 +1,7 @@
+{
+  "source_root": "fla/ops/ascendc/kda/chunk_kda_fwd",
+  "platforms": {
+    "A2": true,
+    "A5": true
+  }
+}
