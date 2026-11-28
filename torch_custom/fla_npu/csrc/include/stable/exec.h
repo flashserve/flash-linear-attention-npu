@@ -50,6 +50,8 @@ class TensorArg {
                      int32_t format = kAclFormatAuto,
                      bool logical_storage = false)
       : view_(meta, format, logical_storage) {}
+  TensorArg(const TensorMeta& meta, int32_t format, int32_t dtype,
+            const std::vector<int64_t>& storage) : view_(meta, format, dtype, storage) {}
   aclTensor* get() const { return view_.get(); }
 
  private:

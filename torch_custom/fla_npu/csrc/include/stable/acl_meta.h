@@ -56,6 +56,10 @@ inline int32_t acl_dtype(int32_t scalar_type) {
       return 11;  // kDouble -> ACL_DOUBLE
     case 11:
       return 12;  // kBool   -> ACL_BOOL
+    case 24:
+      return 36;  // Float8_e4m3fn
+    case 44:
+      return 37;  // Float8_e8m0fnu
     case 15:
       return 27;  // kBFloat16 -> ACL_BF16
     default:
@@ -70,6 +74,8 @@ inline int64_t element_size(int32_t scalar_type) {
     case 0:
     case 1:
     case 11:
+    case 24:
+    case 44:
       return 1;
     case 2:
     case 5:
@@ -389,6 +395,13 @@ class AclTensorView {
       throw std::runtime_error(
           "fla_npu(stable): aclCreateTensor returned nullptr");
     }
+  }
+
+  AclTensorView(const TensorMeta& meta, int32_t format, int32_t dtype,
+                const std::vector<int64_t>& storage) : format_(format) {
+    ptr_ = acl_create_tensor()(meta.sizes.data(), meta.ndim, dtype, meta.strides.data(),
+                               meta.storage_offset, format_, storage.data(), storage.size(), meta.data);
+    if (!ptr_) throw std::runtime_error("fla_npu(stable): invalid packed tensor descriptor");
   }
 
   ~AclTensorView() {

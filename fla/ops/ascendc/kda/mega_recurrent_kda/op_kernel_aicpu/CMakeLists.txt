@@ -1,0 +1,22 @@
+# Copyright (c) 2025 Huawei Technologies Co., Ltd.
+# ---------------------------------------------------------------------------------------------------------
+# Adapted for flash-linear-attention-npu by Tianjin University.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ---------------------------------------------------------------------------------------------------------
+
+if (BUILD_WITH_INSTALLED_DEPENDENCY_CANN_PKG)
+  if (NOT (UT_TEST_ALL OR OP_KERNEL_AICPU_UT))
+    add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
+    set(CMAKE_CXX_COMPILER ${ASCEND_DIR}/toolkit/toolchain/hcc/bin/aarch64-target-linux-gnu-g++)
+  endif()
+
+  set_property(GLOBAL APPEND PROPERTY AICPU_JSON_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/mega_recurrent_kda_metadata.json)
+  add_aicpu_cust_kernel_modules(kda_metadata_cust_obj)
+  target_sources(kda_metadata_cust_obj PRIVATE mega_recurrent_kda_metadata_aicpu.cpp)
+endif()

@@ -1,0 +1,180 @@
+#include "kernel_operator.h"
+#if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
+#define CATLASS_ARCH 3510
+#include "arch35/mega_kernel.h"
+#include "arch35/mx_qkv.h"
+#else
+#define CATLASS_ARCH 2201
+#include "lib/matmul_intf.h"
+#include "arch22/entry.h"
+#endif
+#include "mega_recurrent_kda_tiling_data.h"
+
+extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv, GM_ADDR wa, GM_ADDR wb, GM_ADDR beta,
+                                                         GM_ADDR gate, GM_ADDR gamma, GM_ADDR wo, GM_ADDR convW,
+                                                         GM_ADDR conv, GM_ADDR checkpoint, GM_ADDR u, GM_ADDR key,
+                                                         GM_ADDR decay, GM_ADDR indices, GM_ADDR accepted,
+                                                         GM_ADDR alphaLog, GM_ADDR bias, GM_ADDR prefix, GM_ADDR plan, GM_ADDR weightScale,
+                                                         GM_ADDR out, GM_ADDR convOut, GM_ADDR uOut, GM_ADDR keyOut,
+                                                         GM_ADDR decayOut, GM_ADDR workspace, GM_ADDR tiling)
+{
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
+#if !defined(__NPU_ARCH__) || __NPU_ARCH__ != 3510
+    REGISTER_TILING_DEFAULT(MegaRecurrentKdaArch22TilingData);
+    GET_TILING_DATA_WITH_STRUCT(MegaRecurrentKdaArch22TilingData, tilingData, tiling);
+    using namespace MegaRecurrentKdaV2;
+    V2Params params{};
+    params.hiddenStates = x;
+    params.qkvWeight = qkv;
+    params.decayAWeight = wa;
+    params.decayBWeight = wb;
+    params.betaWeight = beta;
+    params.gateWeight = gate;
+    params.wOut = wo;
+    params.convWeight = convW;
+    params.convState = convOut;
+    params.checkpoint = checkpoint;
+    params.replayU = uOut;
+    params.replayK = keyOut;
+    params.replayDecay = decayOut;
+    params.stateIndices = indices;
+    params.accepted = accepted;
+    params.aLog = alphaLog;
+    params.dtBias = bias;
+    params.gamma = gamma;
+    params.out = out;
+    params.prefix = prefix;
+    GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
+    if (TILING_KEY_IS(0)) {
+        RunArch22<false, false, false, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(11)) {
+        params.weightScale = weightScale;
+        RunArch22<false, false, false, false, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(6)) {
+        params.weightScale = weightScale;
+        RunArch22(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(7)) {
+        params.weightScale = weightScale;
+        RunArch22<true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(8)) {
+        params.weightScale = weightScale;
+        RunArch22<false, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(9)) {
+        params.weightScale = weightScale;
+        RunArch22<true, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(10)) {
+        params.weightScale = weightScale;
+        RunArch22<false, false, true>(tilingData, params, plan, userWorkspace);
+    }
+#else
+    REGISTER_TILING_DEFAULT(MegaRecurrentKdaTilingData);
+    GET_TILING_DATA_WITH_STRUCT(MegaRecurrentKdaTilingData, tilingData, tiling);
+    kda::MegaParams params{};
+    params.hiddenStates = x;
+    params.qkvWeight = qkv;
+    params.decayAWeight = wa;
+    params.decayBWeight = wb;
+    params.betaWeight = beta;
+    params.gateWeight = gate;
+    params.rows = tilingData.tokens;
+    params.hidden = tilingData.hidden;
+    params.heads = tilingData.heads;
+    params.decayRing = AscendC::GetUserWorkspace(workspace);
+    auto &recurrence = params.recurrence;
+    recurrence.convW = convW;
+    recurrence.conv = convOut;
+    recurrence.checkpoint = checkpoint;
+    recurrence.u = uOut;
+    recurrence.key = keyOut;
+    recurrence.decay = decayOut;
+    recurrence.gamma = gamma;
+    recurrence.outWeight = wo;
+    recurrence.output = out;
+    recurrence.indices = indices;
+    recurrence.accepted = accepted;
+    recurrence.prefix = prefix;
+    recurrence.plan = plan;
+    recurrence.alphaLog = alphaLog;
+    recurrence.bias = bias;
+    recurrence.batch = tilingData.batch;
+    recurrence.sequence = tilingData.sequence;
+    recurrence.capacity = tilingData.capacity;
+    recurrence.prefix64 = tilingData.prefix64;
+    recurrence.convLayout = tilingData.convLayout;
+    recurrence.crosses = tilingData.crosses;
+    recurrence.staged = tilingData.crosses ? 0 : 3;
+    recurrence.convStride = tilingData.convStride;
+    recurrence.checkpointStride = tilingData.checkpointStride;
+    recurrence.uStride = tilingData.uStride;
+    recurrence.keyStride = tilingData.keyStride;
+    recurrence.decayStride = tilingData.decayStride;
+    recurrence.scale = tilingData.scale;
+    recurrence.lower = tilingData.lowerBound;
+    recurrence.eps = tilingData.rmsNormEps;
+
+    if (TILING_KEY_IS(5)) {
+        // Output storage is private until the QKV projection has finished on every core.
+        GM_ADDR scales = out + uint64_t(params.rows) * params.hidden;
+        params.projectedQkv = params.decayRing;
+        params.mxWeightScale = weightScale;
+        params.decayRing += uint64_t(params.rows) * params.heads * 3 * 128 * sizeof(kda::Bf);
+        recurrence.crosses = tilingData.crosses == 2 ? reinterpret_cast<__gm__ const int32_t *>(plan)[0] : tilingData.crosses;
+        // A packed input reserves both workspace layouts. One resident frame owns every
+        // short request, even when its token interval straddles a legacy 64-row boundary.
+        const bool resident = tilingData.crosses == 2 && params.rows <= 256 && params.heads >= 2 &&
+                              reinterpret_cast<__gm__ const int32_t *>(plan)[1] <= kda::kSliceRows;
+        recurrence.staged = !recurrence.crosses || resident ? 3 : 0;
+        kda::MegaKernel<false, false, true>{}.PrepareFirstMxWave(params);
+        if ASCEND_IS_AIV {
+            AscendC::Simt::VF_CALL<kda::QuantizeHidden>(AscendC::Simt::Dim3(1024),
+                reinterpret_cast<__gm__ const uint16_t *>(x), out, scales, params.rows, params.hidden,
+                uint32_t(AscendC::GetBlockIdx()), uint32_t(AscendC::GetBlockNum() * AscendC::GetTaskRation()),
+                tilingData.mxAlgorithm);
+        }
+        AscendC::SyncAll<false>();
+        if ASCEND_IS_AIC {
+            Catlass::Arch::Resource<kda::Arch> resource;
+            if (params.mxFirstHeads) {
+                kda::ProjectMxHeads(resource, out, qkv, weightScale, params.projectedQkv,
+                                    params.rows, params.heads, params.hidden, 0, params.mxFirstHeads);
+            } else {
+                kda::ProjectMxQkv(resource, out, scales, qkv, weightScale, params.projectedQkv, params.rows,
+                                  params.heads * 384, params.hidden);
+            }
+        }
+        AscendC::SyncAll<false>();
+        if (recurrence.staged == 0) {
+            kda::MegaKernel<true, true, true> op;
+            op(params);
+        } else if (uint64_t(params.rows) >= uint64_t(recurrence.batch) * 16) {
+            kda::MegaKernel<false, true, true> op;
+            op(params);
+        } else {
+            kda::MegaKernel<false, false, true> op;
+            op(params);
+        }
+    } else if (TILING_KEY_IS(4)) {
+        recurrence.crosses = reinterpret_cast<__gm__ const int32_t *>(plan)[0];
+        recurrence.staged = recurrence.crosses ? 0 : 3;
+        if (recurrence.crosses) {
+            kda::MegaKernel<true> op;
+            op(params);
+        } else if (uint64_t(params.rows) >= uint64_t(recurrence.batch) * 16) {
+            kda::MegaKernel<false, true> op;
+            op(params);
+        } else {
+            kda::MegaKernel<false> op;
+            op(params);
+        }
+    } else if (TILING_KEY_IS(1)) {
+        kda::MegaKernel<false> op;
+        op(params);
+    } else if (TILING_KEY_IS(2)) {
+        kda::MegaKernel<true> op;
+        op(params);
+    } else if (TILING_KEY_IS(3)) {
+        kda::MegaKernel<false, true> op;
+        op(params);
+    }
+#endif
+}

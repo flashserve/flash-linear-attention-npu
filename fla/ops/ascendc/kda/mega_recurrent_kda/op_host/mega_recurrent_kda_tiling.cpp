@@ -1,0 +1,297 @@
+#include "register/op_impl_registry.h"
+#include "register/op_def_registry.h"
+#include "tiling/platform/platform_ascendc.h"
+#include "err/ops_err.h"
+#include "kda_metadata.h"
+#include "kda_workspace.h"
+#include "../op_kernel/arch22/tiling_data.h"
+#include <cmath>
+#include <cstring>
+#include <vector>
+
+namespace {
+using kda::Input;
+namespace geometry = kda::geometry;
+using Dims = std::vector<int64_t>;
+constexpr int64_t kHeadWidth = 128;
+Dims GetDimensions(gert::TilingContext *ctx, Input input)
+{
+    const auto index = static_cast<size_t>(input);
+    auto tensor = input >= Input::CuSeqlens ? ctx->GetOptionalInputShape(index) : ctx->GetInputShape(index);
+    if (!tensor) {
+        return {};
+    }
+    const auto &origin = tensor->GetOriginShape();
+    const auto &s = origin.GetDimNum() ? origin : tensor->GetStorageShape();
+    Dims dims(s.GetDimNum());
+    for (size_t i = 0; i < dims.size(); ++i) {
+        dims[i] = s.GetDim(i);
+        if (dims[i] <= 0) {
+            throw std::invalid_argument("expected positive input dimensions");
+        }
+    }
+    return dims;
+}
+uint32_t CheckedDimension(int64_t value)
+{
+    if (value <= 0 || uint64_t(value) > UINT32_MAX) {
+        throw std::invalid_argument("unsupported index span");
+    }
+    return static_cast<uint32_t>(value);
+}
+void CheckShape(const Dims &actual, const Dims &required, const char *name)
+{
+    if (actual != required) {
+        throw std::invalid_argument(name);
+    }
+}
+void CheckProjectionShapes(gert::TilingContext *ctx, int64_t batch, int64_t n, int64_t hidden)
+{
+    const int64_t width = n * kHeadWidth;
+    CheckShape(GetDimensions(ctx, Input::AcceptedTokens), {batch}, "accepted-token shape");
+    if (ctx->GetInputDesc(static_cast<size_t>(Input::QkvWeight))->GetDataType() == ge::DT_INT8) {
+        if (hidden % 32) throw std::invalid_argument("INT8 hidden width must align to 32");
+        const auto weight = GetDimensions(ctx, Input::QkvWeight);
+        if (weight != Dims{hidden, 3 * width}) {
+            CheckShape(weight, {3 * width / 32, hidden / 16, 16, 32}, "INT8 QKV NZ storage shape");
+        }
+        CheckShape(GetDimensions(ctx, Input::WeightScale), {3 * width}, "INT8 QKV channel scales");
+    } else if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
+        // The launcher may forward the packed storage dimensions as the origin shape.
+        if (hidden % 64) throw std::invalid_argument("MXFP8 hidden width must align to a pair of scale groups");
+        const auto qkv = GetDimensions(ctx, Input::QkvWeight);
+        if (qkv != Dims{1, hidden, 3 * width}) {
+            CheckShape(qkv, {1, 3 * width / 32, hidden / 16, 16, 32}, "MX QKV storage shape");
+        }
+        CheckShape(GetDimensions(ctx, Input::WeightScale), {1, hidden / 64, 3 * width, 2}, "MX weight scale shape");
+    } else {
+        CheckShape(GetDimensions(ctx, Input::QkvWeight), {3 * width, hidden}, "QKV projection shape");
+    }
+    CheckShape(GetDimensions(ctx, Input::DecayAWeight), {kHeadWidth, hidden}, "decay-A shape");
+    CheckShape(GetDimensions(ctx, Input::DecayBWeight), {width, kHeadWidth}, "decay-B shape");
+    CheckShape(GetDimensions(ctx, Input::BetaWeight), {n, hidden}, "beta shape");
+    CheckShape(GetDimensions(ctx, Input::GateWeight), {width, hidden}, "gate shape");
+    CheckShape(GetDimensions(ctx, Input::NormWeight), {kHeadWidth}, "norm weight shape");
+    CheckShape(GetDimensions(ctx, Input::OutputWeight), {hidden, width}, "output weight shape");
+    CheckShape(GetDimensions(ctx, Input::ALog), {n}, "A_log shape");
+    CheckShape(GetDimensions(ctx, Input::DtBias), {n, kHeadWidth}, "dt_bias shape");
+}
+uint32_t GetConvLayout(gert::TilingContext *ctx, int64_t n)
+{
+    const int64_t width = n * kHeadWidth;
+    const Dims weights = GetDimensions(ctx, Input::ConvWeight);
+    if (weights == Dims{4, 3 * width}) {
+        return 0;
+    }
+    if (weights == Dims{3, n, 4, kHeadWidth}) {
+        return 1;
+    }
+    CheckShape(weights, {3, 4, kHeadWidth}, "conv1d weight shape");
+    return 2;
+}
+MegaRecurrentKdaTilingData ReadCommonTiling(gert::TilingContext *ctx, const int64_t *geometryData)
+{
+    const auto *attrs = ctx->GetAttrs();
+    Dims x = GetDimensions(ctx, Input::HiddenStates);
+    if ((x.size() != 2 && x.size() != 3) || x.back() <= 0 || x.back() > INT32_MAX) {
+        throw std::invalid_argument("hidden_states must be BSH or TH with a positive int32 hidden width");
+    }
+    Dims batchDim = GetDimensions(ctx, Input::StateIndices);
+    if (batchDim.size() != 1) {
+        throw std::invalid_argument("state_indices must be a vector");
+    }
+    const int64_t batch = batchDim[0], n = geometryData[geometry::Heads],
+                  capacity = geometryData[geometry::ReplayCapacity];
+    if (n > UINT32_MAX / (6 * kHeadWidth)) {
+        throw std::invalid_argument("head count exceeds device stride range");
+    }
+    CheckProjectionShapes(ctx, batch, n, x.back());
+    uint32_t layout = GetConvLayout(ctx, n);
+    const bool packed = x.size() == 2;
+    uint32_t seq = packed ? 0 : CheckedDimension(x[1]);
+    if (!packed && x[0] != batch) {
+        throw std::invalid_argument("BSH batch mismatch");
+    }
+    if (packed) {
+        CheckShape(GetDimensions(ctx, Input::CuSeqlens), {batch + 1}, "cu_seqlens shape");
+    }
+    uint32_t rows = CheckedDimension(packed ? x[0] : kda::checkedProduct(batch, seq));
+    if (geometryData[geometry::WorkspaceBytes] <= 0 ||
+        (geometryData[geometry::CrossesTile] < 0 || geometryData[geometry::CrossesTile] > 2)) {
+        throw std::invalid_argument("invalid workspace plan");
+    }
+    auto scale = attrs ? attrs->GetAttrPointer<float>(0) : nullptr;
+    auto lower = attrs ? attrs->GetAttrPointer<float>(1) : nullptr;
+    auto eps = attrs ? attrs->GetAttrPointer<float>(2) : nullptr;
+    if (!scale || !lower || !eps || !std::isfinite(*scale) || !std::isfinite(*lower) || *lower < -5 || *lower > 0 ||
+        !std::isfinite(*eps) || *eps < std::numeric_limits<float>::min()) {
+        throw std::invalid_argument("invalid scale, lower_bound or rms_norm_eps");
+    }
+    MegaRecurrentKdaTilingData common{};
+    common.convStride = uint64_t(geometryData[geometry::ConvStride]);
+    common.checkpointStride = uint64_t(geometryData[geometry::CheckpointStride]);
+    common.uStride = uint64_t(geometryData[geometry::UStride]);
+    common.keyStride = uint64_t(geometryData[geometry::KStride]);
+    common.decayStride = uint64_t(geometryData[geometry::DecayStride]);
+    common.hidden = CheckedDimension(x.back());
+    common.batch = CheckedDimension(batch);
+    common.sequence = seq;
+    common.tokens = rows;
+    common.heads = CheckedDimension(n);
+    common.capacity = CheckedDimension(capacity);
+    common.prefix64 =
+        packed && ctx->GetOptionalInputDesc(static_cast<size_t>(Input::CuSeqlens))->GetDataType() == ge::DT_INT64;
+    common.convLayout = layout;
+    common.crosses = geometryData[geometry::CrossesTile];
+    common.scale = *scale;
+    common.lowerBound = *lower;
+    common.rmsNormEps = *eps;
+    return common;
+}
+
+template <typename TilingData>
+ge::graphStatus PublishTiling(gert::TilingContext *ctx, const TilingData &data, uint64_t workspaceBytes,
+                              uint64_t systemBytes, uint32_t cores, uint64_t key)
+{
+    auto *raw = ctx->GetRawTilingData();
+    auto *sizes = ctx->GetWorkspaceSizes(1);
+    if (!raw || !sizes || raw->GetCapacity() < sizeof(data) || workspaceBytes > UINT64_MAX - systemBytes) {
+        return ge::GRAPH_FAILED;
+    }
+    std::memcpy(raw->GetData(), &data, sizeof(data));
+    raw->SetDataSize(sizeof(data));
+    sizes[0] = workspaceBytes + systemBytes;
+    ctx->SetBlockDim(cores);
+    // All participating cores must be resident before a cross-core barrier.
+    if (ctx->SetScheduleMode(1) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
+    ctx->SetTilingKey(key);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKdaTilingData &common,
+                                const int64_t *geometryData)
+{
+    auto platformInfo = ctx->GetPlatformInfo();
+    if (!platformInfo) {
+        return ge::GRAPH_FAILED;
+    }
+    auto platform = platform_ascendc::PlatformAscendC(platformInfo);
+    const uint32_t cores = platform.GetCoreNumAic();
+    if (!cores) {
+        return ge::GRAPH_FAILED;
+    }
+    const auto soc = platform.GetSocVersion();
+    const auto systemBytes = platform.GetLibApiWorkSpaceSize();
+    const bool int8Qkv = ctx->GetInputDesc(static_cast<size_t>(Input::QkvWeight))->GetDataType() == ge::DT_INT8;
+    if (soc == platform_ascendc::SocVersion::ASCEND950) {
+        if (int8Qkv) {
+            return ge::GRAPH_FAILED;
+        }
+        if (ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) {
+            const auto *algorithm = ctx->GetAttrs()->GetAttrPointer<int64_t>(4);
+            if (!algorithm || *algorithm < 0 || *algorithm > 1) {
+                return ge::GRAPH_FAILED;
+            }
+            auto data = common;
+            data.mxAlgorithm = static_cast<uint32_t>(*algorithm);
+            uint64_t projected = kda::checkedProduct(uint64_t(common.tokens) * common.heads, 3 * 128 * sizeof(uint16_t));
+            uint64_t base = geometryData[geometry::WorkspaceBytes];
+            if (base > UINT64_MAX - projected) {
+                return ge::GRAPH_FAILED;
+            }
+            return PublishTiling(ctx, data, base + projected, systemBytes, cores, 5);
+        }
+        // Transpose the checkpoint when a frame averages at least one 16-token recurrence slice per sequence.
+        const bool longSequenceBatch = common.tokens >= uint64_t(common.batch) * 16;
+        auto data = common;
+        // All request boundaries lie inside the first 64-row tile.
+        if (data.tokens <= 64) {
+            data.crosses = 0;
+        }
+        const uint64_t key = data.crosses == 2 ? 4 : (data.crosses ? 2 : (longSequenceBatch ? 3 : 1));
+        return PublishTiling(ctx, data, geometryData[geometry::WorkspaceBytes], systemBytes, cores, key);
+    }
+    if (soc != platform_ascendc::SocVersion::ASCEND910B && soc != platform_ascendc::SocVersion::ASCEND910_93) {
+        return ge::GRAPH_FAILED;
+    }
+
+    if (bool(ctx->GetOptionalInputShape(static_cast<size_t>(Input::WeightScale))) != int8Qkv) {
+        return ge::GRAPH_FAILED;
+    }
+    using namespace MegaRecurrentKdaV2;
+    MegaRecurrentKdaArch22TilingData data{};
+    data.common = common;
+    data.poolSlots = CheckedDimension(geometryData[geometry::PoolSlots]);
+    data.convLength = CheckedDimension(geometryData[geometry::ConvLength]);
+    // Arch22 stores workspace offsets in uint32_t and uses a 16-bit panel stride.
+    if (common.tokens > INT32_MAX || common.heads > 65535 / 24 ||
+        uint64_t(common.tokens) * common.heads * 1536 > UINT32_MAX) {
+        return ge::GRAPH_FAILED;
+    }
+    KdaProblem shape{common.batch,    common.sequence, common.heads,  data.poolSlots,
+                     data.convLength, common.capacity, common.tokens, kTileRows, common.hidden};
+    uint64_t l2Bytes = 0;
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, l2Bytes);
+    data.arch22 = ComputeTiling(shape, cores, 2 * cores, common.crosses == 1, l2Bytes);
+    if (data.arch22.overflow) {
+        return ge::GRAPH_FAILED;
+    }
+    uint64_t key = 0;
+    if (int8Qkv) {
+        // Each QKV panel is read once for a single row tile. Keep it cached if another
+        // tile can reuse it or if the layer's projection weights fit together in L2.
+        const uint64_t width = data.arch22.p;
+        const uint64_t qkvBytes = 3 * width * common.hidden * sizeof(int8_t);
+        const uint64_t bf16Bytes = sizeof(uint16_t) * ((2 * width + common.heads + kHeadWidth) * common.hidden +
+                                                       width * kHeadWidth);
+        uint64_t ubBytes = 0;
+        platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
+        key = UseSplitQkvSums(data.arch22, common.crosses == 2, ubBytes) ? 7 : 6;
+        if (key == 6 && data.arch22.tiles == 1 && l2Bytes != 0 && qkvBytes + bf16Bytes > l2Bytes) {
+            return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, 10);
+        }
+        if (key == 6 && data.arch22.tiles == 1) {
+            return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, 11);
+        }
+        // With spare vector cores, independent ranges of V keep the long recurrence in parallel.
+        // Keys 8/9 share the same two INT8 QKV layouts as keys 6/7.
+        const uint64_t units = uint64_t(common.batch) * common.heads;
+        const uint64_t historyBytes = units * 9 * kHeadWidth * sizeof(uint16_t);
+        const uint64_t valuesBytes = uint64_t(common.tokens) * data.arch22.p * sizeof(float);
+        const uint64_t outputBytes = uint64_t(common.tokens) * common.hidden * sizeof(uint16_t);
+        if (common.batch <= common.tokens / 128u && 2 * units <= data.arch22.aivNum &&
+            data.arch22.slotsPR >= data.arch22.tiles && historyBytes <= outputBytes &&
+            valuesBytes <= outputBytes - historyBytes) {
+            key += 2;
+        }
+    }
+    return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, key);
+}
+
+ge::graphStatus TileMegaRecurrentKda(gert::TilingContext *ctx)
+{
+    if (ctx == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    try {
+        auto attrs = ctx->GetAttrs();
+        auto metadata = attrs ? attrs->GetListInt(3) : nullptr;
+        if (!metadata || metadata->GetSize() != geometry::FieldCount) {
+            throw std::invalid_argument("missing logical state geometry");
+        }
+        const int64_t *geometryData = metadata->GetData();
+        const auto common = ReadCommonTiling(ctx, geometryData);
+        return SetDeviceTiling(ctx, common, geometryData);
+    } catch (const std::exception &e) {
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(ctx->GetNodeName(), "MegaRecurrentKda", e.what());
+        return ge::GRAPH_FAILED;
+    }
+}
+
+struct CompileInfo {};
+ge::graphStatus PrepareTiling(gert::TilingParseContext *)
+{
+    return ge::GRAPH_SUCCESS;
+}
+} // namespace
+IMPL_OP_OPTILING(MegaRecurrentKda).Tiling(TileMegaRecurrentKda).TilingParse<CompileInfo>(PrepareTiling);
