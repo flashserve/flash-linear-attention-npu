@@ -35,19 +35,18 @@ flowchart LR
 
 安装前准备与 CANN、Python 配套的 `torch`、`torch_npu`、`triton-ascend` 及其他运行时依赖，并加载 CANN 的 `set_env.sh`。下面使用 `--no-deps`，不会安装或调整依赖。每个环境选择与机器匹配的一个 NPU 包。
 
-新构建的 wheel 将框架依赖固定为 `torch==2.12.0+cpu` 和 `torch_npu==2.12.0`，
-避免自动选择带 NVIDIA/CUDA 依赖的 torch。ARM / x86 使用同样的命令；
-此组合需要 Python >=3.10，建议 Python 3.12：
+wheel 声明 `torch>=2.7.1`、`torch_npu>=2.7.1`，两项下限均允许多个版本。
+直接用 pip 安装 wheel 时，这两个条件也能匹配 CUDA 版 torch。在新环境中先执行以下命令，
+为此次安装选择 CPU 版 torch，并让 pip 同时解析配套的 torch_npu：
 
 ```sh
-python -m pip install "torch==2.12.0+cpu" --index-url https://download.pytorch.org/whl/cpu
-python -m pip install "torch_npu==2.12.0"
+TORCH_VERSION=2.12.0  # 示例，按 Python 和 CANN 环境选择已提供 CPU wheel 的版本
+python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+  "torch>=2.7.1,==${TORCH_VERSION}+cpu" "torch_npu>=2.7.1"
 ```
 
-CPU 版 torch 配合 torch_npu 和 CANN 仍运行在 Ascend NPU 上。若安装 FLA wheel 时让 pip
-自动处理依赖，请去掉 `--no-deps` 和 `--no-index`，并添加
-`--extra-index-url https://download.pytorch.org/whl/cpu`；没有可用的 CPU 包时安装失败，
-不会回退到 CUDA 版。已发布的旧 wheel 不会因源码修改而更新依赖声明。
+下载源提供 CPU wheel，`+cpu` 限定本次安装可选的 torch 构建。缺少对应版本或架构时 pip 会报错。
+在源码仓库中也可执行 `python scripts/install_cpu_runtime.py "$TORCH_VERSION"`。
 
 ## 3. 安装命令
 

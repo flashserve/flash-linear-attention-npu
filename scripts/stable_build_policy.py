@@ -7,35 +7,12 @@ import os
 from pathlib import Path
 import re
 
-from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
-
 import npu_compat
 from fla_npu_artifacts import get_tier
+from npu_compat import MIN_TORCH
 
-# Installation policy, independent of the launcher's Stable-ABI minimum.
-# The +cpu local version prevents pip from selecting a CUDA-enabled torch.
-RUNTIME_REQUIREMENTS = ["torch==2.12.0+cpu", "torch_npu==2.12.0"]
+RUNTIME_REQUIREMENTS = [f"torch>={MIN_TORCH}", f"torch_npu>={MIN_TORCH}"]
 LAUNCHER_FILES = ("libfla_npu_stable.so", "ops/ascendc/_stable_hash.py")
-
-
-def validate_runtime_requirements(requirements: list[str], *, allow_missing: bool = False) -> list[str]:
-    """Require unconditional CPU runtime pins; return any allowed missing pins."""
-    parsed = [Requirement(value) for value in requirements]
-    missing = []
-    for pin in RUNTIME_REQUIREMENTS:
-        expected = Requirement(pin)
-        matches = [req for req in parsed
-                   if canonicalize_name(req.name) == canonicalize_name(expected.name)]
-        if not matches:
-            missing.append(pin)
-        elif (len(matches) != 1 or matches[0].specifier != expected.specifier
-              or matches[0].marker is not None or matches[0].extras or matches[0].url):
-            raise RuntimeError(f"Requires-Dist must contain exactly one unconditional {pin!r}; "
-                               f"got: {', '.join(str(req) for req in matches)}")
-    if missing and not allow_missing:
-        raise RuntimeError(f"Missing required CPU runtime dependencies: {', '.join(missing)}")
-    return missing
 
 
 def validate_build_options() -> None:
