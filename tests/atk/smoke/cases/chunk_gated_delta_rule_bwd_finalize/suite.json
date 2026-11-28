@@ -1,0 +1,6 @@
+{
+  "source_root": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gated_delta_rule_bwd_finalize",
+  "platforms": {
+    "A5": true
+  }
+}
