@@ -13,7 +13,7 @@ sys.path[:0] = [
 ]
 
 from gdn_atk import GdnApi
-sys.path.append(str(PROJECT_ROOT.parents[1] / "chunk_fwd_h"))
+sys.path.append(str(PROJECT_ROOT / "chunk_fwd_h"))
 import fwd_h_cpu
 from chunk_gated_delta_rule_bwd.scripts.input_data import build_inputs
 from chunk_gated_delta_rule_bwd_dhu.scripts.cpu_reference import chunk_gated_delta_rule_bwd_dhu_cpu
