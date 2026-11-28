@@ -162,6 +162,8 @@ ge::graphStatus PublishTiling(gert::TilingContext *ctx, const TilingData &data, 
     raw->SetDataSize(sizeof(data));
     sizes[0] = workspaceBytes + systemBytes;
     ctx->SetBlockDim(cores);
+    // All participating cores must be resident before a cross-core barrier.
+    if (ctx->SetScheduleMode(1) != ge::GRAPH_SUCCESS) return ge::GRAPH_FAILED;
     ctx->SetTilingKey(key);
     return ge::GRAPH_SUCCESS;
 }
@@ -201,8 +203,13 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
         }
         // Transpose the checkpoint when a frame averages at least one 16-token recurrence slice per sequence.
         const bool longSequenceBatch = common.tokens >= uint64_t(common.batch) * 16;
-        const uint64_t key = common.crosses == 2 ? 4 : (common.crosses ? 2 : (longSequenceBatch ? 3 : 1));
-        return PublishTiling(ctx, common, geometryData[geometry::WorkspaceBytes], systemBytes, cores, key);
+        auto data = common;
+        // All request boundaries lie inside the first 64-row tile.
+        if (data.tokens <= 64) {
+            data.crosses = 0;
+        }
+        const uint64_t key = data.crosses == 2 ? 4 : (data.crosses ? 2 : (longSequenceBatch ? 3 : 1));
+        return PublishTiling(ctx, data, geometryData[geometry::WorkspaceBytes], systemBytes, cores, key);
     }
     if (soc != platform_ascendc::SocVersion::ASCEND910B && soc != platform_ascendc::SocVersion::ASCEND910_93) {
         return ge::GRAPH_FAILED;
@@ -242,6 +249,9 @@ ge::graphStatus SetDeviceTiling(gert::TilingContext *ctx, const MegaRecurrentKda
         key = UseSplitQkvSums(data.arch22, common.crosses == 2, ubBytes) ? 7 : 6;
         if (key == 6 && data.arch22.tiles == 1 && l2Bytes != 0 && qkvBytes + bf16Bytes > l2Bytes) {
             return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, 10);
+        }
+        if (key == 6 && data.arch22.tiles == 1) {
+            return PublishTiling(ctx, data, data.arch22.workspaceBytes, systemBytes, cores, 11);
         }
         // With spare vector cores, independent ranges of V keep the long recurrence in parallel.
         // Keys 8/9 share the same two INT8 QKV layouts as keys 6/7.

@@ -45,10 +45,13 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
     params.out = out;
     params.prefix = prefix;
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
-    if (TILING_KEY_IS(6) || TILING_KEY_IS(0)) {
-        if (TILING_KEY_IS(6)) {
-            params.weightScale = weightScale;
-        }
+    if (TILING_KEY_IS(0)) {
+        RunArch22<false, false, false, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(11)) {
+        params.weightScale = weightScale;
+        RunArch22<false, false, false, false, true>(tilingData, params, plan, userWorkspace);
+    } else if (TILING_KEY_IS(6)) {
+        params.weightScale = weightScale;
         RunArch22(tilingData, params, plan, userWorkspace);
     } else if (TILING_KEY_IS(7)) {
         params.weightScale = weightScale;
@@ -113,9 +116,14 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
         // Output storage is private until the QKV projection has finished on every core.
         GM_ADDR scales = out + uint64_t(params.rows) * params.hidden;
         params.projectedQkv = params.decayRing;
+        params.mxWeightScale = weightScale;
         params.decayRing += uint64_t(params.rows) * params.heads * 3 * 128 * sizeof(kda::Bf);
         recurrence.crosses = tilingData.crosses == 2 ? reinterpret_cast<__gm__ const int32_t *>(plan)[0] : tilingData.crosses;
-        recurrence.staged = recurrence.crosses ? 0 : 3;
+        // A packed input reserves both workspace layouts. One resident frame owns every
+        // short request, even when its token interval straddles a legacy 64-row boundary.
+        const bool resident = tilingData.crosses == 2 && params.rows <= 256 && params.heads >= 2 &&
+                              reinterpret_cast<__gm__ const int32_t *>(plan)[1] <= kda::kSliceRows;
+        recurrence.staged = !recurrence.crosses || resident ? 3 : 0;
         kda::MegaKernel<false, false, true>{}.PrepareFirstMxWave(params);
         if ASCEND_IS_AIV {
             AscendC::Simt::VF_CALL<kda::QuantizeHidden>(AscendC::Simt::Dim3(1024),
@@ -126,11 +134,16 @@ extern "C" __global__ __aicore__ void mega_recurrent_kda(GM_ADDR x, GM_ADDR qkv,
         AscendC::SyncAll<false>();
         if ASCEND_IS_AIC {
             Catlass::Arch::Resource<kda::Arch> resource;
-            kda::ProjectMxQkv(resource, out, scales, qkv, weightScale, params.projectedQkv, params.rows,
-                              params.heads * 3 * 128, params.hidden);
+            if (params.mxFirstHeads) {
+                kda::ProjectMxHeads(resource, out, qkv, weightScale, params.projectedQkv,
+                                    params.rows, params.heads, params.hidden, 0, params.mxFirstHeads);
+            } else {
+                kda::ProjectMxQkv(resource, out, scales, qkv, weightScale, params.projectedQkv, params.rows,
+                                  params.heads * 384, params.hidden);
+            }
         }
         AscendC::SyncAll<false>();
-        if (recurrence.crosses) {
+        if (recurrence.staged == 0) {
             kda::MegaKernel<true, true, true> op;
             op(params);
         } else if (uint64_t(params.rows) >= uint64_t(recurrence.batch) * 16) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "short_decay_projection.h"
+#include "mx_qkv.h"
 #include "catlass/arch/cross_core_sync.hpp"
 
 namespace kda {
@@ -32,6 +33,8 @@ struct MegaParams {
     GM_ADDR qkvWeight;
     GM_ADDR projectedQkv;
     bool firstWaveReady = false;
+    uint32_t mxFirstHeads = 0;
+    GM_ADDR mxWeightScale = nullptr;
     GM_ADDR decayAWeight;
     GM_ADDR decayBWeight;
     GM_ADDR gateWeight;
@@ -43,7 +46,7 @@ struct MegaParams {
 
 // The Vector side publishes the second head group while Cube is computing the first.
 using OutputCopy = Catlass::Gemm::Tile::PackedTileCopyTla<Arch, Bf, Row, Bf, Col, Bf, Row>;
-template <uint32_t ExtraHead>
+template <uint32_t ExtraHead, uint32_t LoadK>
 struct StreamingOutputCopy : OutputCopy {
     template <class Source>
     struct CopyGmToL1A : OutputCopy::template CopyGmToL1A<Source> {
@@ -51,7 +54,7 @@ struct StreamingOutputCopy : OutputCopy {
         CATLASS_DEVICE void operator()(Destination &dst, Tile &src)
         {
             uint32_t width = tla::get<0>(src.layout().stride());
-            uint32_t second = (width / kHeadDim / 2 + ExtraHead) * kHeadDim;
+            uint32_t second = (width / kHeadDim / 2 + ExtraHead) * kHeadDim / LoadK * LoadK;
             if (uint32_t(tla::get<1>(src.coord())) == second) {
                 AscendC::SyncAll<false>();
             }
@@ -69,8 +72,18 @@ public:
     {
         const auto shape = PlanWaves(p.rows);
         const bool stagedFrame = p.rows > 256 && uint64_t(p.rows) <= uint64_t(p.recurrence.batch) * 4;
-        p.firstWaveReady = !p.recurrence.crosses && p.rows >= kGlobalRows && p.heads >= 2 &&
+        p.firstWaveReady = p.recurrence.staged == 3 && p.rows >= kSliceRows && p.heads >= 2 &&
                            (shape.count == 1 || stagedFrame);
+        const uint32_t cores = AscendC::GetBlockNum();
+        if (p.firstWaveReady && p.rows <= 256 && cores >= 3) {
+            const uint32_t left = FirstWaveHeads(p, cores);
+            const uint32_t larger = left > p.heads - left ? left : p.heads - left;
+            const uint32_t smaller = p.heads - larger;
+            // Each head supplies twelve 32-column Q/K/V panels across the three matrices.
+            if (uint64_t(larger) * 4 <= (cores / 3) * 6 && uint64_t(smaller) * 12 >= cores) {
+                p.mxFirstHeads = left;
+            }
+        }
         if ASCEND_IS_AIC {
             if (p.firstWaveReady) {
                 Params frame = p;
@@ -459,12 +472,18 @@ private:
                 stride = (lanes + workers - 1) / workers * workers;
             }
         }
-        for (uint64_t task = worker; task < uint64_t(lastSeq - firstSeq + 1) * stride; task += workers) {
-            const uint32_t lane = task % stride;
+        const uint32_t requests = lastSeq - firstSeq + 1;
+        const uint64_t tasks = uint64_t(requests) * stride;
+        const bool headMajor = ValueRows == 128 && !carry && requests > 1 && tasks > workers;
+        const uint64_t begin = headMajor ? tasks * worker / workers : worker;
+        const uint64_t end = headMajor ? tasks * (worker + 1) / workers : tasks;
+        uint32_t previousHead = UINT32_MAX;
+        for (uint64_t task = begin; task < end; task += headMajor ? 1 : workers) {
+            const uint32_t lane = headMajor ? task / requests : task % stride;
             if (lane >= lanes) {
                 continue;
             }
-            uint32_t head = firstHead + lane / shards, b = firstSeq + task / stride;
+            uint32_t head = firstHead + lane / shards, b = firstSeq + (headMajor ? task % requests : task / stride);
             uint32_t start = rec.prefix(p.recurrence, b), end = rec.prefix(p.recurrence, b + 1);
             const uint32_t beginRow = carry && start < first ? first : start;
             const uint32_t endRow = carry && end > first + rows ? first + rows : end;
@@ -496,7 +515,9 @@ private:
                     resource_, p.recurrence, ValueRows == 128 ? gated : planes, carry, p.heads, head, row, row - first,
                     m, LocalTile(0, Plane::Q), (row == start && row + m == end) ? b : UINT32_MAX,
                     (lane % shards) * ValueRows,
-                    ValueRows == 128 ? nullptr : historySnapshot + uint64_t(b - firstSeq) * 9 * width * 2);
+                    ValueRows == 128 ? nullptr : historySnapshot + uint64_t(b - firstSeq) * 9 * width * 2,
+                    headMajor && previousHead == head);
+                previousHead = head;
             }
         }
     }
@@ -551,10 +572,26 @@ private:
     {
         const uint32_t panels = OutputPanels(p.hidden, TileN);
         const uint32_t width = p.heads * kHeadDim;
+        if (!MxQkv && p.rows <= kSliceRows && width >= 512 && p.hidden % 32 == 0 &&
+            panels < groups && p.hidden / 32 >= groups) {
+            const uint32_t blocks = p.hidden / 32;
+            const uint32_t first = blocks * id / groups * 32;
+            const uint32_t end = blocks * (id + 1) / groups * 32;
+            MatmulToGm<TileN, 256, L0K, TileM, true, ExtraHead>(
+                gated, p.recurrence.outWeight, p.recurrence.output, 0, first, 0, first,
+                p.hidden, p.rows, width, end - first);
+            return;
+        }
         if (id < panels) {
-            MatmulToGm<TileN, 128, L0K, TileM, true, ExtraHead>(
-                gated, p.recurrence.outWeight, p.recurrence.output, 0, id * TileN, 0, id * TileN,
-                p.hidden, p.rows, width, PanelWidth(p.hidden, id * TileN, TileN));
+            if (!MxQkv && p.rows <= 16 && width >= 512) {
+                MatmulToGm<TileN, 256, L0K, TileM, true, ExtraHead>(
+                    gated, p.recurrence.outWeight, p.recurrence.output, 0, id * TileN, 0, id * TileN,
+                    p.hidden, p.rows, width, PanelWidth(p.hidden, id * TileN, TileN));
+            } else {
+                MatmulToGm<TileN, 128, L0K, TileM, true, ExtraHead>(
+                    gated, p.recurrence.outWeight, p.recurrence.output, 0, id * TileN, 0, id * TileN,
+                    p.hidden, p.rows, width, PanelWidth(p.hidden, id * TileN, TileN));
+            }
         } else {
             AscendC::SyncAll<false>();
         }
@@ -609,7 +646,8 @@ private:
         uint32_t count = tick ? p.heads - split : split;
         uint64_t part = uint64_t(count) * 128, betaBase = wideProjections * part + 128;
         uint64_t total = tick ? wideProjections * part : betaBase + p.heads, blocks = (total + 15) / 16;
-        constexpr uint32_t workers = MxQkv ? 8 : 4;
+        // Each MX worker owns one 16-row decay tile, ready for its dependent decay-B projection.
+        const uint32_t workers = MxQkv ? (p.rows + kSliceRows - 1) / kSliceRows : 4;
         // Reserve one core for beta and divide the rest across Q, K, V and gate.
         // A third 128-column panel would force another complete read of hidden_states.
         const bool localDecay = !tick && !SpansTile && !reuseQ && !decayAReady && p.rows >= 64 &&
@@ -670,8 +708,9 @@ private:
             if (n > extent - local) {
                 n = extent - local;
             }
-            if (n > 128) {
-                n = 128;
+            const uint32_t panel = !MxQkv && p.rows <= 16 ? 256 : 128;
+            if (n > panel) {
+                n = panel;
             }
             if (kind == 4 && decayAReady) {
                 cursor += n;
@@ -684,15 +723,18 @@ private:
             GM_ADDR dest = kind == 4 ?
                                p.decayRing :
                                planes + uint64_t((kind == 3 ? 4 : kind) - SkippedPlanes) * planeRows * width * 2;
-            if (p.rows > 256 && p.rows <= 288) {
+            if (!MxQkv && p.rows <= 16 && n > 128) {
+                MatmulToGm<256, 384, 64, 16>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
+                                               p.rows, p.hidden, n);
+            } else if (p.rows > 256 && p.rows <= 288) {
                 MatmulToGm<128, 256, 32, 288>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
                                               p.rows, p.hidden, n);
             } else if (p.rows <= 160 && n <= 96) {
                 MatmulToGm<96, 384, 96, 160>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride,
-                                             p.rows, p.hidden, n);
+                                             p.rows, p.hidden, n, MxQkv && p.mxFirstHeads && kind == 3);
             } else {
                 MatmulToGm<128, 256, 64>(p.hiddenStates, weight, dest, 0, weightCol, 0, col, stride, p.rows,
-                                         p.hidden, n);
+                                         p.hidden, n, MxQkv && p.mxFirstHeads && kind == 3);
             }
             cursor += n;
         }
@@ -729,6 +771,13 @@ private:
         for (uint32_t tick = (MxQkv && p.firstWaveReady) ? 1 : 0; tick < waves + 2; ++tick) {
             if ASCEND_IS_AIC {
                 if (tick < waves) {
+                    if constexpr (MxQkv) {
+                        if (tick == 1 && p.mxFirstHeads) {
+                            ProjectMxHeads(resource_, p.recurrence.output, p.qkvWeight, p.mxWeightScale,
+                                           p.projectedQkv, p.rows, p.heads, p.hidden, p.mxFirstHeads,
+                                           p.heads - p.mxFirstHeads);
+                        }
+                    }
                     ProjectHeadWave<SkippedPlanes>(p, planes, planeRows, tick, waves, id, groups, decayAReady, reuseQ);
                 } else if (overlap && tick == waves) {
                     if (MxQkv && FirstWaveHeads(p, groups) > p.heads / 2) {
@@ -967,21 +1016,21 @@ private:
               uint32_t ExtraHead = 0>
     CATLASS_DEVICE void MatmulToGm(GM_ADDR input, GM_ADDR weight, GM_ADDR out, uint32_t xRow, uint32_t wCol,
                                    uint32_t outRow, uint32_t outCol, uint32_t stride, uint32_t m, uint32_t k,
-                                   uint32_t n = 128)
+                                   uint32_t n = 128, bool oneUseWeight = false)
     {
         AscendC::GlobalTensor<Bf> a, w, c;
         a.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(input) + uint64_t(xRow) * k);
         w.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(weight) + uint64_t(wCol) * k);
         c.SetGlobalBuffer(reinterpret_cast<__gm__ Bf *>(out) + uint64_t(outRow) * stride);
-        if constexpr (Stream && MxQkv) {
-            if (m <= TileM) {
+        if constexpr (MxQkv) {
+            if ((Stream || oneUseWeight) && m <= TileM) {
                 w.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
             }
         }
         auto x = tla::MakeTensor(a, tla::MakeLayout<Bf, Row>(m, k), Catlass::Arch::PositionGM{});
         auto wt = tla::MakeTensor(w, tla::MakeLayout<Bf, Col>(k, n), Catlass::Arch::PositionGM{});
         auto base = tla::MakeTensor(c, tla::MakeLayout<Bf, Row>(m, stride), Catlass::Arch::PositionGM{});
-        using GmCopy = std::conditional_t<Stream, StreamingOutputCopy<ExtraHead>, OutputCopy>;
+        using GmCopy = std::conditional_t<Stream, StreamingOutputCopy<ExtraHead, L1K>, OutputCopy>;
         using Mmad = Catlass::Gemm::Tile::TileMmadTla<Arch, Bf, typename GmCopy::LayoutTagL1A>;
         using Op =
             Catlass::Gemm::Block::BlockMmadTla<Policy, tla::Shape<tla::Int<TileM>, tla::Int<TileN>, tla::Int<L1K>>,

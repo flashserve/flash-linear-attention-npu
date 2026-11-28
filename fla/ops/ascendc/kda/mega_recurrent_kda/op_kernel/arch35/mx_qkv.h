@@ -53,7 +53,8 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(1024) inline void QuantizeHidden(
 template <uint32_t maxRows>
 CATLASS_DEVICE void ProjectMxQkvTile(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
                                  GM_ADDR weights, GM_ADDR weightScales, GM_ADDR projected, uint32_t rows,
-                                 uint32_t channels, uint32_t tileRows, uint32_t K)
+                                 uint32_t channels, uint32_t tileRows, uint32_t K,
+                                 uint32_t firstHead = 0, uint32_t headCount = 0)
 {
     using F8 = float8_e4m3_t;
     using S8 = float8_e8m0_t;
@@ -67,10 +68,13 @@ CATLASS_DEVICE void ProjectMxQkvTile(Catlass::Arch::Resource<Arch> &resource, GM
     using MxCopy = Catlass::Gemm::Tile::PackedMxTileCopyTla<Arch, F8, Row, F8, NZ, S8, decltype(layoutSA),
                                                             S8, decltype(layoutSB), Bf, Row>;
     using MxTile = Catlass::Gemm::Tile::TileMmadTla<Arch, F8, typename MxCopy::LayoutTagL1A>;
-    constexpr uint32_t tileCols = 192;
+    constexpr uint32_t tileCols = maxRows <= 128 ? 128 : 192;
+    // Short row panels leave room for a deeper pair of K tiles and their MX scales in L1.
+    constexpr uint32_t tileK = maxRows <= 128 ? 768 : 512;
     using MxBlock = Catlass::Gemm::Block::BlockMmadTla<Catlass::Gemm::MmadMx<Arch, true, 2>,
-        tla::Shape<tla::Int<maxRows>, tla::Int<tileCols>, tla::Int<512>>,
-        tla::Shape<tla::Int<maxRows>, tla::Int<tileCols>, tla::Int<64>>, F8, F8, Bf, void, MxCopy, MxTile>;
+        tla::Shape<tla::Int<maxRows>, tla::Int<tileCols>, tla::Int<tileK>>,
+        tla::Shape<tla::Int<maxRows>, tla::Int<tileCols>, tla::Int<(maxRows <= 128 ? 256 : 64)>>,
+        F8, F8, Bf, void, MxCopy, MxTile>;
     AscendC::GlobalTensor<F8> x, w;
     AscendC::GlobalTensor<S8> sx, sw;
     AscendC::GlobalTensor<Bf> y;
@@ -88,34 +92,68 @@ CATLASS_DEVICE void ProjectMxQkvTile(Catlass::Arch::Resource<Arch> &resource, GM
     auto sa = tla::MakeTensor(sx, layoutSA, Catlass::Arch::PositionGM{});
     auto sb = tla::MakeTensor(sw, layoutSB, Catlass::Arch::PositionGM{});
     auto c = tla::MakeTensor(y, layoutC, Catlass::Arch::PositionGM{});
-    const uint32_t panels = (uint64_t(channels) + tileCols - 1) / tileCols;
+    const uint32_t regularPanels = (uint64_t(channels) + tileCols - 1) / tileCols;
     const uint64_t rowTiles = (uint64_t(rows) + tileRows - 1) / tileRows;
+    const uint32_t workers = AscendC::GetBlockNum();
+    const uint32_t nzBlocks = channels / 32;
+    const bool distribute = rowTiles == 1 && regularPanels < workers && nzBlocks >= workers;
+    const uint32_t panels = headCount || distribute ? workers : regularPanels;
     MxBlock op(resource);
     for (uint64_t tile = AscendC::GetBlockIdx(); tile < rowTiles * panels;
-         tile += AscendC::GetBlockNum()) {
-        const uint32_t row = tile / panels * tileRows, col = tile % panels * tileCols;
+         tile += workers) {
+        const uint32_t row = tile / panels * tileRows;
+        const uint32_t panel = tile % panels;
+        uint32_t col = distribute ? uint64_t(nzBlocks) * panel / panels * 32 : panel * tileCols;
         const uint32_t m = rows - row < tileRows ? rows - row : tileRows;
-        const uint32_t n = channels - col < tileCols ? channels - col : tileCols;
-        auto aa = GetTile(a, tla::MakeCoord(row, 0), tla::MakeShape(m, K));
-        auto bb = GetTile(b, tla::MakeCoord(0, col), tla::MakeShape(K, n));
-        auto cc = GetTile(c, tla::MakeCoord(row, col), tla::MakeShape(m, n));
-        auto as = GetTile(sa, tla::MakeCoord(row, 0), tla::MakeShape(m, groups));
-        auto bs = GetTile(sb, tla::MakeCoord(0, col), tla::MakeShape(groups, n));
-        op(aa, bb, cc, Catlass::GemmCoord(m, n, K), as, bs);
+        uint32_t n = distribute ? uint64_t(nzBlocks) * (panel + 1) / panels * 32 - col
+                                      : (channels - col < tileCols ? channels - col : tileCols);
+        if (headCount) {
+            const uint32_t plane = panel % 3, rank = panel / 3, team = (workers + 2 - plane) / 3;
+            const uint32_t blocks = headCount * 4;
+            const uint32_t start = uint64_t(blocks) * rank / team * 32;
+            n = uint64_t(blocks) * (rank + 1) / team * 32 - start;
+            col = plane * (channels / 3) + firstHead * 128 + start;
+            if (!n) {
+                continue;
+            }
+        }
+        for (uint32_t subCol = col; subCol < col + n; subCol += tileCols) {
+            const uint32_t subN = col + n - subCol < tileCols ? col + n - subCol : tileCols;
+            auto aa = GetTile(a, tla::MakeCoord(row, 0), tla::MakeShape(m, K));
+            auto bb = GetTile(b, tla::MakeCoord(0, subCol), tla::MakeShape(K, subN));
+            auto cc = GetTile(c, tla::MakeCoord(row, subCol), tla::MakeShape(m, subN));
+            auto as = GetTile(sa, tla::MakeCoord(row, 0), tla::MakeShape(m, groups));
+            auto bs = GetTile(sb, tla::MakeCoord(0, subCol), tla::MakeShape(groups, subN));
+            op(aa, bb, cc, Catlass::GemmCoord(m, subN, K), as, bs);
+        }
+    }
+}
+CATLASS_DEVICE void ProjectMxHeads(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR weights,
+                                  GM_ADDR weightScales, GM_ADDR result, uint32_t rows, uint32_t heads,
+                                  uint32_t hidden, uint32_t first, uint32_t count)
+{
+    GM_ADDR scales = codes + uint64_t(rows) * hidden;
+    if (rows <= 128) {
+        ProjectMxQkvTile<128>(resource, codes, scales, weights, weightScales, result, rows, heads * 384, 128,
+                              hidden, first, count);
+    } else {
+        ProjectMxQkvTile<288>(resource, codes, scales, weights, weightScales, result, rows, heads * 384, 256,
+                              hidden, first, count);
     }
 }
 CATLASS_DEVICE void ProjectMxQkv(Catlass::Arch::Resource<Arch> &resource, GM_ADDR codes, GM_ADDR scales,
                                  GM_ADDR weights, GM_ADDR weightScales, GM_ADDR projected, uint32_t rows,
                                  uint32_t channels, uint32_t hidden)
 {
-    const uint32_t panels = (channels + 191) / 192, workers = AscendC::GetBlockNum();
+    const uint32_t panels = (channels + 127) / 128, workers = AscendC::GetBlockNum();
+    const uint32_t largePanels = (channels + 191) / 192;
     const uint64_t defaultTiles = (uint64_t(rows) + 127) / 128;
     const uint64_t defaultWaves = (defaultTiles * panels + workers - 1) / workers;
     constexpr uint32_t maxRows = 288;
     const uint64_t minTiles = (uint64_t(rows) + maxRows - 1) / maxRows;
-    const uint64_t minWaves = (minTiles * panels + workers - 1) / workers;
+    const uint64_t minWaves = (minTiles * largePanels + workers - 1) / workers;
     if (minWaves < defaultWaves) {
-        const uint64_t tiles = minWaves * workers / panels;
+        const uint64_t tiles = minWaves * workers / largePanels;
         const uint32_t tileRows = ((rows + tiles - 1) / tiles + 15) / 16 * 16;
         ProjectMxQkvTile<maxRows>(resource, codes, scales, weights, weightScales, projected, rows, channels, tileRows, hidden);
     } else {

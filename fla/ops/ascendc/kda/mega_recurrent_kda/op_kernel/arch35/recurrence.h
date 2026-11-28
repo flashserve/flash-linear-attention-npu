@@ -267,8 +267,7 @@ __simd_vf__ inline void advanceWindow(__ubuf__ float *state, __ubuf__ float *qkv
         LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
     }
 }
-// Expand a short, complete recurrence from its read-only checkpoint. The
-// coefficient products never divide by decay, including when it underflows.
+// Prepare token-local decay and beta before advancing the FP32 state.
 __simd_vf__ inline void shortDecay(__ubuf__ Bf *raw, __ubuf__ Bf *betaRaw, __ubuf__ float *bias, float aLog,
                                    float lower, __ubuf__ float *dec, __ubuf__ float *beta, uint16_t valid)
 {
@@ -365,108 +364,6 @@ __simd_vf__ inline void stepColumnMajor(__ubuf__ float *state, __ubuf__ float *q
     StoreAlign(y, sumLow, mask);
     StoreAlign(y + 64, sumHigh, mask);
 }
-__simd_vf__ inline void shortPrepare(__ubuf__ float *qkv, __ubuf__ float *dec, __ubuf__ float *weighted,
-                                     __ubuf__ float *coeff, uint16_t count)
-{
-    auto m = CreateMask<float, MaskPattern::ALL>();
-    for (uint16_t t = 0; t < count; ++t) {
-        F q0, q1, k0, k1, p0, p1;
-        LoadAlign(q0, qkv + t * 384);
-        LoadAlign(q1, qkv + t * 384 + 64);
-        LoadAlign(k0, qkv + t * 384 + 128);
-        LoadAlign(k1, qkv + t * 384 + 192);
-        Duplicate(p0, 1.f, m);
-        Duplicate(p1, 1.f, m);
-        for (uint16_t j = 0; j <= t; ++j) {
-            uint16_t s = t - j;
-            F w0, w1, a, b, sum;
-            LoadAlign(w0, qkv + s * 384 + 128);
-            LoadAlign(w1, qkv + s * 384 + 192);
-            Mul(w0, w0, p0, m);
-            Mul(w1, w1, p1, m);
-            Mul(a, w0, k0, m);
-            Mul(b, w1, k1, m);
-            Add(a, a, b, m);
-            ReduceSum(sum, a, m);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(coeff + (t * 4 + s) * 2, sum, m);
-            Mul(a, w0, q0, m);
-            Mul(b, w1, q1, m);
-            Add(a, a, b, m);
-            ReduceSum(sum, a, m);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(coeff + (t * 4 + s) * 2 + 1, sum, m);
-            LoadAlign(a, dec + s * 128);
-            LoadAlign(b, dec + s * 128 + 64);
-            Mul(p0, p0, a, m);
-            Mul(p1, p1, b, m);
-        }
-        Mul(k0, k0, p0, m);
-        Mul(k1, k1, p1, m);
-        Mul(q0, q0, p0, m);
-        Mul(q1, q1, p1, m);
-        StoreAlign(weighted + t * 256, k0, m);
-        StoreAlign(weighted + t * 256 + 64, k1, m);
-        StoreAlign(weighted + t * 256 + 128, q0, m);
-        StoreAlign(weighted + t * 256 + 192, q1, m);
-    }
-}
-__simd_vf__ inline void shortProject(__ubuf__ float *state, __ubuf__ float *weighted, __ubuf__ float *u,
-                                     __ubuf__ float *y, uint16_t count)
-{
-    auto m = CreateMask<float, MaskPattern::ALL>();
-#pragma unroll 2
-    for (uint16_t row = 0; row < 128; ++row) {
-        F h0, h1;
-        LoadAlign(h0, state + 128 * row);
-        LoadAlign(h1, state + 128 * row + 64);
-        for (uint16_t t = 0; t < count; ++t) {
-            F a, b, sum;
-            LoadAlign(a, weighted + t * 256);
-            LoadAlign(b, weighted + t * 256 + 64);
-            Mul(a, a, h0, m);
-            Mul(b, b, h1, m);
-            Add(a, a, b, m);
-            ReduceSum(sum, a, m);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(u + t * 128 + row, sum, m);
-            LoadAlign(a, weighted + t * 256 + 128);
-            LoadAlign(b, weighted + t * 256 + 192);
-            Mul(a, a, h0, m);
-            Mul(b, b, h1, m);
-            Add(a, a, b, m);
-            ReduceSum(sum, a, m);
-            StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(y + t * 128 + row, sum, m);
-        }
-    }
-}
-__simd_vf__ inline void shortCorrect(__ubuf__ float *qkv, __ubuf__ float *beta, __ubuf__ float *coeff,
-                                     __ubuf__ float *predicted, __ubuf__ float *y, __ubuf__ float *u, uint16_t t)
-{
-    auto m = CreateMask<float, MaskPattern::ALL>();
-#pragma unroll
-    for (uint16_t part = 0; part < 2; ++part) {
-        uint16_t i = 64 * part;
-        F pred, out, v, b, term, uk, c;
-        LoadAlign(pred, predicted + t * 128 + i);
-        LoadAlign(out, y + t * 128 + i);
-        for (uint16_t s = 0; s < t; ++s) {
-            LoadAlign(uk, u + s * 128 + i);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(c, coeff + (t * 4 + s) * 2);
-            Mul(term, c, uk, m);
-            Add(pred, pred, term, m);
-            LoadAlign<float, LoadDist::DIST_BRC_B32>(c, coeff + (t * 4 + s) * 2 + 1);
-            Mul(term, c, uk, m);
-            Add(out, out, term, m);
-        }
-        LoadAlign(v, qkv + t * 384 + 256 + i);
-        LoadAlign(b, beta + t * 64);
-        Sub(uk, v, pred, m);
-        Mul(uk, uk, b, m);
-        LoadAlign<float, LoadDist::DIST_BRC_B32>(c, coeff + (t * 4 + t) * 2 + 1);
-        Mul(term, uk, c, m);
-        Add(out, out, term, m);
-        StoreAlign(u + t * 128 + i, uk, m);
-        StoreAlign(y + t * 128 + i, out, m);
-    }
-}
 __simd_vf__ inline void finish(__ubuf__ float *y, __ubuf__ Bf *gate, __ubuf__ float *gamma, float eps, __ubuf__ Bf *out)
 {
     auto m = CreateMask<float, MaskPattern::ALL>();
@@ -550,7 +447,7 @@ public:
     CATLASS_DEVICE void consume(Resource &resource, const RecurrenceArgs &a, GM_ADDR gated, GM_ADDR carry,
                                 uint32_t heads, uint32_t head, uint32_t global, uint32_t ringRow, uint32_t valid,
                                 AscendC::LocalTensor<Bf> slot, uint32_t wholeSeq = UINT32_MAX, uint16_t valueBegin = 0,
-                                GM_ADDR historySnapshot = nullptr)
+                                GM_ADDR historySnapshot = nullptr, bool reuseHead = false)
     {
 #if defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510
         constexpr uint32_t base = 41984 + (MxQkv ? kMxUbOffset : 0);
@@ -563,33 +460,36 @@ public:
         auto keyRow = resource.ubBuf.template GetBufferByByte<half>(tmp + 8 * 512 + 256);
         uint32_t width = heads * 128;
         auto qkv = f, u = f[384], dec = f[512], y = f[640], bias = f[768], gamma = f[896];
-        for (uint32_t kind = 0; kind < 3; ++kind) {
-            if (a.convLayout == 0) {
-                AscendC::DataCopyPad(weights[kind * 512], gm<Bf>(a.convW, uint64_t(kind) * width + head * 128),
-                                     AscendC::DataCopyExtParams{4, 256, (3 * width - 128) * 2, 0, 0},
-                                     AscendC::DataCopyPadExtParams<Bf>{});
-            } else {
-                uint64_t group = a.convLayout == 1 ? uint64_t(kind) * heads + head : kind;
-                AscendC::DataCopy(weights[kind * 512], gm<Bf>(a.convW, group * 512), 512);
+        if (!reuseHead) {
+            for (uint32_t kind = 0; kind < 3; ++kind) {
+                if (a.convLayout == 0) {
+                    AscendC::DataCopyPad(weights[kind * 512], gm<Bf>(a.convW, uint64_t(kind) * width + head * 128),
+                                         AscendC::DataCopyExtParams{4, 256, (3 * width - 128) * 2, 0, 0},
+                                         AscendC::DataCopyPadExtParams<Bf>{});
+                } else {
+                    uint64_t group = a.convLayout == 1 ? uint64_t(kind) * heads + head : kind;
+                    AscendC::DataCopy(weights[kind * 512], gm<Bf>(a.convW, group * 512), 512);
+                }
             }
+            AscendC::DataCopy(bias, gm<float>(a.bias, head * 128), 128);
+            AscendC::DataCopy(gamma, gm<float>(a.gamma), 128);
         }
-        AscendC::DataCopy(bias, gm<float>(a.bias, head * 128), 128);
-        AscendC::DataCopy(gamma, gm<float>(a.gamma), 128);
         float aLog = gm<float>(a.alphaLog).GetValue(head);
         uint32_t b = wholeSeq == UINT32_MAX ? owner(a, global) : wholeSeq;
         auto chunk = resource.ubBuf.template GetBufferByByte<float>(tmp + 10 * 512);
-        auto chunkDec = chunk[4 * 384], chunkBeta = chunkDec[4 * 128], weighted = chunkBeta[4 * 64];
-        auto coeff = weighted[4 * 256], chunkU = coeff[64], chunkY = chunkU[4 * 128], predicted = chunkY[4 * 128];
+        constexpr uint32_t window = MxQkv && ValueRows == 128 ? 8 : 4;
+        auto chunkDec = chunk[window * 384], chunkBeta = chunkDec[window * 128];
+        auto chunkU = chunkBeta[window * 64], chunkY = chunkU[window * 128];
         const bool completeWindow =
-            (MxQkv || (a.staged >= 2 && valid <= 4)) && valid <= 16 &&
+            (MxQkv || (a.staged >= 2 && valid < 16)) && valid <= 16 &&
             (!carry || global / 64 == (global + valid - 1) / 64) &&
             (wholeSeq != UINT32_MAX || (prefix(a, b) == global && prefix(a, b + 1) == global + valid));
-        const bool shortSequence = !MxQkv && a.staged >= 2 && valid <= 4 && completeWindow;
+        const bool shortSequence = !MxQkv && a.staged >= 2 && valid < 16 && completeWindow;
         const bool knownSpan = MxQkv ? completeWindow : shortSequence;
         uint32_t shortIndex = knownSpan ? gm<int32_t>(a.indices).GetValue(b) : 0;
-        constexpr uint32_t shortOut = tmp + 10 * 512 + 5 * 4096;
+        constexpr uint32_t shortOut = tmp + 10 * 512 + (window == 8 ? 7 : 5) * 4096;
         auto gatedRows = resource.ubBuf.template GetBufferByByte<Bf>(shortOut);
-        auto keyRows = resource.ubBuf.template GetBufferByByte<half>(shortOut + 1024);
+        auto keyRows = resource.ubBuf.template GetBufferByByte<half>(shortOut + window * 256);
         for (uint32_t r = 0; r < valid; ++r) {
             uint32_t row = global + r, start = knownSpan ? global : prefix(a, b),
                      end = knownSpan ? global + valid : prefix(a, b + 1), t = row - start;
@@ -628,8 +528,8 @@ public:
                                          AscendC::DataCopyExtParams{6, 256, 0, (width - 128) * 2, 0});
                 }
             }
-            if constexpr (MxQkv) {
-                uint32_t count = valid - r < 4 ? valid - r : 4;
+            if (MxQkv || shortSequence) {
+                uint32_t count = valid - r < window ? valid - r : window;
                 if (count > end - row) {
                     count = end - row;
                 }
@@ -735,50 +635,6 @@ public:
                 r += count - 1;
                 AscendC::PipeBarrier<PIPE_ALL>();
                 continue;
-            }
-            if (shortSequence) {
-                // History is ready; its writeback and the vector calculation only read it.
-                vec::shortConvolveAll((__ubuf__ Bf *)slot.GetPhyAddr(), (__ubuf__ Bf *)hist.GetPhyAddr(),
-                                      (__ubuf__ Bf *)weights.GetPhyAddr(), (__ubuf__ float *)chunk.GetPhyAddr(),
-                                      valid, a.scale);
-                for (uint32_t i = 0; i < 3; ++i) {
-                    AscendC::DataCopyPad(
-                        gm<Bf>(a.conv, convBase + uint64_t(2) * 3 * width + i * width + head * 128), slot[i * 2048],
-                        AscendC::DataCopyExtParams{static_cast<uint16_t>(valid), 256, 0, (3 * width - 128) * 2, 0});
-                }
-                vec::shortDecay((__ubuf__ Bf *)slot[3 * 2048].GetPhyAddr(),
-                                (__ubuf__ Bf *)slot[5 * 2048].GetPhyAddr(),
-                                (__ubuf__ float *)bias.GetPhyAddr(), aLog, a.lower,
-                                (__ubuf__ float *)chunkDec.GetPhyAddr(), (__ubuf__ float *)chunkBeta.GetPhyAddr(), valid);
-                AscendC::PipeBarrier<PIPE_V>();
-                vec::shortPrepare((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)chunkDec.GetPhyAddr(),
-                                  (__ubuf__ float *)weighted.GetPhyAddr(), (__ubuf__ float *)coeff.GetPhyAddr(), valid);
-                AscendC::PipeBarrier<PIPE_V>();
-                vec::shortProject((__ubuf__ float *)state.GetPhyAddr(), (__ubuf__ float *)weighted.GetPhyAddr(),
-                                  (__ubuf__ float *)predicted.GetPhyAddr(), (__ubuf__ float *)chunkY.GetPhyAddr(),
-                                  valid);
-                AscendC::PipeBarrier<PIPE_V>();
-                for (uint32_t j = 0; j < valid; ++j) {
-                    vec::shortCorrect((__ubuf__ float *)chunk.GetPhyAddr(), (__ubuf__ float *)chunkBeta.GetPhyAddr(),
-                                      (__ubuf__ float *)coeff.GetPhyAddr(), (__ubuf__ float *)predicted.GetPhyAddr(),
-                                      (__ubuf__ float *)chunkY.GetPhyAddr(), (__ubuf__ float *)chunkU.GetPhyAddr(), j);
-                    AscendC::PipeBarrier<PIPE_V>();
-                    vec::finish((__ubuf__ float *)chunkY[j * 128].GetPhyAddr(),
-                                (__ubuf__ Bf *)slot[4 * 2048 + j * 128].GetPhyAddr(),
-                                (__ubuf__ float *)gamma.GetPhyAddr(), a.eps,
-                                (__ubuf__ Bf *)gatedRows[j * 128].GetPhyAddr());
-                    AscendC::Cast(keyRows[j * 128], chunk[j * 384 + 128], AscendC::RoundMode::CAST_RINT, 128);
-                }
-                AscendC::PipeBarrier<PIPE_ALL>();
-                uint64_t at = uint64_t(head) * a.capacity * 128;
-                AscendC::DataCopy(gm<float>(a.u, idx * a.uStride + at), chunkU, valid * 128);
-                AscendC::DataCopy(gm<float>(a.decay, idx * a.decayStride + at), chunkDec, valid * 128);
-                AscendC::DataCopy(gm<half>(a.key, idx * a.keyStride + at), keyRows, valid * 128);
-                AscendC::DataCopyPad(
-                    gm<Bf>(gated, uint64_t(ringRow) * width + head * 128), gatedRows,
-                    AscendC::DataCopyExtParams{static_cast<uint16_t>(valid), 256, 0, (width - 128) * 2, 0});
-                AscendC::PipeBarrier<PIPE_ALL>();
-                return;
             }
             AscendC::PipeBarrier<PIPE_ALL>();
             for (uint32_t i = 0; i < 3; ++i) {

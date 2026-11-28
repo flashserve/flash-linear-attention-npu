@@ -25,6 +25,17 @@ template <typename T> CATLASS_DEVICE GlobalTensor<T> Global(GM_ADDR ptr)
     return tensor;
 }
 
+// Distinct buffers at every level avoid in-place scratch reduction hazards.
+CATLASS_DEVICE void RowMaxLevel(const LocalTensor<float> &dst, const LocalTensor<float> &src,
+                               uint32_t count)
+{
+    uint32_t full = count / 64, tail = count % 64;
+    if (full) WholeReduceMax(dst, src, 64, full, 1, 1, 8, ReduceOrder::ORDER_ONLY_VALUE);
+    if (tail) WholeReduceMax(dst[full], src[full * 64], tail, 1, 1, 1, 8,
+                             ReduceOrder::ORDER_ONLY_VALUE);
+    PipeBarrier<PIPE_V>();
+}
+
 CATLASS_DEVICE void QuantizeRows(const V2Params &p, const LocalTensor<uint8_t> &ub, GM_ADDR scales)
 {
     auto input = Global<bfloat16_t>(p.hiddenStates);
@@ -50,7 +61,12 @@ CATLASS_DEVICE void QuantizeRows(const V2Params &p, const LocalTensor<uint8_t> &
             PipeBarrier<PIPE_V>();
             Abs(work, x, count);
             PipeBarrier<PIPE_V>();
-            ReduceMax(reduced, work, ub[chunk * 12].ReinterpretCast<float>(), count, false);
+            auto firstMax = ub[chunk * 12].ReinterpretCast<float>();
+            auto secondMax = ub[chunk * 14].ReinterpretCast<float>();
+            const uint32_t firstCount = (count + 63) / 64;
+            RowMaxLevel(firstMax, work, count);
+            RowMaxLevel(secondMax, firstMax, firstCount);
+            RowMaxLevel(reduced, secondMax, (firstCount + 63) / 64);
             PipeBarrier<PIPE_ALL>();
             const float localMax = reduced.GetValue(0);
             maximum = maximum < localMax ? localMax : maximum;
@@ -154,9 +170,18 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
         PipeBarrier<PIPE_ALL>();
         Cast(fp, i32, RoundMode::CAST_RINT, width);
         PipeBarrier<PIPE_V>();
-        Mul(fp, fp, channel, width);
-        PipeBarrier<PIPE_V>();
-        Muls(fp, fp, tokenScale.GetValue(uint64_t(row) * 8), width);
+        const float sx = tokenScale.GetValue(uint64_t(row) * 8);
+        if (p.tiles == 1) {
+            // The short-row native projection combines scales before rounding the dot to BF16.
+            auto rowScale = i32.template ReinterpretCast<float>();
+            Muls(rowScale, channel, sx, width);
+            PipeBarrier<PIPE_V>();
+            Mul(fp, fp, rowScale, width);
+        } else {
+            Mul(fp, fp, channel, width);
+            PipeBarrier<PIPE_V>();
+            Muls(fp, fp, sx, width);
+        }
         PipeBarrier<PIPE_V>();
         Cast(bf, fp, RoundMode::CAST_RINT, width);
         PipeBarrier<PIPE_ALL>();
@@ -166,7 +191,7 @@ CATLASS_DEVICE void Dequantize(const V2Params &p, const LocalTensor<uint8_t> &ub
 }
 } // namespace Int8Qkv
 
-template <bool splitSums, bool bypassQkvL2>
+template <bool splitSums, bool bypassQkvL2, bool NarrowAux = false>
 CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary, GM_ADDR extraSums)
 {
     using namespace AscendC;
@@ -195,7 +220,7 @@ CATLASS_DEVICE void ProjectInt8Qkv(const V2Params &p, bool overlapAuxiliary, GM_
     auto scratch = resource.ubBuf.GetBufferByByte<uint8_t>(0);
     if ASCEND_IS_AIC {
         if (overlapAuxiliary) {
-            RunStageP<ProjectionPhase::Independent>(resource, p, 0);
+            RunStageP<ProjectionPhase::Independent, NarrowAux>(resource, p, 0);
         }
     }
     if ASCEND_IS_AIV {
