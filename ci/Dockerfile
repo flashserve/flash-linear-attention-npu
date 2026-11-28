@@ -74,21 +74,9 @@ RUN set -e; \
     python3 -c "import pybind11; print(pybind11.__file__)"; \
     python3 -c "from triton import Config; print('triton Config OK')"
 
-# Build and install ATK from source using the upstream README procedure.
-# ATK 26.9.8 filesystem exchange names are incompatible with Kombu 5.7.
-ARG ATK_COMMIT=0683181571486a6654571d7a433f43a4fe7a66c0
-RUN set -e; \
-    git init /opt/ATK; \
-    git -C /opt/ATK remote add origin https://gitcode.com/Ascend/ATK.git; \
-    git -C /opt/ATK -c http.version=HTTP/1.1 fetch --depth 1 origin "$ATK_COMMIT"; \
-    git -C /opt/ATK checkout --detach FETCH_HEAD; \
-    cd /opt/ATK; \
-    python3 -m pip install wheel; \
-    python3 setup.py bdist_wheel; \
-    cd dist; \
-    python3 -m pip install ./*.whl 'kombu==5.6.2'; \
-    python3 -m pip show ATK; \
-    command -v atk
+# Install the official ATK wheel matching the image's CPython ABI and native CPU.
+COPY ci/atk_release.py /tmp/fla-ci/atk_release.py
+RUN python3 /tmp/fla-ci/atk_release.py --install
 
 RUN if [[ "${PREWARM_THIRD_PARTY}" == "true" ]]; then \
       mkdir -p /opt/fla-ci/third_party/pkg; \
