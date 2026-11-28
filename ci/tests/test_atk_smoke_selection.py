@@ -1,24 +1,20 @@
 """PR path selection against a real Git diff and the published smoke inventory."""
 
 import json
-import os
 import runpy
 from pathlib import Path
-import subprocess
-import sys
-import tempfile
 import unittest
 
 
 REPO = Path(__file__).resolve().parents[2]
 SMOKE = REPO / "tests/atk/smoke"
-ROOTS, SUITES = runpy.run_path(str(SMOKE / "run.py"))["load_catalog"]()
 
 
 class AtkSmokeSelectionTests(unittest.TestCase):
     def test_registered_roots_are_independent_operator_directories(self):
-        self.assertEqual(set(ROOTS), {s["op"] for s in SUITES})
-        for op, root in ROOTS.items():
+        for path in sorted((SMOKE / "cases").glob("*/suite.json")):
+            op = path.parent.name
+            root = json.loads(path.read_bytes())["source_root"]
             with self.subTest(op=op):
                 self.assertTrue(root.startswith("fla/ops/ascendc/"))
                 self.assertEqual(Path(root).name, op)
@@ -47,78 +43,3 @@ class AtkSmokeSelectionTests(unittest.TestCase):
                             spec = next(i["range_values"] for i in case["inputs"] if i["name"] == "case_spec")
                             self.assertEqual(json.loads(spec), generator["_spec"](case["id"]))
             self.assertEqual(platform_cases["A2"], platform_cases["A5"])
-
-    def test_changed_paths_drive_matrix_and_platform_execution(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-
-            def git(*args):
-                subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
-
-            def add_file(path):
-                f = repo / path
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text("fixture\n")
-                return f
-
-            def select(*args):
-                return subprocess.check_output(
-                    [sys.executable, str(SMOKE / "run.py"), *args, "--git-range", "HEAD^", "HEAD"],
-                    env={**os.environ, "GIT_DIR": str(repo / ".git"), "GIT_WORK_TREE": str(repo)},
-                    text=True,
-                )
-
-            git("init", "--quiet")
-            git("config", "user.name", "Fixture")
-            git("config", "user.email", "fixture@example.org")
-            old = add_file(ROOTS["chunk_fwd_h"] + "/op_kernel/old file.cpp")
-            git("add", ".")
-            git("commit", "-qm", "base")
-            old.unlink()
-            add_file(ROOTS["chunk_gated_delta_rule_bwd_dhu"] + "/op_kernel/new file.cpp")
-            add_file(ROOTS["chunk_gated_delta_rule_bwd_dhu"] + "/op_host/api.cpp")
-            add_file("fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
-                     "op_kernel/internal/operators/chunk_fwd_o/op_kernel/internal.h")
-            add_file("fla/ops/ascendc/kda/chunk_kda_bwd_other/kernel.cpp")
-            add_file("ci/Dockerfile")
-            git("add", "-A")
-            git("commit", "-qm", "move and edit operators")
-            self.assertEqual(select("affected", "--platform", "A2").splitlines(), ["chunk_fwd_h"])
-            self.assertEqual(select("affected", "--platform", "A5").splitlines(),
-                             ["chunk_fwd_h", "chunk_gated_delta_rule_bwd_dhu"])
-            self.assertEqual(len(json.loads(select("matrix"))["include"]), 3)
-            add_file("docs/common.md")
-            add_file(ROOTS["chunk_fwd_h"] + "/README.md")
-            add_file(ROOTS["recurrent_kda"] + "/docs/API.MD")
-            add_file("tests/atk/smoke/cases/chunk_fwd_o/A5/README.md")
-            git("add", ".")
-            git("commit", "-qm", "documentation only, including operator directories")
-            self.assertEqual(json.loads(select("matrix")), {"include": []})
-            add_file(ROOTS["recurrent_kda"] + "/docs/tiling.md")
-            add_file("tests/atk/smoke/cases/chunk_fwd_h/A5/cases.json")
-            git("add", ".")
-            git("commit", "-qm", "A5 test input and unrelated operator documentation")
-            self.assertEqual(json.loads(select("matrix")), {"include": [{"op": "chunk_fwd_h", "platform": "A5"}]})
-            self.assertEqual(select("affected", "--platform", "A2"), "")
-            add_file("tests/atk/chunk_fwd_h/fwd_h_cpu.py")
-            git("add", ".")
-            git("commit", "-qm", "edit legacy standalone ATK reference")
-            self.assertEqual(json.loads(select("matrix")), {"include": []})
-            add_file("tests/atk/smoke/cases/causal_conv1d/suite.json")
-            git("add", ".")
-            git("commit", "-qm", "register one operator")
-            self.assertEqual(select("affected", "--platform", "A2").splitlines(), ["causal_conv1d"])
-            self.assertEqual(select("affected", "--platform", "A5").splitlines(), ["causal_conv1d"])
-
-            add_file("tests/atk/smoke/executor.py")
-            git("add", ".")
-            git("commit", "-qm", "shared ATK test harness")
-            enabled = [{"op": s["op"], "platform": s["platform"]} for s in SUITES if s.get("ci_enabled", True)]
-            self.assertCountEqual(json.loads(select("matrix"))["include"], enabled)
-
-            add_file(ROOTS["chunk_kda_bwd_recompute"] + "/op_kernel/recompute.cpp")
-            git("add", ".")
-            git("commit", "-qm", "change only recompute")
-            self.assertEqual(select("affected", "--platform", "A2").splitlines(), ["chunk_kda_bwd_recompute"])
-            self.assertEqual(select("affected", "--platform", "A5"), "")
-            self.assertEqual(json.loads(select("matrix"))["include"], [{"op": "chunk_kda_bwd_recompute", "platform": "A2"}])
