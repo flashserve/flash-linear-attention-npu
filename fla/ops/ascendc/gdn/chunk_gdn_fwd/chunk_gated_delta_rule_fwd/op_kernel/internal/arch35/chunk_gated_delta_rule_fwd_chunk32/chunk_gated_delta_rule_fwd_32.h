@@ -124,6 +124,7 @@ public:
         stateVFirst_ = tilingData.stateVFirst;
         allowNegEigval_ = tilingData.allowNegEigval;
         seqNum_ = tilingData.seqNum & 0x0fffffffu;
+        splitSequence_ = tilingData.splitSequence != 0U;
         uint32_t aicIdx = GetBlockIdx();
         if ASCEND_IS_AIV {
             const uint32_t subNum = GetSubBlockNum();
@@ -139,8 +140,8 @@ public:
         tailRows_ = seqLen_ % static_cast<uint32_t>(kBt);
         nChunk_ = tailRows_ == 0 ? seqLen_ / static_cast<uint32_t>(kBt)
                                  : seqLen_ / static_cast<uint32_t>(kBt) + 1;
-        hasHead_ = valueHeadNum_ != 0 && aicIdx < totalHeads_;
-        headBegin_ = hasHead_ ? aicIdx : 0;
+        hasWork_ = valueHeadNum_ != 0 && aicIdx < aicNum_;
+        blockIdx_ = aicIdx;
 
         qGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(q));
         kGm_.SetGlobalBuffer(reinterpret_cast<__gm__ bfloat16_t *>(k));
@@ -1111,7 +1112,7 @@ private:
 
     __aicore__ inline void ProcessAiv()
     {
-        if (!hasHead_) {
+        if (!hasWork_) {
             return;
         }
         // sub_ is 0 or 1, so both AIVs have a prologue chunk once there are two
@@ -1129,7 +1130,7 @@ private:
         // reuses that range, so the vector waits for the store.
         bool stateLive = false;
         bool stateNdLive = false;
-        for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
+        for (uint32_t head = blockIdx_; head < totalHeads_; head += aicNum_) {
             if (!prefetched) {
                 GetCurIdx(head);
                 if (loadPrologue) {
@@ -1252,6 +1253,34 @@ private:
                                     static_cast<uint64_t>(sub_) * nElem);
     }
 
+    struct VarlenTask {
+        uint32_t head;
+        uint32_t seq;
+    };
+
+    __aicore__ inline VarlenTask FirstVarlenTask() const
+    {
+        if (splitSequence_) {
+            return {blockIdx_ % valueHeadNum_, blockIdx_ / valueHeadNum_};
+        }
+        return {blockIdx_, 0};
+    }
+
+    __aicore__ inline VarlenTask NextVarlenTask(VarlenTask task) const
+    {
+        const uint64_t nextHead = static_cast<uint64_t>(task.head) + aicNum_;
+        if (splitSequence_) {
+            // Advance the flattened (sequence, value-head) index by the grid size.
+            return {static_cast<uint32_t>(nextHead % valueHeadNum_),
+                    task.seq + static_cast<uint32_t>(nextHead / valueHeadNum_)};
+        }
+        if (task.seq + 1U < seqNum_) {
+            return {task.head, task.seq + 1U};
+        }
+        return nextHead < totalHeads_ ? VarlenTask{static_cast<uint32_t>(nextHead), 0}
+                                      : VarlenTask{0, seqNum_};
+    }
+
     // One packed sequence. Token 0 of the sequence is cu[seq], not a global multiple of 32.
     __aicore__ inline void BindSequence(uint32_t seq)
     {
@@ -1273,6 +1302,14 @@ private:
             packed += (prevLen + static_cast<uint32_t>(kBt) - 1U) / static_cast<uint32_t>(kBt);
         }
         hChunkBase_ = packed;
+    }
+
+    __aicore__ inline void BindVarlenTask(VarlenTask task)
+    {
+        if (splitSequence_ || task.seq == 0U) {
+            GetCurIdx(task.head);
+        }
+        BindSequence(task.seq);
     }
 
     __aicore__ inline void InitStateSeq()
@@ -1336,19 +1373,14 @@ private:
         }
     }
 
-    // GM loads of the next sequence only. Publishing K waits until that sequence
-    // starts, because D of this sequence still reads l1K_.
-    __aicore__ inline bool PrefetchNext(uint32_t head, uint32_t seq)
+    // Only issue GM loads for the next task. Its K publish waits until the
+    // task starts, because D of the current task still reads l1K_.
+    __aicore__ inline bool PrefetchNext(VarlenTask task)
     {
-        const uint32_t nextHead = head + aicNum_;
-        if (seq + 1U < seqNum_) {
-            BindSequence(seq + 1U);
-        } else if (nextHead < totalHeads_) {
-            GetCurIdx(nextHead);
-            BindSequence(0);
-        } else {
+        if (task.seq >= seqNum_) {
             return false;
         }
+        BindVarlenTask(task);
         if (nChunk_ > 0U && (sub_ == 0U || nChunk_ > 1U)) {
             PrepareLoadVar(sub_);
             return true;
@@ -1446,65 +1478,49 @@ private:
 
     __aicore__ inline void ProcessAivVarlen()
     {
-        if (!hasHead_) {
+        if (!hasWork_) {
             return;
         }
         GenAuxMatrixVF(ubSh_, ubEye_);
         bool prefetched = false;
         bool stateLive = false;
         bool stateNdLive = false;
-        for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
+        for (auto task = FirstVarlenTask(); task.seq < seqNum_;) {
             if (!prefetched) {
-                GetCurIdx(head);
+                BindVarlenTask(task);
             }
-            for (uint32_t seq = 0; seq < seqNum_; ++seq) {
-                const bool prepared = prefetched;
-                if (!prepared) {
-                    BindSequence(seq);
-                }
-                prefetched = false;
-                if (stateNdLive) {
-                    WaitFlag<HardEvent::MTE3_V>(4);
-                    stateNdLive = false;
-                }
-                if (stateLive) {
-                    WaitFlag<HardEvent::MTE3_MTE2>(0);
-                    stateLive = false;
-                }
-                const bool more = seq + 1U < seqNum_ || head + aicNum_ < totalHeads_;
-                if (nChunk_ == 0U) {
-                    const int64_t elem = StateElem();
-                    FillEmptyUbD();
-                    prefetched = PrefetchNext(head, seq);
-                    FinishEmptyStore();
-                    EmitPreparedState(elem);
-                    if (finalFp32_ != 0 && more) {
-                        SetFlag<HardEvent::MTE3_V>(4);
-                        stateNdLive = true;
-                    }
-                    if (more) {
-                        SetFlag<HardEvent::MTE3_MTE2>(0);
-                        stateLive = true;
-                    }
-                    continue;
-                }
+            task = NextVarlenTask(task);
+            if (stateNdLive) {
+                WaitFlag<HardEvent::MTE3_V>(4);
+                stateNdLive = false;
+            }
+            if (stateLive) {
+                WaitFlag<HardEvent::MTE3_MTE2>(0);
+                stateLive = false;
+            }
+            const int64_t elem = StateElem();
+            if (nChunk_ == 0U) {
+                FillEmptyUbD();
+                prefetched = PrefetchNext(task);
+                FinishEmptyStore();
+                EmitPreparedState(elem);
+            } else {
                 const bool loadPrologue = sub_ == 0 || nChunk_ > 1;
-                if (!prepared && loadPrologue) {
+                if (!prefetched && loadPrologue) {
                     PrepareLoadVar(sub_);
                 }
                 InitStateSeq();
                 RunSequence();
-                const int64_t elem = StateElem();
-                prefetched = PrefetchNext(head, seq);
+                prefetched = PrefetchNext(task);
                 StoreState(elem);
-                if (finalFp32_ != 0 && more) {
+            }
+            if (task.seq < seqNum_) {
+                if (finalFp32_ != 0) {
                     SetFlag<HardEvent::MTE3_V>(4);
                     stateNdLive = true;
                 }
-                if (more) {
-                    SetFlag<HardEvent::MTE3_MTE2>(0);
-                    stateLive = true;
-                }
+                SetFlag<HardEvent::MTE3_MTE2>(0);
+                stateLive = true;
             }
         }
         if constexpr (!kFastInfer) {
@@ -1514,58 +1530,55 @@ private:
 
     __aicore__ inline void ProcessAicVarlen()
     {
-        if (!hasHead_) {
+        if (!hasWork_) {
             return;
         }
         SetFlag<HardEvent::M_MTE1>(0);
         SetFlag<HardEvent::M_MTE1>(1);
         SetFlag<HardEvent::FIX_M>(0);
         SetFlag<HardEvent::FIX_M>(1);
-        for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
-            GetCurIdx(head);
-            for (uint32_t seq = 0; seq < seqNum_; ++seq) {
-                BindSequence(seq);
-                if (nChunk_ == 0U) {
-                    continue;
-                }
-                for (uint32_t c = 0; c < nChunk_ && c < 2; ++c) {
-                    Kkt(c, static_cast<uint8_t>(c));
-                }
-                for (uint32_t c = 0; c < nChunk_ && c < 2; ++c) {
-                    Qk(c, static_cast<uint8_t>(c));
-                }
-                for (uint32_t c = 0; c < nChunk_; ++c) {
-                    const uint32_t slot = AivOf(c);
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagInv + slot * kAiv1));
-                    MatmulAvAndKbgLoadW(slot);
-
-                    WaitHForWH(true);
-                    MatmulWHCols0To63();
-
-                    WaitHForWH(false);
-                    WaitFlag<HardEvent::M_MTE1>(1);
-                    MatmulWHCols64To127WriteVnew();
-
-                    ReloadHAndQexp(slot);
-                    SetFlag<HardEvent::MTE1_M>(0);
-                    if (c >= 1 && c + 1 < nChunk_) {
-                        KktQk(c + 1, false);
-                    }
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
-                    CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
-                    WaitFlag<HardEvent::MTE1_M>(0);
-                    MatmulQexpHAndD(slot);
-
-                    MatmulAttnVnew(slot);
-                    if (c > 0) {
-                        CrossCoreWaitFlag<0x4, PIPE_FIX>(kFlagOd);
-                        CrossCoreWaitFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagOd + kAiv1));
-                    }
-                    FixpipeScaledO();
-                }
-                CrossCoreWaitFlag<0x4, PIPE_FIX>(kFlagOd);
-                CrossCoreWaitFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagOd + kAiv1));
+        for (auto task = FirstVarlenTask(); task.seq < seqNum_; task = NextVarlenTask(task)) {
+            BindVarlenTask(task);
+            if (nChunk_ == 0U) {
+                continue;
             }
+            for (uint32_t c = 0; c < nChunk_ && c < 2; ++c) {
+                Kkt(c, static_cast<uint8_t>(c));
+            }
+            for (uint32_t c = 0; c < nChunk_ && c < 2; ++c) {
+                Qk(c, static_cast<uint8_t>(c));
+            }
+            for (uint32_t c = 0; c < nChunk_; ++c) {
+                const uint32_t slot = AivOf(c);
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagInv + slot * kAiv1));
+                MatmulAvAndKbgLoadW(slot);
+
+                WaitHForWH(true);
+                MatmulWHCols0To63();
+
+                WaitHForWH(false);
+                WaitFlag<HardEvent::M_MTE1>(1);
+                MatmulWHCols64To127WriteVnew();
+
+                ReloadHAndQexp(slot);
+                SetFlag<HardEvent::MTE1_M>(0);
+                if (c >= 1 && c + 1 < nChunk_) {
+                    KktQk(c + 1, false);
+                }
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(kFlagV);
+                CrossCoreWaitFlag<0x4, PIPE_MTE1>(static_cast<uint16_t>(kFlagV + kAiv1));
+                WaitFlag<HardEvent::MTE1_M>(0);
+                MatmulQexpHAndD(slot);
+
+                MatmulAttnVnew(slot);
+                if (c > 0) {
+                    CrossCoreWaitFlag<0x4, PIPE_FIX>(kFlagOd);
+                    CrossCoreWaitFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagOd + kAiv1));
+                }
+                FixpipeScaledO();
+            }
+            CrossCoreWaitFlag<0x4, PIPE_FIX>(kFlagOd);
+            CrossCoreWaitFlag<0x4, PIPE_FIX>(static_cast<uint16_t>(kFlagOd + kAiv1));
         }
         WaitFlag<HardEvent::M_MTE1>(0);
         WaitFlag<HardEvent::M_MTE1>(1);
@@ -1575,14 +1588,14 @@ private:
 
     __aicore__ inline void ProcessAic()
     {
-        if (!hasHead_) {
+        if (!hasWork_) {
             return;
         }
         SetFlag<HardEvent::M_MTE1>(0);
         SetFlag<HardEvent::M_MTE1>(1);
         SetFlag<HardEvent::FIX_M>(0);
         SetFlag<HardEvent::FIX_M>(1);
-        for (uint32_t head = headBegin_; head < totalHeads_; head += aicNum_) {
+        for (uint32_t head = blockIdx_; head < totalHeads_; head += aicNum_) {
             // Chunk 0 uses L0C bank 0 and chunk 1 uses bank 1, so the second
             // MMAD overlaps the first fixpipe. Both K@K still finish before
             // either Q@K, so AIV1's inverse is not waiting out AIV0's Q@K.
@@ -1684,7 +1697,7 @@ private:
     bool egUseDiff_ = false;
     uint32_t sub_ = 0;
     uint32_t aicNum_ = 1;
-    uint32_t headBegin_ = 0;
+    uint32_t blockIdx_ = 0;
     uint32_t batchSize_ = 0;
     uint32_t valueHeadNum_ = 0;
     uint32_t keyHeadNum_ = 0;
@@ -1710,7 +1723,8 @@ private:
     uint32_t allowNegEigval_ = 0;
     uint32_t nzArmed_ = 0;
     float scale_ = 0.f;
-    bool hasHead_ = false;
+    bool hasWork_ = false;
+    bool splitSequence_ = false;
 };
 
 }  // namespace GdnFwd32

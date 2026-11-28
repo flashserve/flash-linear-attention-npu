@@ -7,6 +7,7 @@
 #include "aclnn_chunk_gated_delta_rule_fwd.h"
 
 #include "chunk_gated_delta_rule_fwd.h"
+#include "../op_tiling/arch35/chunk_gated_delta_rule_fwd_chunk32/chunk_gated_delta_rule_fwd_32_tiling_data.h"
 #include "../../../chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 #include "../../../chunk_fwd_o/op_host/op_api/chunk_fwd_o.h"
 #include "../../../chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
@@ -1313,6 +1314,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         // BSND o directly. Only the inputs are transposed here.
         const bool sequenceMajor = std::strcmp(params.layout, "BSND") == 0 ||
                                    std::strcmp(params.layout, "TND") == 0;
+        const int64_t qkvLayout = std::strcmp(params.layout, "NTD") == 0 ? CHUNK32_QKV_LAYOUT_NTD : 0;
         const int64_t batch = Dim(params.q, 0);
         const int64_t hv = sequenceMajor ? Dim(params.v, 2) : Dim(params.v, 1);
         const int64_t kDim = Dim(params.q, 3);
@@ -1390,7 +1392,7 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             params.chunkIndicesOptional, true,
             CHUNK_GATED_DELTA_RULE_FWD_CHUNK_32, params.scale, exportGA,
             params.oOut, finalState, gCumsumArg, aArg,
-            0, 0, 0, params.stateVFirst, params.allowNegEigval,
+            0, qkvLayout, 0, params.stateVFirst, params.allowNegEigval,
             qHatHead, kHatHead, qRstdArg, kRstdArg, exportL2,
             exportH ? params.hOutOptional
                     : executorPtr->AllocTensor(MakeShape({1}), DataType::DT_BF16, Format::FORMAT_ND),
