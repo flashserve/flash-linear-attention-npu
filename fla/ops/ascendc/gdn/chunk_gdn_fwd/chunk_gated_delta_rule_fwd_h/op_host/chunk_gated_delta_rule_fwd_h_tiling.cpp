@@ -161,6 +161,12 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdH(gert::TilingContext *context)
 
     context->SetBlockDim(blockDim);
     size_t *currentWorkspace = context->GetWorkspaceSizes(1);
+    if (ascendcPlatform.GetCurNpuArch() == NpuArch::DAV_3510 &&
+        !storeFinalState && plainTiling.stateDataType == GDN_FWD_H_DTYPE_FP32) {
+        // Graph callers can omit final_state. Append the carry after the two sequence metadata arrays.
+        workspaceSize += static_cast<size_t>(plainTiling.batch) * logicalVHeads * logicalKDim * logicalVDim *
+                         sizeof(float);
+    }
     currentWorkspace[0] = workspaceSize;
 
     tiling.set_batch(plainTiling.batch);

@@ -395,10 +395,7 @@ public:
         // load first matrix A tile from GM to L1
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListId]);
         if (clearL1Padding && !useExternalL1AThisCall) {
-            AscendC::InitConstValueParams<ElementA> clearParams(
-                1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
-                static_cast<ElementA>(0));
-            AscendC::InitConstValue(l1ATensorList[l1AListId], clearParams);
+            ClearL1Tile<L1A_TILE_SIZE>(l1ATensorList[l1AListId]);
         }
         auto tensorL1A = tla::MakeTensor(
             useExternalL1AThisCall ? externalL1ATensor : l1ATensorList[l1AListId],
@@ -428,10 +425,7 @@ public:
         // load first matrix B tile from GM to L1
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListId]);
         if (clearL1Padding) {
-            AscendC::InitConstValueParams<ElementB> clearParams(
-                1, static_cast<uint16_t>(L1B_TILE_SIZE / 32), 0,
-                static_cast<ElementB>(0));
-            AscendC::InitConstValue(l1BTensorList[l1BListId], clearParams);
+            ClearL1Tile<L1B_TILE_SIZE>(l1BTensorList[l1BListId]);
         }
         auto tensorL1B = tla::MakeTensor(l1BTensorList[l1BListId], L1B_LAYOUT, Arch::PositionL1{});
         auto tensorTileB = GetTile(tensorB, tla::MakeCoord(0, 0), tla::MakeShape(kL1Actual, nBlockActual));
@@ -494,10 +488,7 @@ public:
                 // load next matrix A tile from GM to L1
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1AEventList[l1AListIdNext]);
                 if (clearL1Padding) {
-                    AscendC::InitConstValueParams<ElementA> clearParams(
-                        1, static_cast<uint16_t>(L1A_TILE_SIZE / 32), 0,
-                        static_cast<ElementA>(0));
-                    AscendC::InitConstValue(l1ATensorList[l1AListIdNext], clearParams);
+                    ClearL1Tile<L1A_TILE_SIZE>(l1ATensorList[l1AListIdNext]);
                 }
                 if constexpr (ENABLE_L1_RESIDENT) {
                     if (lastAddrA[l1AListIdNext] != tensorTileA.data().GetPhyAddr()
@@ -520,10 +511,7 @@ public:
                 // load next matrix B tile from GM to L1
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BEventList[l1BListIdNext]);
                 if (clearL1Padding) {
-                    AscendC::InitConstValueParams<ElementB> clearParams(
-                        1, static_cast<uint16_t>(L1B_TILE_SIZE / 32), 0,
-                        static_cast<ElementB>(0));
-                    AscendC::InitConstValue(l1BTensorList[l1BListIdNext], clearParams);
+                    ClearL1Tile<L1B_TILE_SIZE>(l1BTensorList[l1BListIdNext]);
                 }
                 if constexpr (ENABLE_L1_RESIDENT) {
                     if (lastAddrB[l1BListIdNext] != tensorTileB.data().GetPhyAddr()
@@ -690,6 +678,17 @@ public:
     }
 
 protected:
+    template <uint32_t TileBytes, typename Element>
+    CATLASS_DEVICE void ClearL1Tile(AscendC::LocalTensor<Element> tile)
+    {
+        AscendC::InitConstValueParams<Element> params(1, static_cast<uint16_t>(TileBytes / 32), 0, Element(0));
+        AscendC::InitConstValue(tile, params);
+        if constexpr (std::is_same_v<ArchTag, Arch::Ascend950>) {
+            // The next GM load writes the valid region of the same L1 tile.
+            AscendC::PipeBarrier<PIPE_MTE2>();
+        }
+    }
+
     template<class TensorA>
     CATLASS_DEVICE auto GetTileA(TensorA &tensorA, uint32_t mIndex, uint32_t kIndex, uint32_t mSize, uint32_t kSize)
     {

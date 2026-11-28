@@ -39,6 +39,24 @@ CATLASS_DEVICE T Max(T a, T b) {
 
 namespace Catlass::Gemm::Block {
 
+// A graph may omit final_state while the next chunk still needs the FP32 state.
+CATLASS_DEVICE bool FwdHStoresState(const __gm__ ChunkGatedDeltaRuleFwdHTilingData *tiling)
+{
+    constexpr int64_t fp32 = 2;
+    return tiling->storeFinalState || tiling->stateDataType == fp32;
+}
+
+CATLASS_DEVICE GM_ADDR FwdHStateBuffer(const __gm__ ChunkGatedDeltaRuleFwdHTilingData *tiling,
+                                      GM_ADDR finalState, GM_ADDR workspace)
+{
+    if (tiling->storeFinalState || !FwdHStoresState(tiling)) {
+        return finalState;
+    }
+    // Both sequence metadata arrays have the same aligned size.
+    const auto metadataBytes = tiling->numChunksWorkspaceOffset - tiling->numSeqWorkspaceOffset;
+    return workspace + tiling->numChunksWorkspaceOffset + metadataBytes;
+}
+
 struct GDNFwdHOffsets {
     uint32_t hSrcOffset;
     uint32_t hDstOffset;
@@ -145,7 +163,7 @@ struct BlockSchedulerGdnFwdH {
         shapeBatch = gdnFwdHTilingData->shapeBatch;
         tokenBatch = gdnFwdHTilingData->tokenBatch;
         useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
+        storeFinalState = FwdHStoresState(gdnFwdHTilingData);
         numSeqWorkspaceOffset = gdnFwdHTilingData->numSeqWorkspaceOffset;
         numChunksWorkspaceOffset = gdnFwdHTilingData->numChunksWorkspaceOffset;
 

@@ -59,6 +59,8 @@ h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
 
 `h` 是每个 chunk 的起始状态，前向和反向直接消费 NT-first 存储。`final_state` 仅供调用者输出，
 在 `output_final_state=false` 时不创建公开输出。
+在 A5（Ascend 950）上，状态为 FP32 时，跨 chunk 递推保留 FP32 精度，公开的 `h` 使用输入数据类型。对同一组输入切换
+`output_final_state`，`h` 和 `v_new` 逐元素相同。
 
 ## aclnn
 

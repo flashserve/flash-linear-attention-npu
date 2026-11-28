@@ -233,7 +233,8 @@ public:
         vHeadDim = gdnFwdHTilingData->vHeadDim;
         chunkSize = gdnFwdHTilingData->chunkSize;
         useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
+        storeFinalState = Block::FwdHStoresState(gdnFwdHTilingData);
+        final_state = Block::FwdHStateBuffer(gdnFwdHTilingData, final_state, user);
         isVariedLen = gdnFwdHTilingData->isVariedLen;
         shapeBatch = gdnFwdHTilingData->shapeBatch;
         tokenBatch = gdnFwdHTilingData->tokenBatch;
