@@ -46,7 +46,9 @@ npu-smi info
 ```sh
 source /usr/local/Ascend/ascend-toolkit/set_env.sh   # 每次进入新 shell / Docker / venv 都要重新执行
 
-# 本仓不自动安装 torch / torch_npu / triton-ascend，需按 CANN 与 Python 版本自行安装
+# 按环境选择 torch 版本（此处以 2.12.0 为例），安装 CPU 构建及与之匹配的 torch_npu
+python scripts/install_cpu_runtime.py 2.12.0
+# triton-ascend 需按 CANN 与 Python 版本自行安装
 
 python -m pip install -r requirements.txt
 python scripts/check_npu_env.py            # 无 NPU 的纯构建环境可加 --build-only

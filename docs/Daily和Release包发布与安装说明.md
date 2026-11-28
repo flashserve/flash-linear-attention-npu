@@ -35,6 +35,19 @@ flowchart LR
 
 安装前准备与 CANN、Python 配套的 `torch`、`torch_npu`、`triton-ascend` 及其他运行时依赖，并加载 CANN 的 `set_env.sh`。下面使用 `--no-deps`，不会安装或调整依赖。每个环境选择与机器匹配的一个 NPU 包。
 
+wheel 声明 `torch>=2.7.1`、`torch_npu>=2.7.1`，两项下限均允许多个版本。
+直接用 pip 安装 wheel 时，这两个条件也能匹配 CUDA 版 torch。在新环境中先执行以下命令，
+为此次安装选择 CPU 版 torch，并让 pip 同时解析配套的 torch_npu：
+
+```sh
+TORCH_VERSION=2.12.0  # 示例，按 Python 和 CANN 环境选择已提供 CPU wheel 的版本
+python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+  "torch>=2.7.1,==${TORCH_VERSION}+cpu" "torch_npu>=2.7.1"
+```
+
+下载源提供 CPU wheel，`+cpu` 限定本次安装可选的 torch 构建。缺少对应版本或架构时 pip 会报错。
+在源码仓库中也可执行 `python scripts/install_cpu_runtime.py "$TORCH_VERSION"`。
+
 ## 3. 安装命令
 
 ### 3.1 安装正式 Release
