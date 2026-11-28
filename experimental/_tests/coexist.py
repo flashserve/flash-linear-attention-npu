@@ -2,6 +2,7 @@
 import argparse
 import importlib
 from pathlib import Path
+import sys
 
 
 def check_formal(torch, device):
@@ -20,6 +21,10 @@ def check_formal(torch, device):
 
 def check_experimental(torch, device):
     from fla_npu_experimental import fused_recurrent_rwkv8
+    if "fla_npu" in sys.modules:
+        from fla_npu.ops.ascendc import fused_recurrent_rwkv8 as short, npu_fused_recurrent_rwkv8
+        assert short is npu_fused_recurrent_rwkv8 is fused_recurrent_rwkv8
+        fused_recurrent_rwkv8 = npu_fused_recurrent_rwkv8
     from accuracy import load_cases
     import rwkv8_reference as reference
 
@@ -33,6 +38,18 @@ def check_experimental(torch, device):
         results = reference.check_outputs(outputs, golden, inputs)
         if not all(item["pass"] for item in results.values()):
             raise AssertionError((case["name"], results))
+
+
+def enable(name, enabled):
+    if name == "fla_npu":
+        importlib.import_module("fla_npu.ops.ascendc")
+        if not enabled:
+            assert "fla_npu_experimental" not in sys.modules
+    elif "fla_npu" in enabled:
+        from fla_npu.ops.ascendc import npu_fused_recurrent_rwkv8
+        assert callable(npu_fused_recurrent_rwkv8)
+    else:
+        importlib.import_module(name)
 
 
 def main():
@@ -57,14 +74,14 @@ def main():
     for name in order:
         if args.conflict and name != winner:
             try:
-                importlib.import_module(name)
+                enable(name, enabled)
             except ImportError as exc:
                 if args.conflict not in str(exc):
                     raise
             else:
                 raise AssertionError(f"{name} unexpectedly accepted the conflict")
         else:
-            importlib.import_module(name)
+            enable(name, enabled)
             enabled.append(name)
 
     import torch

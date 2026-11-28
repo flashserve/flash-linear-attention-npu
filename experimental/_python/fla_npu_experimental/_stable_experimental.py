@@ -1,6 +1,102 @@
-"""Public Python wrappers for experimental Stable operators."""
-from ._loader import validate_active_environment
+"""Python wrappers and Stable dispatcher for experimental operators."""
+import ctypes
+import hashlib
+import json
+import os
+from pathlib import Path
+
+from . import _loader
 from ._contract import validate_chunk_len
+
+_LIB = None
+_OPS = None
+
+
+def _namespace():
+    import sys
+    return getattr(sys.modules[__package__], "_NAMESPACE", "fla_npu_experimental_stable")
+
+
+def _package_contract(directory, libraries):
+    build = json.loads((directory / "_build.json").read_text(encoding="utf-8"))
+    from ._op_abi import validated_contracts
+    from ._layers import manager
+    manifest = manager.manifest(directory)
+    active_ops = set(manifest["exports"])
+    plan = _loader._PLAN
+    if plan and plan.get("layer") and directory.resolve() != (Path(plan["layer"]) / manager.PACKAGE).resolve():
+        # Covered exports use the overlay's adapter and contract, not the base's.
+        active_ops.difference_update(plan["exports"])
+    vendors = [Path(p).parents[2] for p in libraries]
+    contracts = [validated_contracts(vendor, require_manifest=True) for vendor in vendors]
+    for name in sorted(active_ops):
+        op = manifest["operators"][name]
+        for symbol, expected in op["requires"].items():
+            actual = next((c[symbol] for c in contracts if symbol in c), None)
+            if actual is None or tuple(actual) != tuple(expected):
+                raise RuntimeError(f"Experimental ACLNN contract mismatch: {symbol}")
+    if manifest["source_hash"] != build["source_hash"]:
+        raise RuntimeError("Experimental layer source fingerprint mismatch")
+    library = _loader._inside(directory / "libfla_npu_experimental_stable.so", directory, "launcher")
+    if hashlib.sha256(library.read_bytes()).hexdigest() != build["launcher_sha256"]:
+        raise RuntimeError("Experimental launcher hash mismatch")
+    return build, library, active_ops
+
+
+def load():
+    global _LIB, _OPS
+    _loader.validate_active_environment()
+    if _LIB is not None:
+        return
+    directory = Path(__file__).resolve().parent
+    build, library, expected = _package_contract(directory, _loader._LIBRARIES)
+    import torch
+    import torch_npu
+    # This library registers only its experimental namespace; it is not a CPython extension.
+    torch.ops.load_library(str(library))
+    probe = ctypes.CDLL(str(library))
+    stamp = probe.fla_npu_experimental_source_hash
+    stamp.restype = ctypes.c_char_p
+    if stamp().decode() != build["source_hash"]:
+        raise RuntimeError("Experimental launcher source fingerprint mismatch")
+    register = probe.fla_npu_experimental_register
+    register.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
+    register.restype = ctypes.c_char_p
+    error = register(_namespace().encode(), os.pathsep.join(_loader._LIBRARIES).encode(),
+                     ",".join(sorted(expected)).encode())
+    if error:
+        raise RuntimeError("Experimental registration failed: " + error.decode("utf-8", "replace"))
+    for name in expected:
+        if not hasattr(getattr(torch.ops, _namespace()), name):
+            raise RuntimeError(f"Experimental launcher is missing {name}")
+    _OPS = expected
+    _LIB = probe
+
+
+def invoke(name, reference, arguments):
+    load()
+    if name not in _OPS:
+        raise RuntimeError(f"Operator {name} was not selected in this experimental build")
+    import torch
+    import torch_npu
+    if reference.device.type != "npu":
+        raise RuntimeError("Experimental reference tensor must be on NPU")
+    for value in arguments:
+        if not isinstance(value, torch.Tensor):
+            continue
+        if value.device != reference.device:
+            raise RuntimeError("All experimental data tensor arguments must be on the same NPU device")
+    with torch.npu.device(reference.device):
+        # Match main's queue capability: only a queued launch can use NoWait.
+        probe = _LIB.fla_npu_experimental_queue_enqueue_available
+        probe.restype = ctypes.c_int32
+        accessor = getattr(torch_npu._C, "_npu_getCurrentRawStreamNoWait", None) if probe() else None
+        accessor = accessor or getattr(torch_npu._C, "_npu_getCurrentRawStream", None)
+        if accessor is None:
+            raise RuntimeError("torch_npu does not expose a safe current raw stream accessor")
+        stream = int(accessor(reference.device.index))
+        return getattr(getattr(torch.ops, _namespace()), name)(*arguments, stream)
+
 
 def _shape(tensor):
     return tuple(tensor.shape)
@@ -41,7 +137,7 @@ def fused_recurrent_rwkv8(
     否则为 None）；sa 为每 token 更新前的 state@z，(B,H,T,V) fp32
     （output_sa=True 时产出，否则为 None）。
     """
-    validate_active_environment()
+    _loader.validate_active_environment()
     import torch
 
     allowed_dtypes = {torch.float16, torch.bfloat16, torch.float32}
@@ -81,7 +177,6 @@ def fused_recurrent_rwkv8(
         if initial_state.dtype != torch.float32:
             raise RuntimeError("npu_fused_recurrent_rwkv8: initial_state must be float32.")
 
-    from ._stable import invoke
     return invoke("npu_fused_recurrent_rwkv8", q,
                   (q, w, k, v, z, b, initial_state, float(scale), reverse,
                    output_chunk_state, output_sa, chunk_len))

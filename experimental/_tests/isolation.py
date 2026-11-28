@@ -180,8 +180,8 @@ def checked_import(name, expected):
 
 def load_experimental(profile):
     checked_import("fla_npu_experimental", profile["experimental_package"])
-    from fla_npu_experimental import _stable
-    _stable.load()
+    from fla_npu_experimental import _stable_experimental
+    _stable_experimental.load()
     state = observe()
     declared = json.loads((Path(profile["experimental_package"]) / "_build.json").read_text())["operators"]
     expected = {"fla_npu_experimental_stable::npu_" + op["name"].replace("-", "_").replace(".", "_")
@@ -227,11 +227,11 @@ def exercise(scenario, profile, result):
         target = _loader.validate_active_environment
     elif scenario == "unselected_operator":
         load_experimental(profile)
-        from fla_npu_experimental import _stable
+        from fla_npu_experimental import _stable_experimental
         absent = "npu_unselected_fixture"
-        if absent in _stable._OPS:
+        if absent in _stable_experimental._OPS:
             raise AssertionError("The rejection fixture must not be registered")
-        target = lambda: _stable.invoke(absent, None, ())
+        target = lambda: _stable_experimental.invoke(absent, None, ())
     elif scenario == "corrupt_host":
         path = vendor / "op_api/lib/libcust_opapi.so"
         path.write_bytes(path.read_bytes() + b"invalid")

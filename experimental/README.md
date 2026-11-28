@@ -83,14 +83,15 @@ python -m pip install --no-deps /absolute/development-wheels/*.whl
 unset FLA_NPU_DISABLE_PTH
 python -m pip install /absolute/path/to/experimental.whl
 python - <<'PY'
-from fla_npu_experimental import fused_recurrent_rwkv8
-from fla_npu.ops.ascendc import npu_recompute_w_u_fwd
+from fla_npu.ops.ascendc import npu_recompute_w_u_fwd, npu_fused_recurrent_rwkv8
 PY
 ```
 
+两个算子共用 `fla_npu.ops.ascendc` 入口。实验算子也支持省略 `npu_` 前缀，例如 `from fla_npu.ops.ascendc import fused_recurrent_rwkv8`。只有取用实验算子时，公共入口才导入实验包，并使用实验侧当前选中的 wrapper。
+
 启动钩子检查双方当前选中 vendor 的 CANN opType 和动态库导出的 ACLNN 符号。无重名时，两套 vendor 在 CANN 初始化前就绪，两种导入顺序都可以使用。
 
-有重名时，进程启动时保留正式 vendor。若先导入算子包，先导入的一侧取得使用权，后导入侧在加载前报出冲突名称和来源。若业务先执行普通 NPU 运算，CANN 已加载正式 vendor，随后仍可调用正式算子，导入实验侧会报出冲突。此时要使用实验侧，请在新进程里先导入 `fla_npu_experimental`，再初始化 NPU。
+有重名时，进程启动时保留正式 vendor。从公共入口导入会先启用正式包，取用实验算子时会报出冲突名称和来源。若业务先执行普通 NPU 运算，CANN 已加载正式 vendor，正式算子也可继续调用。要优先使用实验侧，请在新进程里先从 `fla_npu_experimental` 导入，再初始化 NPU；此时后导入的正式包会报出冲突。
 
 首次 pip 安装提供实验适配层和 OPP。后续实验增量使用下文的实验管理入口，正式增量继续由正式管理器管理。仅有正式 wheel 时，实验 `.run` 不能提供新算子的 Python 入口。
 
@@ -163,8 +164,8 @@ python -m fla_npu_experimental_manage --remove-overlay
 site-packages/
 ├── fla_npu_experimental_manage.py                # 实验管理入口
 └── fla_npu_experimental/                         # 以下均属实验包
-    ├── __init__.py / _stable_experimental.py     # 公开入口 / 实验算子 Python wrapper
-    ├── _stable.py                                # 加载 launcher 并调用 dispatcher
+    ├── __init__.py                               # 实验包导出入口
+    ├── _stable_experimental.py                   # Python wrapper、launcher 加载和 dispatcher 调用
     ├── _layers.py / _wheel_overlay.py            # 布局配置 / 公共管理器副本
     ├── layer_manifest.json / _stable_hash.py / _build.json
     ├── libfla_npu_experimental_stable.so         # base 适配层

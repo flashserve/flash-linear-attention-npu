@@ -194,7 +194,9 @@ done
 
 初始化 CANN toolkit 后，使用 Python 默认的 `.pth` 启动行为，无需手动 `source` 实验环境脚本。图中以两个 wheel 内置的适配层和 OPP 为例。有重名时，启动钩子先保留正式 vendor 及其增量路径。若两个包都还没导入，实验包能否先启用取决于 CANN 是否已加载正式 vendor 的库。
 
-![正式 wheel 的 Python wrapper 位于 fla_npu/ops/ascendc/_stable.py，实验 wheel 的 wrapper 位于 fla_npu_experimental/_stable_experimental.py。图中列出两侧的安装目录、重名检查和调用路径。](assets/wheel-install-and-call.svg)
+两侧算子都从 `fla_npu.ops.ascendc` 导入，支持带或不带 `npu_` 前缀。公共入口按实验 base 和已启用增量 wheel 的清单列出实验算子，取用时才导入实验包并返回对应的 wrapper。仅使用正式算子时不会启用实验包。直接从 `fla_npu_experimental` 导入的写法同样可用。
+
+![两侧算子共用 fla_npu.ops.ascendc 入口；正式 wrapper、launcher 加载与 dispatcher 调用位于正式包的 ops/ascendc/_stable.py，实验侧对应代码位于实验包的 _stable_experimental.py。](assets/wheel-install-and-call.svg)
 
 后续用管理器追加增量时，各侧在自己的包目录下维护 `opp/wheel_layers/` 和 `opp/.overlay.lock`。增量 wheel 可更新本侧适配层与 OPP，增量 `.run` 更新本侧 OPP 并沿用已选适配层。
 

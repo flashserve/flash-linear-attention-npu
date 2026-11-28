@@ -155,7 +155,8 @@ def _discover_pair(formal_vendors):
     if not hasattr(experimental, "selected_vendors"):
         return None
     from fla_npu_coexist import InstalledPair
-    return InstalledPair(formal, peer, formal_vendors, experimental.selected_vendors)
+    return InstalledPair(formal, peer, formal_vendors, experimental.selected_vendors,
+                         getattr(experimental, "layer_manager", None))
 
 
 def _setup() -> None:

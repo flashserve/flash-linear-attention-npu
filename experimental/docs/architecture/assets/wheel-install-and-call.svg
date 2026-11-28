@@ -87,7 +87,7 @@
   <g transform="translate(552 639)">
     <rect width="504" height="72" rx="9" fill="#e4f4ec" stroke="#b6d9c8"/>
     <text x="20" y="26" class="label experimental">实验 Python 入口（wrapper 位于 _stable_experimental.py）</text>
-    <text x="20" y="53" class="entry">fla_npu_experimental.fused_recurrent_rwkv8</text>
+    <text x="20" y="53" class="entry">fla_npu.ops.ascendc.npu_fused_recurrent_rwkv8</text>
     <path d="M252 73V95" class="arrow"/>
     <rect y="102" width="504" height="94" rx="9" fill="#f1f9f5" stroke="#b6d9c8"/>
     <text x="20" y="129" class="label experimental">PyTorch dispatcher 命名空间与注册它的 launcher</text>

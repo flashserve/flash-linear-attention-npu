@@ -1,5 +1,6 @@
 """Coordinate two independently installed wheel vendors before CANN initialization."""
 from contextlib import contextmanager
+from importlib import import_module
 import json
 import os
 from pathlib import Path
@@ -27,8 +28,19 @@ def _inventory(vendors, abi):
     return types, symbols
 
 
+def _adapter_exports(package, manager):
+    """Read public names from base and enabled wheel layers without importing operators."""
+    exports = set(manager.manifest(package)["exports"])
+    snapshot = manager.active(package)
+    if snapshot is not None:
+        adapters, _ = manager.component_vendors(package, snapshot)
+        for adapter in adapters:
+            exports.update(manager.manifest(adapter / manager.PACKAGE)["exports"])
+    return exports
+
+
 class InstalledPair:
-    def __init__(self, formal, experimental, formal_vendors, select_experimental):
+    def __init__(self, formal, experimental, formal_vendors, select_experimental, layer_manager=None):
         self.formal = formal
         self.experimental = experimental
         self.vendors = {formal: tuple(formal_vendors), experimental: ()}
@@ -36,19 +48,43 @@ class InstalledPair:
         self.active = set()
         self.errors = {}
         self.conflicts = []
+        self.experimental_exports = set()
         abi = abi_module(formal)
         inventories = {}
         for root in self.vendors:
             try:
                 if root == experimental:
                     self.vendors[root] = tuple(select_experimental(root))
+                    if layer_manager is not None:
+                        self.experimental_exports = _adapter_exports(root, layer_manager(root))
                 inventories[root] = _inventory(self.vendors[root], abi)
-            except (OSError, ValueError, RuntimeError) as exc:
+            except (OSError, ValueError, RuntimeError, SyntaxError) as exc:
                 self.errors[root] = str(exc)
         if not self.errors:
             for kind, first, second in zip(("CANN opType", "ACLNN"), inventories[formal], inventories[experimental]):
                 for name in sorted(first.keys() & second.keys()):
                     self.conflicts.append(f"{kind} {name}: {first[name]} and {second[name]}")
+
+    def expose_experimental_ops(self, namespace):
+        """Resolve the selected peer wrapper only when its public name is requested."""
+        aliases = {}
+        for name in sorted(self.experimental_exports):
+            short = name.removeprefix("npu_")
+            for alias in (name, short):
+                if alias not in namespace:
+                    aliases[alias] = short
+
+        def resolve(name):
+            if name not in aliases:
+                raise AttributeError(f"module {namespace['__name__']!r} has no attribute {name!r}")
+            peer = import_module("fla_npu_experimental")
+            wrapper = getattr(peer, aliases[name])
+            namespace[name] = wrapper
+            return wrapper
+
+        namespace["__getattr__"] = resolve
+        namespace["__dir__"] = lambda: sorted(namespace.keys() | aliases.keys())
+        namespace["__all__"].extend(aliases)
 
     def prepare(self, vendors):
         external = []

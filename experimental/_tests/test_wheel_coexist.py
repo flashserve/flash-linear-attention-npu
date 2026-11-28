@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+from types import ModuleType
 import unittest
 from unittest.mock import patch
 
@@ -80,6 +81,29 @@ class CoexistTest(unittest.TestCase):
         with pair.activating(self.formal):
             pass
         self.assertEqual(pair.active, {self.formal})
+
+    def test_common_python_names_resolve_only_on_access(self):
+        base = self.vendor(self.formal, "base", "A", "aclnnA")
+        other = self.vendor(self.experimental, "exp", "B", "aclnnB")
+        pair = InstalledPair(self.formal, self.experimental, [base], lambda _: [other])
+        pair.experimental_exports = {"npu_probe"}
+        public = ModuleType("fla_npu.ops.ascendc")
+        public.__all__ = ["formal"]
+        public.formal = object()
+        pair.expose_experimental_ops(vars(public))
+        with patch("fla_npu_coexist.import_module") as load:
+            self.assertIn("probe", dir(public))
+            self.assertEqual(set(public.__all__), {"formal", "probe", "npu_probe"})
+            self.assertFalse(hasattr(public, "unknown"))
+            load.assert_not_called()
+            load.side_effect = ImportError("Conflicting operator vendors")
+            with self.assertRaisesRegex(ImportError, "Conflicting operator vendors"):
+                public.npu_probe
+            self.assertNotIn("npu_probe", vars(public))
+            load.side_effect = None
+            self.assertIs(public.npu_probe, load.return_value.probe)
+            self.assertIs(public.probe, public.npu_probe)
+            load.assert_called_with("fla_npu_experimental")
 
     def test_disjoint_vendors_keep_local_overlay_order(self):
         base = self.vendor(self.formal, "base", "A", "aclnnA")
