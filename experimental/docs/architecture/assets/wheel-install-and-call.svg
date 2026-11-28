@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1000" viewBox="0 0 1080 1000" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1188" viewBox="0 0 1080 1188" role="img" aria-labelledby="title desc">
   <title id="title">正式 wheel 与实验 wheel 的安装目录和同进程调用</title>
-  <desc id="desc">两列从左到右展示同一 site-packages 中的文件变化。正式 wheel 已有 fla_npu 和 Python 启动钩子，pip 追加实验 wheel 后新增同级的 fla_npu_experimental 包和独立管理入口。启动钩子检查两个 vendor 的 CANN opType 和 ACLNN 符号。无冲突时，同一进程的两个 Python 入口分别经过各自的 dispatcher、launcher 和 libcust_opapi.so 在 NPU 上执行。重名时，先使用 NPU 的业务沿用正式 vendor。先导入算子包则选中该侧，另一侧报出冲突名称。</desc>
+  <desc id="desc">上半图列出正式 wheel 已有文件和实验 wheel 新增文件。Python 启动时检查两侧所选 vendor 的 CANN opType 和 ACLNN 符号。无重名时两侧都可启用。有重名时，先保留正式 vendor 及其增量路径。若正式包先成功导入，或 CANN 已加载正式 vendor 的库，则拒绝实验侧。若 CANN 尚未加载正式 vendor 且实验包先成功导入，则切换到实验侧并拒绝正式侧。被拒绝的一侧在注册前报出冲突名称及来源，已选侧仍可调用。底部列出两个包各自启用后的调用链。</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M1 1 L8 5 L1 9" fill="none" stroke="#536877" stroke-width="1.5"/>
@@ -20,7 +20,7 @@
       .guide { fill: none; stroke: #99a9b3; stroke-width: 1.4; }
     </style>
   </defs>
-  <rect width="1080" height="1000" rx="12" fill="white"/>
+  <rect width="1080" height="1188" rx="12" fill="white"/>
 
   <!-- The two columns are siblings under the same installation root. -->
   <text x="26" y="42" class="section">安装到同一个 site-packages/</text>
@@ -59,15 +59,26 @@
     <text x="20" y="316" class="body muted">追加安装保留左列文件及正式增量状态。</text>
   </g>
 
-  <text x="26" y="445" class="section">新 Python 进程中的调用关系</text>
-  <rect x="24" y="462" width="1032" height="104" rx="10" fill="#f6f8fa" stroke="#c6d1d8"/>
-  <text x="44" y="491" class="heading">正式 wheel 的 .pth 启动钩子发现双方 vendor</text>
-  <text x="44" y="521" class="body">检查 CANN opType 和 ACLNN 符号。无重名时，在 CANN 初始化前将双方 vendor 加入 ASCEND_CUSTOM_OPP_PATH。</text>
-  <text x="44" y="547" class="body">有重名时，先用 NPU 则沿用正式侧，先导入算子包则选中该侧。另一侧在注册前报出冲突名称。</text>
-  <path d="M540 566V582 M276 582H804" class="guide"/>
-  <path d="M276 582V601" class="arrow"/><path d="M804 582V601" class="arrow"/>
+  <text x="26" y="445" class="section">进程启动时，.pth 检查两侧所选 vendor 的 CANN opType 和 ACLNN 符号</text>
+  <rect x="24" y="463" width="1032" height="48" rx="8" fill="#f6f8fa" stroke="#c6d1d8"/>
+  <text x="44" y="494" class="heading">无重名</text>
+  <text x="142" y="493" class="body">两侧 vendor 均加入 ASCEND_CUSTOM_OPP_PATH，可按任意顺序导入并调用。</text>
 
-  <g transform="translate(24 608)">
+  <rect x="24" y="523" width="1032" height="205" rx="8" fill="#fffaf2" stroke="#dec8a4"/>
+  <text x="44" y="554" class="heading">有重名</text>
+  <text x="142" y="553" class="body">启动时先保留正式 vendor 及其增量路径。随后按下列情况选择。</text>
+  <path d="M44 570H1036 M44 611H1036 M44 651H1036" stroke="#e6daca"/>
+  <text x="44" y="597" class="body">正式包先成功导入</text>
+  <text x="640" y="597" class="label formal">正式侧可用，拒绝随后导入的实验包</text>
+  <text x="44" y="637" class="body">两包都尚未导入，但 CANN 已加载正式 vendor 的库</text>
+  <text x="640" y="637" class="label formal">正式侧可用，实验包即使先导入也被拒绝</text>
+  <text x="44" y="677" class="body">CANN 尚未加载正式 vendor 的库，且实验包先成功导入</text>
+  <text x="640" y="677" class="label experimental">切换到实验侧，拒绝随后导入的正式包</text>
+  <text x="44" y="711" class="body muted">被拒绝的一侧在注册前报出冲突名称和双方来源。已选侧的路径和调用保持有效。</text>
+
+  <text x="26" y="774" class="section">各侧启用后的调用路径</text>
+
+  <g transform="translate(24 796)">
     <rect width="504" height="72" rx="9" fill="#e8f3fa" stroke="#b9d4e5"/>
     <text x="20" y="26" class="label formal">正式 Python 入口</text>
     <text x="20" y="53" class="entry">fla_npu.ops.ascendc.npu_recompute_w_u_fwd</text>
@@ -81,7 +92,7 @@
     <text x="20" y="253" class="label formal">正式 vendor 的 libcust_opapi.so</text>
     <text x="20" y="279" class="code">aclnnRecomputeWUFwd</text>
   </g>
-  <g transform="translate(552 608)">
+  <g transform="translate(552 796)">
     <rect width="504" height="72" rx="9" fill="#e4f4ec" stroke="#b6d9c8"/>
     <text x="20" y="26" class="label experimental">实验 Python 入口</text>
     <text x="20" y="53" class="entry">fla_npu_experimental.fused_recurrent_rwkv8</text>
@@ -95,7 +106,7 @@
     <text x="20" y="253" class="label experimental">实验 vendor 的 libcust_opapi.so</text>
     <text x="20" y="279" class="code">aclnnFusedRecurrentRwkv8</text>
   </g>
-  <path d="M276 906V936 M804 906V936 M276 936H804" class="guide"/>
-  <path d="M540 936V950" class="arrow"/>
-  <text x="540" y="981" text-anchor="middle" class="heading">CANN 在同一进程将各自的 kernel 下发到 NPU</text>
+  <path d="M276 1094V1124 M804 1094V1124 M276 1124H804" class="guide"/>
+  <path d="M540 1124V1138" class="arrow"/>
+  <text x="540" y="1169" text-anchor="middle" class="heading">CANN 将已启用侧的 kernel 下发到 NPU</text>
 </svg>

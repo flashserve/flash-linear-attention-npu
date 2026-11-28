@@ -192,9 +192,9 @@ done
 
 先安装正式 wheel，再在同一 Python 环境用 pip 安装面向同一 SoC 的实验 wheel。图中左列是已有文件，右列是新增文件。两个包位于同一个 `site-packages/` 下，即使文件同名（如 `libcust_opapi.so`），其完整路径也各自独立。
 
-初始化 CANN toolkit 后，保留 Python 默认的 `.pth` 启动行为，即可在新进程中导入两个包，无需手动 `source` 实验环境脚本。下半图以两个 wheel 内置的适配层和 OPP 为例。有重名时，先执行普通 NPU 运算的业务沿用正式 vendor。要选择实验侧，在第一次 NPU 运算前先导入实验包。
+初始化 CANN toolkit 后，使用 Python 默认的 `.pth` 启动行为，无需手动 `source` 实验环境脚本。图中以两个 wheel 内置的适配层和 OPP 为例。有重名时，启动钩子先保留正式 vendor 及其增量路径。若两个包都还没导入，实验包能否先启用取决于 CANN 是否已加载正式 vendor 的库。
 
-![实验 wheel 在正式包同级新增文件。同一进程中，正式和实验 Python 入口经各自的 dispatcher、launcher 和 vendor 调用 NPU 算子。](assets/wheel-install-and-call.svg)
+![实验 wheel 新增的同级目录、启动时的重名检查及各侧启用后的调用路径。无重名时两侧可同时调用，有重名时只启用选中的一侧。](assets/wheel-install-and-call.svg)
 
 后续用管理器追加增量时，各侧在自己的包目录下维护 `opp/wheel_layers/` 和 `opp/.overlay.lock`。增量 wheel 可更新本侧适配层与 OPP，增量 `.run` 更新本侧 OPP 并沿用已选适配层。
 
