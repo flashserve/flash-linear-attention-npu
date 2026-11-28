@@ -37,7 +37,8 @@ CASES = [
 MUTATIONS = {"corrupt_host", "missing_abi", "wrong_launcher", "wrong_stamp", "escaping_link"}
 RESET = {"ASCEND_CUSTOM_OPP_PATH", "FLA_NPU_DISABLE_PTH", "FLA_NPU_EXPERIMENTAL_OPP_PATH",
          "FLA_NPU_EXPERIMENTAL_OP_API_LIB", "FLA_NPU_OPP_PATH", "FLA_NPU_OP_API_LIB",
-         "FLA_NPU_OP_API_LIBS", "FLA_NPU_OVERLAY_VENDOR", "FLA_NPU_STABLE_LIB", "PYTHONPATH"}
+         "FLA_NPU_OP_API_LIBS", "FLA_NPU_OVERLAY_VENDOR", "FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR",
+         "FLA_NPU_STABLE_LIB", "PYTHONPATH"}
 
 
 def snapshot(roots):
@@ -179,8 +180,8 @@ def checked_import(name, expected):
 
 def load_experimental(profile):
     checked_import("fla_npu_experimental", profile["experimental_package"])
-    from fla_npu_experimental import _stable
-    _stable.load()
+    from fla_npu_experimental import _stable_experimental
+    _stable_experimental.load()
     state = observe()
     declared = json.loads((Path(profile["experimental_package"]) / "_build.json").read_text())["operators"]
     expected = {"fla_npu_experimental_stable::npu_" + op["name"].replace("-", "_").replace(".", "_")
@@ -226,11 +227,11 @@ def exercise(scenario, profile, result):
         target = _loader.validate_active_environment
     elif scenario == "unselected_operator":
         load_experimental(profile)
-        from fla_npu_experimental import _stable
+        from fla_npu_experimental import _stable_experimental
         absent = "npu_unselected_fixture"
-        if absent in _stable._OPS:
+        if absent in _stable_experimental._OPS:
             raise AssertionError("The rejection fixture must not be registered")
-        target = lambda: _stable.invoke(absent, None, ())
+        target = lambda: _stable_experimental.invoke(absent, None, ())
     elif scenario == "corrupt_host":
         path = vendor / "op_api/lib/libcust_opapi.so"
         path.write_bytes(path.read_bytes() + b"invalid")

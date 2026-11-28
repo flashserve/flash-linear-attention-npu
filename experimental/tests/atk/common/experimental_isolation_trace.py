@@ -16,8 +16,10 @@ def record_experimental_execution(device):
     import torch
     import fla_npu_experimental
     from fla_npu_experimental import _loader
-    owner = fla_npu_experimental.fused_recurrent_rwkv8.__module__.rsplit('.', 1)[0]
-    _stable = sys.modules[owner + '._stable']
+    wrapper_module = sys.modules[fla_npu_experimental.fused_recurrent_rwkv8.__module__]
+    owner = wrapper_module.__package__
+    # A previously installed overlay can still carry a separate launcher module.
+    runtime = wrapper_module if hasattr(wrapper_module, '_LIB') else sys.modules[owner + '._stable']
     torch.npu.synchronize(device)
     package = Path(fla_npu_experimental.__file__).resolve().parent
     expected_libraries = {Path(p).resolve() for p in _loader._LIBRARIES}
@@ -34,7 +36,7 @@ def record_experimental_execution(device):
                         if n.startswith(('fla_npu_stable::', 'fla_npu_experimental_')))
     if custom != expected_libraries or 'fla_npu' in sys.modules or any(n.startswith('fla_npu_stable::') for n in registered):
         raise AssertionError(f'Experimental NPU execution used mixed libraries or registrations: {libraries}, {registered}')
-    probe = _stable._LIB.fla_npu_experimental_queue_enqueue_available
+    probe = runtime._LIB.fla_npu_experimental_queue_enqueue_available
     probe.restype = ctypes.c_int32
     report = {'pid': os.getpid(), 'device': str(device), 'package': str(package),
               'custom_opapi': str(expected), 'wrapper_module': owner,

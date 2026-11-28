@@ -1,7 +1,34 @@
 # experimental 验证记录
 
-当前基线为 main `7065b0cd`（包含已合入的 #1177、#1148）。experimental 不跑 CI，以下区分本轮手动检查和历史实机结果。
-日志和数值明细保存在各次验证指定的输出目录；历史结果不累计为当前提交的通过数。
+experimental 使用手动验证。各次结果按日期和代码基线分别记录。
+
+## 2026-11-27 正式和实验 wheel 同进程调用
+
+基于 main `5d2eca9`，A5 / Ascend 950、CANN 9.2.0、Python 3.12.15、torch 2.13.0+cpu、torch_npu 2.13.0。在独立源码目录分别构建正式 `recompute_w_u_fwd` 和实验 RWKV8 的 run/wheel，并安装到临时 Python 环境。
+
+| 场景 | 实测结果 |
+|---|---|
+| 两种导入顺序 | 新进程自动发现两套 vendor。两种顺序分别通过正式算子恒等矩阵对拍、RWKV8 quick 三条 CPU reference 对拍。 |
+| 正式与实验各有增量 | 保留正式 run 增量，实验侧先叠加 wheel，再叠加 run，同一进程的两侧数值通过。 |
+| 独立选择增量 | 在 A5 为正式侧安装 run 增量，为实验侧安装 wheel 和 run 增量。两个变量都未设置、分别置空、同时置空、分别指定本侧 vendor 名和同时指定名称，七组新进程的 OPP 路径、实际加载的库和两侧数值均符合选择。两侧 `state.json` 的 SHA-256 前后一致。 |
+| 两侧均安装 wheel 增量 | 沿用支持双包的正式 base wheel，用 pip 安装含独立变量的实验 base wheel。分别禁用单侧后，另一侧继续使用其增量，两个算子均通过数值对拍。独立实验模式另行验证了 `source` 在正式变量为空时仍选中实验增量，在实验变量为空时选择实验 base。 |
+| 仅 opType 冲突、仅 ACLNN 符号冲突 | 临时负例分别重复 CANN 配置中的 opType 或动态库导出。各交换一次导入顺序，四次均拒绝第二侧；异常后第一侧在原进程执行并通过数值对拍。 |
+| 先用 NPU，再导入算子包 | 在 A5 重建正式 wheel。先在 NPU 上执行 PyTorch 加法并拷回 CPU，再导入包。两种重名分别交换导入顺序，四次均保留正式 vendor、拒绝实验侧，正式算子数值通过。全程只导入正式侧时也通过，修复前同一 opType 负例报 `561103`。 |
+| 正式侧已有 run 增量 | 在 opType 重名的环境先用 NPU，再尝试导入实验侧。拒绝实验侧后，正式算子通过对拍，进程映射包含原正式增量的库。仅导入 torch 和 torch_npu、尚未初始化 NPU 时，仍可先导入实验侧。 |
+| 卸载实验侧 | 移除实验增量及实验 wheel 前后，正式文件与原有正式增量状态的 SHA-256 一致；正式算子仍通过对拍。 |
+
+正常组合可在已安装两套配套 wheel 的 A5 环境复验：
+
+```bash
+python experimental/_tests/coexist.py --first formal --device 0
+python experimental/_tests/coexist.py --first experimental --device 0
+```
+
+准备了仅 `RecomputeWUFwd` 重名的实验 OPP 后，以下命令验证 NPU 已使用正式 vendor 时拒绝实验导入，并在同一进程对拍正式算子：
+
+```bash
+python experimental/_tests/coexist.py --npu-first --first experimental --conflict 'CANN opType RecomputeWUFwd' --device 0
+```
 
 ## 2026-11-13 增量验证目标与完整制品版本
 

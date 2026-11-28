@@ -7,6 +7,24 @@ import sys
 import types
 
 
+def layer_manager(package):
+    # A private namespace imports layout configuration without running package __init__.
+    alias = "_experimental_management"
+    module = types.ModuleType(alias)
+    module.__path__ = [str(package)]
+    sys.modules[alias] = module
+    spec = importlib.util.spec_from_file_location(alias + "._layers", package / "_layers.py")
+    layout = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(layout)
+    return layout.manager
+
+
+def selected_vendors(package):
+    manager = layer_manager(package)
+    vendors = manager.environment_vendors(package)
+    return vendors if vendors is not None else [package / "opp/vendors" / manager.BASE]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group(required=True)
@@ -18,15 +36,7 @@ def main(argv=None):
                         default=Path(__file__).resolve().parent / "fla_npu_experimental")
     args = parser.parse_args(argv)
     package = args.package_dir.resolve()
-    # A private namespace imports layout configuration without running package __init__.
-    alias = "_experimental_management"
-    module = types.ModuleType(alias)
-    module.__path__ = [str(package)]
-    sys.modules[alias] = module
-    spec = importlib.util.spec_from_file_location(alias + "._layers", package / "_layers.py")
-    layout = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(layout)
-    manager = layout.manager
+    manager = layer_manager(package)
     if args.shell_env:
         print(manager.shell_environment(package))
         return

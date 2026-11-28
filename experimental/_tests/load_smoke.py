@@ -4,12 +4,12 @@ from pathlib import Path
 import sys
 
 import fla_npu_experimental
-from fla_npu_experimental import _stable
+from fla_npu_experimental import _stable_experimental
 
-_stable.load()
+_stable_experimental.load()
 import torch
 
-expected = {"fla_npu_experimental_stable::" + op for op in _stable._OPS}
+expected = {"fla_npu_experimental_stable::" + op for op in _stable_experimental._OPS}
 names = set(torch._C._dispatch_get_all_op_names())
 actual = {name for name in names if name.startswith("fla_npu_experimental_stable::")}
 if expected != actual:

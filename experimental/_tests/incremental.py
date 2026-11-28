@@ -46,7 +46,7 @@ def validate(wheel, run, output, device=0):
     def exercise(name, adapter, opp, disabled=False):
         current = dict(env, FLA_A2_TRACE_DIR=str(output / (name + "-trace")))
         if disabled:
-            current["FLA_NPU_OVERLAY_VENDOR"] = ""
+            current["FLA_NPU_EXPERIMENTAL_OVERLAY_VENDOR"] = ""
         script = ('source "$1" && exec "$2" "$3" --mode quick --device "$4" --output "$5"')
         with (output / (name + ".log")).open("w") as log:
             subprocess.run(["bash", "-c", script, "incremental",

@@ -32,17 +32,20 @@ PACKAGE = "fla_npu"
 LAUNCHER = "libfla_npu_stable.so"
 STAMP = "ops/ascendc/_stable_hash.py"
 OVERLAY_PREFIX = "fla_npu_overlay_"
+OVERLAY_VENDOR_ENV = "FLA_NPU_OVERLAY_VENDOR"
 
 
-def configure_layout(*, package, base_vendor, overlay_vendor, launcher, stamp, overlay_prefix):
+def configure_layout(*, package, base_vendor, overlay_vendor, launcher, stamp, overlay_prefix,
+                     overlay_vendor_env=OVERLAY_VENDOR_ENV):
     """Configure a private module instance before use; defaults preserve fla_npu.
 
-    This describes payload paths, not a package identity or compatibility gate.
+    Each layout owns its payload paths and its process-level overlay selector.
     Callers selecting another layout must load their own module instance.
     """
-    global PACKAGE, BASE, NAME, LAUNCHER, STAMP, OVERLAY_PREFIX
+    global PACKAGE, BASE, NAME, LAUNCHER, STAMP, OVERLAY_PREFIX, OVERLAY_VENDOR_ENV
     PACKAGE, BASE, NAME = package, base_vendor, overlay_vendor
     LAUNCHER, STAMP, OVERLAY_PREFIX = launcher, stamp, overlay_prefix
+    OVERLAY_VENDOR_ENV = overlay_vendor_env
 
 
 def package_dir():
@@ -105,7 +108,7 @@ def layer_path(package, identity):
 
 
 def enabled():
-    selection = os.environ.get("FLA_NPU_OVERLAY_VENDOR")
+    selection = os.environ.get(OVERLAY_VENDOR_ENV)
     return selection is None or NAME in (part.strip() for part in selection.split(os.pathsep))
 
 

@@ -605,3 +605,8 @@ if (__name__ == "fla_npu.ops.ascendc"
         and getattr(sys.modules.get("fla_npu"), "_WHEEL_LAYER_PLAN", None)):
     from ..._wheel_layer_runtime import install_exports as _install_layer_exports
     _install_layer_exports(globals())
+
+if __name__ == "fla_npu.ops.ascendc":
+    _pair = getattr(sys.modules.get("fla_npu"), "_pair", None)
+    if _pair is not None:
+        _pair.expose_experimental_ops(globals())

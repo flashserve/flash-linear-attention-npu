@@ -20,7 +20,7 @@ STABLE = ROOT / "torch_custom/fla_npu"
 VENDOR = "fla_npu_experimental_transformer"
 PACKAGE = "fla_npu_experimental"
 LIBRARY = "libfla_npu_experimental_stable.so"
-WRAPPERS = {"fused_recurrent_rwkv8": ("_rwkv8", "fused_recurrent_rwkv8")}
+WRAPPERS = {"fused_recurrent_rwkv8": ("_stable_experimental", "fused_recurrent_rwkv8")}
 
 
 def module(name, path):
@@ -139,6 +139,17 @@ def write_layer_metadata(package, data, vendor, stamp, tier):
         f"LAYER_PROTOCOL = 1\nSOURCE_HASH = {stamp!r}\n", encoding="utf-8")
 
 
+def select_wrappers(package, selected):
+    missing = selected - WRAPPERS.keys()
+    if missing:
+        raise ValueError(f"Missing Python wrapper inventory: {sorted(missing)}")
+    exports = {WRAPPERS[name][1]: WRAPPERS[name][0] for name in sorted(selected)}
+    modules = {module_name for module_name, _ in WRAPPERS.values()}
+    for unused in modules.difference(exports.values()):
+        (package / (unused + ".py")).unlink(missing_ok=True)
+    (package / "_exports.py").write_text(f"EXPORTS = {exports!r}\n", encoding="utf-8")
+
+
 def build_wheel(data, install_root, output, compiler):
     audit = module("experimental_package_audit", ROOT / "experimental/scripts/experimental_manifest.py")
     if len(data["soc"]) != 1:
@@ -153,16 +164,7 @@ def build_wheel(data, install_root, output, compiler):
         package = stage / PACKAGE
         shutil.copytree(ROOT / "experimental/_python" / PACKAGE, package,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.so", "_build.json"))
-        selected = {op["name"] for op in data["operators"]}
-        wrappers = WRAPPERS
-        if selected - wrappers.keys():
-            raise ValueError(f"Missing Python wrapper inventory: {sorted(selected - wrappers.keys())}")
-        for name, (filename, _) in wrappers.items():
-            if name not in selected:
-                (package / (filename + ".py")).unlink(missing_ok=True)
-        (package / "_exports.py").write_text(
-            "EXPORTS = " + repr({wrappers[name][1]: wrappers[name][0] for name in sorted(selected)}) + "\n",
-            encoding="utf-8")
+        select_wrappers(package, {op["name"] for op in data["operators"]})
         shutil.copytree(install_root, package / "opp", symlinks=True)
         shutil.copy2(STABLE / "fla_npu/_op_abi.py", package / "_op_abi.py")
         adapters = prepare(data, stage)
