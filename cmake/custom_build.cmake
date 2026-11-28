@@ -782,6 +782,14 @@ function(filter_aclnn_headers_by_skip_flag input_headers output_headers)
     set(${output_headers} ${filtered_headers} PARENT_SCOPE)
 endfunction()
 
+# Keep generated Inner prototypes with the vendor ABI metadata, outside SDK includes.
+if (BUILD_OPEN_PROJECT AND NOT ENABLE_BUILT_IN AND generate_aclnn_inner_srcs)
+    set(generate_aclnn_inner_headers ${generate_aclnn_inner_srcs})
+    list(TRANSFORM generate_aclnn_inner_headers REPLACE "\\.cpp$" ".h")
+    install(FILES ${generate_aclnn_inner_headers}
+            DESTINATION packages/vendors/${VENDOR_NAME}_transformer/op_api/abi/inner)
+endif()
+
 if (generate_aclnn_headers)
     filter_aclnn_headers_by_skip_flag("${generate_aclnn_headers}" filtered_generate_aclnn_headers)
     set(generate_aclnn_headers ${filtered_generate_aclnn_headers})
@@ -853,7 +861,7 @@ if (BUILD_OPEN_PROJECT)
     )
 
     if (generate_aclnn_inner_srcs)
-        add_custom_command(OUTPUT ${generate_aclnn_inner_srcs}
+        add_custom_command(OUTPUT ${generate_aclnn_inner_srcs} ${generate_aclnn_inner_headers}
                 COMMAND mkdir -p ${base_aclnn_binary_dir}/inner
                 COMMAND OPS_PROTO_SEPARATE=1
                 OPS_ACLNN_GEN=1

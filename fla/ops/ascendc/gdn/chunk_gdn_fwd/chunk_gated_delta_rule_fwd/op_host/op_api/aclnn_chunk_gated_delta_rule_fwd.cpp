@@ -9,6 +9,7 @@
 #include "chunk_gated_delta_rule_fwd.h"
 #include "../../../chunk_fwd_h/op_host/op_api/chunk_fwd_h.h"
 #include "../../../chunk_fwd_o/op_host/op_api/chunk_fwd_o.h"
+#include "../../../chunk_fwd_o/op_kernel/chunk_fwd_o_struct.h"
 #include "../../../chunk_gated_delta_rule_fwd_prepare/op_host/op_api/chunk_gated_delta_rule_fwd_prepare.h"
 
 #include "acl/acl.h"
@@ -29,6 +30,7 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 
 using namespace op;
 
@@ -48,7 +50,7 @@ constexpr int64_t CHUNK_GATED_DELTA_RULE_FWD_CHUNK_128 = 128;
 // This is a transport-field bound, so larger Hv stays on the BHT route.
 constexpr int64_t CUMSUM_PREPARE_MAX_HEADS =
     static_cast<int64_t>(0xffffffffULL / sizeof(float) + 1);
-// Ascend950 Prepare/H/O route: Hv/Hk may span the GVA range 1..16.
+// Ascend950 and Ascend960DT Prepare/H/O route: Hv/Hk may span the GVA range 1..16.
 constexpr int64_t PREPARE_PATH_MAX_HV_PER_HK = 16;
 
 struct ChunkGatedDeltaRuleFwdParams {
@@ -103,6 +105,11 @@ static bool IsAscend950()
 
 static bool IsDav2201Device();
 
+static bool IsAscend960DT()
+{
+    return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_9201;
+}
+
 static bool IsNativeQkvLayout(const ChunkGatedDeltaRuleFwdParams &params)
 {
     return IsDav2201Device() && params.layout != nullptr &&
@@ -146,9 +153,8 @@ static bool UseA2PreparePath(const ChunkGatedDeltaRuleFwdParams &params)
 
 static bool UsePreparePath(const ChunkGatedDeltaRuleFwdParams &params)
 {
-    if (IsAscend950()) {
-        // On Ascend950 the supported new path is selected by its shape contract.
-        // use_exp2 and layout are independent features of that path.
+    if (IsAscend950() || IsAscend960DT()) {
+        // A5 and A6 use the same shape contract to select Prepare/H/O.
         if (params.q == nullptr || params.k == nullptr || params.v == nullptr || params.layout == nullptr ||
             params.q->GetViewShape().GetDimNum() != 4 || params.k->GetViewShape().GetDimNum() != 4 ||
             params.v->GetViewShape().GetDimNum() != 4) {
@@ -206,7 +212,8 @@ static const aclTensor *DenseQkvView(const aclTensor *tensor, aclOpExecutor *exe
     return view;
 }
 
-static const aclTensor *A2PrepareInputView(const aclTensor *tensor, aclOpExecutor *executor)
+static const aclTensor *A2PrepareTensorView(const aclTensor *tensor, aclOpExecutor *executor,
+                                          bool requireStorageSpan = false)
 {
     if (tensor == nullptr || IsPrivateFormat(tensor->GetStorageFormat()) ||
         IsPrivateFormat(tensor->GetViewFormat())) {
@@ -230,7 +237,8 @@ static const aclTensor *A2PrepareInputView(const aclTensor *tensor, aclOpExecuto
     uint64_t storageElements = 0;
     const int64_t offset = tensor->GetViewOffset();
     if (!elements(tensor->GetViewShape(), count) || !elements(tensor->GetStorageShape(), storageElements) ||
-        offset < 0 || static_cast<uint64_t>(offset) > static_cast<uint64_t>(INT64_MAX) - count) {
+        offset < 0 || static_cast<uint64_t>(offset) > static_cast<uint64_t>(INT64_MAX) - count ||
+        (requireStorageSpan && static_cast<uint64_t>(offset) + count > storageElements)) {
         return nullptr;
     }
     // Storage shape may describe the logical view, not the backing allocation extent.
@@ -596,10 +604,18 @@ static aclnnStatus CheckSupportedL2Contract(const ChunkGatedDeltaRuleFwdParams &
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
-    if (UsePreparePath(params)) {
-        if (!(IsAscend950() || IsDav2201Device())) {
+    const bool isAscend960DT = IsAscend960DT();
+    const bool usePrepare = UsePreparePath(params);
+    if (isAscend960DT && !usePrepare) {
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+            OP_NAME, "q,k,v,chunkSize", "unsupported combination",
+            "DAV_9201 Prepare/H/O requires rank-4 BF16 q/k/v, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    if (usePrepare) {
+        if (!(IsAscend950() || IsDav2201Device() || isAscend960DT)) {
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                OP_NAME, "soc", "unsupported", "the prepare path requires Ascend950 or DAV_2201");
+                OP_NAME, "soc", "unsupported", "the prepare path requires Ascend950, DAV_2201 or DAV_9201");
             return ACLNN_ERR_PARAM_INVALID;
         }
         if (!(std::strcmp(params.layout, "BNSD") == 0 || std::strcmp(params.layout, "BSND") == 0 ||
@@ -1170,7 +1186,7 @@ static aclnnStatus CheckParams(const ChunkGatedDeltaRuleFwdParams &params)
                 OP_NAME, "dtype,V,chunkSize,Hv/Hk",
                 ge::TypeUtils::DataTypeToSerialString(dtype) + "," + std::to_string(info.vDim) + "," +
                     std::to_string(params.chunkSize) + "," + std::to_string(info.hv / info.hq),
-                "Ascend950 prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
+                "the prepare path requires BF16, K=V=128, chunkSize=64 and Hv/Hk in [1,16]");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -1430,9 +1446,8 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
 
     const aclTensor *betaUsed = params.beta;
     const aclTensor *gUsed = params.g;
-    // The legacy Phase6 kernels consume FP32 gate/beta. Keep A5's native
-    // low-precision prepare contract while normalizing the legacy inputs.
-    if (!IsAscend950() || params.beta->GetDataType() == DataType::DT_FLOAT ||
+    // Preserve the native BF16 gate/beta combination for A5/A6 Prepare.
+    if (!(IsAscend950() || IsAscend960DT()) || params.beta->GetDataType() == DataType::DT_FLOAT ||
         params.g->GetDataType() == DataType::DT_FLOAT) {
         betaUsed = params.beta->GetDataType() == DataType::DT_FLOAT
                        ? params.beta : l0op::Cast(params.beta, DataType::DT_FLOAT, executorPtr);
@@ -1499,9 +1514,9 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         const aclTensor *kHead = params.k;
         const aclTensor *vHead = params.v;
         if (IsDav2201Device()) {
-            qHead = A2PrepareInputView(qHead, executorPtr);
-            kHead = A2PrepareInputView(kHead, executorPtr);
-            vHead = A2PrepareInputView(vHead, executorPtr);
+            qHead = A2PrepareTensorView(qHead, executorPtr);
+            kHead = A2PrepareTensorView(kHead, executorPtr);
+            vHead = A2PrepareTensorView(vHead, executorPtr);
         }
         GDN_STAGE_CHECK(qHead != nullptr && kHead != nullptr && vHead != nullptr, 169108);
         if (info.isSequenceMajor) {
@@ -1530,9 +1545,9 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
             if (dtBias != nullptr && dtBias->GetDataType() != DataType::DT_FLOAT) {
                 dtBias = l0op::Cast(dtBias, DataType::DT_FLOAT, executorPtr);
             }
-            aLog = A2PrepareInputView(aLog, executorPtr);
-            dtBias = A2PrepareInputView(dtBias, executorPtr);
-            initialState = A2PrepareInputView(initialState, executorPtr);
+            aLog = A2PrepareTensorView(aLog, executorPtr);
+            dtBias = A2PrepareTensorView(dtBias, executorPtr);
+            initialState = A2PrepareTensorView(initialState, executorPtr);
             GDN_STAGE_CHECK((params.aLogOptional == nullptr || aLog != nullptr) &&
                                 (params.dtBiasOptional == nullptr || dtBias != nullptr) &&
                                 (params.initialStateOptional == nullptr || initialState != nullptr),
@@ -1565,22 +1580,36 @@ static aclnnStatus ChunkGatedDeltaRuleFwdGetWorkspaceSizeImpl(
         }
 
         const bool a2Prepare = IsDav2201Device();
+        // The DMA destination gap is measured in bytes and stored as uint32_t.
+        const bool canWriteBsnd = a2Prepare && IsContiguous(params.oOut) && params.oOut->GetViewOffset() == 0 &&
+                                  static_cast<uint64_t>(hv - 1) <=
+                                      std::numeric_limits<uint32_t>::max() / (vDim * sizeof(uint16_t));
+        // The public bridge can describe dense BSND storage as a flat extent.
+        const aclTensor *oDirect = canWriteBsnd ?
+            A2PrepareTensorView(params.oOut, executorPtr, /*requireStorageSpan=*/true) : nullptr;
         const aclTensor *hForO = h;
         const aclTensor *oCompute = params.oOut;
+        const char *oLayout = "BSND";
         if (a2Prepare) {
-            // A2 ChunkFwdO consumes K,V state and writes head-major output.
+            // A2 ChunkFwdO consumes state in K,V order.
             if (params.stateVFirst) {
                 hForO = TransposeContiguous(h, {0, 1, 2, 4, 3}, executorPtr);
             }
-            oCompute = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);
+            if (oDirect != nullptr) {
+                oCompute = oDirect;
+                oLayout = GDN::kFusedA2BsndOutput;
+            } else {
+                oLayout = "BNSD";
+                oCompute = executorPtr->AllocTensor(vShape, dtype, Format::FORMAT_ND);
+            }
             GDN_STAGE_CHECK(hForO != nullptr && oCompute != nullptr, 169110);
         }
         auto oResult = l0op::ChunkFwdO(
             qCompute, kCompute, vNew, hForO, gCumsumBht, params.cuSeqlensOptional,
             params.chunkIndicesOptional, params.scale, params.chunkSize, params.useExp2,
-            a2Prepare ? false : params.stateVFirst, a2Prepare ? "BNSD" : "BSND", oCompute, executorPtr);
+            a2Prepare ? false : params.stateVFirst, oLayout, oCompute, executorPtr);
         GDN_STAGE_CHECK(oResult[0] != nullptr, 169106);
-        if (a2Prepare) {
+        if (a2Prepare && oDirect == nullptr) {
             const aclTensor *oExport = TransposeContiguous(oCompute, {0, 2, 1, 3}, executorPtr);
             GDN_STAGE_CHECK(oExport != nullptr, 169111);
             if (!(ViewCopyIfPresent(oExport, params.oOut, executorPtr) == ACLNN_SUCCESS)) {

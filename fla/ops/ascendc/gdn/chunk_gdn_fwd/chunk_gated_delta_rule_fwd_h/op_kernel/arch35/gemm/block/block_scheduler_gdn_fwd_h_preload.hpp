@@ -126,7 +126,7 @@ struct BlockSchedulerGdnFwdHPreload {
         shapeBatch = gdnFwdHTilingData->shapeBatch;
         tokenBatch = gdnFwdHTilingData->tokenBatch;
         useInitialState = gdnFwdHTilingData->useInitialState;
-        storeFinalState = gdnFwdHTilingData->storeFinalState;
+        storeFinalState = FwdHStoresState(gdnFwdHTilingData);
 
         gmSeqlen.SetGlobalBuffer((__gm__ int64_t *)cu_seqlens);
 

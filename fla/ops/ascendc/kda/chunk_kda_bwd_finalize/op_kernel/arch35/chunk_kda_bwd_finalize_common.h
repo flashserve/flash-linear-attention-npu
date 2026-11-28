@@ -15,7 +15,7 @@
 
 namespace KDA {
 
-using FinalizeLocalType = bfloat16_t;
+using FinalizeLocalType = float;
 
 constexpr uint32_t KDA_FINALIZE_CHUNK = 64;
 constexpr uint32_t KDA_FINALIZE_DIM = 128;
@@ -65,7 +65,7 @@ constexpr uint32_t KDA_FINALIZE_UB_BYTES = 248 * 1024;
 // at [0,16) KiB.
 constexpr uint32_t KDA_FINALIZE_UB_DAKK_RAW = 0;
 
-// Stage5: raw [0,16), paired dAqk/dAkk [16,48), then three paired vectors.
+// Stage5: raw [0,16), FP32 dAqk/dAkk [16,48), then three FP32 vectors.
 // Input/scratch begins at 144 KiB, disjoint from the live egress regions.
 constexpr uint32_t KDA_FINALIZE_UB_K_NEG = 48 * 1024;
 constexpr uint32_t KDA_FINALIZE_UB_Q_POS = 80 * 1024;
@@ -254,7 +254,7 @@ static_assert(KDA_FINALIZE_HEADS_PER_WINDOW == KDA_FINALIZE_AIV_COUNT,
               "Retained inputs require one head per AIV per window.");
 // StateBaseSlice's X transient [16K+(1-slot)*16K,+16K) sits in the other
 // slot's result half, which this task's cube Stage6/8 never writes; it
-// overlaps the pre-band zV/zW/dAqkBf16/dAkkNd/TzaResidual-low transients,
+// overlaps the pre-band zV/zW/dAqkNd/dAkkNd/TzaResidual-low transients,
 // all drained by RunStage5's closing MTE3_V barrier and program order.
 static_assert(16 * 1024 + 2 * KDA_FINALIZE_MATRIX_FP32_BYTES <= KDA_FINALIZE_UB_K_NEG,
               "StateBaseSlice X transient exceeds the pre-band scratch range.");

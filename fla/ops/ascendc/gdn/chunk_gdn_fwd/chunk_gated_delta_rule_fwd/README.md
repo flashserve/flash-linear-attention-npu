@@ -2,13 +2,21 @@
 
 ## 功能
 
-`ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。仅当 `useExp2=false`、
-`useQkL2norm=false`、`useGateInKernel=false`、不启用 beta sigmoid、`allowNegEigval=false`、不请求分块状态 h、
-`stateVFirst=false` 且 layout 为 `BNSD/NTD` 时使用原 Phase6 kernel，A 可按需输出；任意条件不满足时，
-A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，三个阶段统一使用
-调用方传入的 `useExp2`。
-新路径不支持的参数组合由 `ChunkGatedDeltaRuleFwdPrepare` 报错。当前实现支持定长和变长序列、GVA、可选初始状态
+`ChunkGatedDeltaRuleFwd` 实现 Gated Delta Rule 的分块前向计算。调度在三段式路径（依次调度
+`ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，三个阶段统一使用调用方传入的 `useExp2`）
+与原 Phase6 kernel 之间选择，A2/A3 与 A5 都存在三段式路径；仅当形状契约不满足时才回退原 Phase6 kernel
+（A2/A3 还要求未携带任何扩展开关），A 可按需输出。
+新路径不支持的参数组合在 ACLNN 参数校验阶段报错。当前实现支持定长和变长序列、GVA、可选初始状态
 以及可选最终状态输出。
+
+### 路由选择
+
+| 路径 | 设备 | 选择条件 |
+| --- | --- | --- |
+| 三段式路径 | A2/A3 | BF16、`K=V=128`、`chunkSize=64`、四维输入、layout `BNSD/NTD/BSND/TND`、`Hv` 能被 `Hk` 整除、变长序列无空序列。扩展开关（`useQkL2norm`、gate-in-kernel、beta sigmoid、`allowNegEigval`、`hOut`、`stateVFirst`）由该路径承载；`useExp2=true`、`allowNegEigval=true` 且未提供 `betaEffOutOptional` 均返回参数错误；契约不满足时携带任何开关直接返回参数错误 |
+| 三段式路径 | A5 | BF16、`K=V=128`、`chunkSize=64`、四维输入、`Hv/Hk in [1,16]`；layout 与扩展开关不参与选择，`useExp2=true/false`、`useQkL2norm=true/false` 均支持 |
+| 原 Phase6 kernel | A2/A3 | 不满足三段式路径契约、未携带任何扩展开关、layout `BNSD/NTD/BSND/TND`；`BSND/TND` 由 kernel 按 token-major 直读 |
+| 原 Phase6 kernel | A5 | 不满足三段式路径形状契约（如 FP16、`V=256`、`chunkSize=128`、`Hv/Hk>16`）、layout `BNSD/NTD`；布尔开关与 aLog/dtBias 落入该回退路径时被忽略且不报错，扩展输出（q_hat/k_hat/两个 rstd/beta_eff/h）非空时仍返回参数错误 |
 
 用于精度对比的公开算子链依次由以下算子组成：
 
@@ -19,8 +27,9 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 5. `ChunkFwdH`（`chunk_fwd_h`）；
 6. `ChunkFwdO`（`chunk_fwd_o`）。
 
-融合 kernel 内部实现上述等价计算阶段，不调用或链接这些公开算子的 ACLNN 实现。
-公开算子链只作为 ATK 精度标杆使用。
+融合 kernel（原 Phase6 kernel 与 `chunkSize=32` 独立 kernel）内部实现上述等价计算阶段，
+不调用或链接这些公开算子的 ACLNN 实现；三段式路径中的 `ChunkFwdH`、`ChunkFwdO` 直接复用
+对应公开算子。公开算子链整体只作为 ATK 精度标杆使用。
 
 ## 输入
 
@@ -34,15 +43,16 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `v` | 必选 | 由 `layout` 决定；与 q 同 dtype | Value |
 | `g` | 必选 | `[B,T,Hv]`；FP32 或与 q 同 dtype | 门控值，固定为 sequence-major |
 | `beta` | 必选 | 与 g 同 shape；FP32 或与 q 同 dtype | Delta 系数 |
-| `aLogOptional` | 当前未支持 | - | 扩展接口预留，必须为空 |
-| `dtBiasOptional` | 当前未支持 | - | 扩展接口预留，必须为空 |
+| `aLogOptional` | 三段式路径可选 | `[Hv]`；FP32/FP16/BF16 | gate-in-kernel 预留参数。三段式路径（A2/A3 与 A5）均支持并消费；chunkSize=32 报错；A5 Phase6 回退路径下被忽略；Python 稳定入口当前拒绝非空值 |
+| `dtBiasOptional` | 三段式路径可选 | `[Hv]`；FP32/FP16/BF16 | gate-in-kernel 预留参数。三段式路径（A2/A3 与 A5）均支持并消费，且必须与 `aLogOptional` 同时提供；chunkSize=32 报错；A5 Phase6 回退路径下被忽略；Python 稳定入口当前拒绝非空值 |
 | `initialStateOptional` | 可选 | `stateVFirst=false` 时为 `[N,Hv,K,V]`，否则为 `[N,Hv,V,K]`；FP32 或与 q 同 dtype | 初始状态 |
 | `cuSeqlensOptional` | 可选 | `[N+1]`；INT64 | 变长序列累计长度，需与 `chunkIndicesOptional` 同时提供 |
 | `chunkIndicesOptional` | 可选 | `[2*Nc]`；INT64 | canonical sequence-major chunk 索引 |
 
 四种 QKV 布局均使用四维输入：`BNSD/NTD=[B,H,T,D]`，
 `BSND/TND=[B,T,H,D]`。`Hv` 必须能被 `Hk` 整除。变长模式使用物理 `B=1`，`cuSeqlensOptional` 必须从 0 开始、
-以 `T` 结束且单调不降。
+以 `T` 结束且单调不降；A2/A3 三段式路径额外要求严格递增（不支持空序列）——不携带扩展开关时空序列调用
+回落 Phase6 路径，携带扩展开关时返回参数错误。
 
 ## 输出
 
@@ -52,10 +62,10 @@ A5 依次调度 `ChunkGatedDeltaRuleFwdPrepare`、`ChunkFwdH` 和 `ChunkFwdO`，
 | `finalStateOutOptional` | 可选 | 末两维由 `stateVFirst` 决定；与初始状态同 dtype，无初始状态时为 FP32 | 是否为空直接决定是否计算并输出最终状态 |
 | `gCumsumOutOptional` | 可选 | 与 g 同 shape；FP32 | chunk 内门控累加结果；为空时使用内部临时张量 |
 | `aOutOptional` | 可选 | `[B,Hv,T,chunkSize]`；与 q 同 dtype | 系数矩阵；为空时使用内部临时张量 |
-| `qHatOutOptional`、`kHatOutOptional` | A5 新路径可选 | 与 q/k 相同 | L2Norm 结果 |
-| `qRstdOutOptional`、`kRstdOutOptional` | A5 新路径可选 | 固定 `[B,Hk,T]`；FP32 | L2Norm rstd |
-| `betaEffOutOptional` | A5 新路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
-| `hOutOptional` | A5 新路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
+| `qHatOutOptional`、`kHatOutOptional` | 三段式路径可选 | 与 q/k 相同 | L2Norm 结果 |
+| `qRstdOutOptional`、`kRstdOutOptional` | 三段式路径可选 | 固定 `[B,Hk,T]`；FP32 | L2Norm rstd |
+| `betaEffOutOptional` | 三段式路径可选 | 与 beta 同 shape；FP32 | 非空时启用并输出 beta sigmoid |
+| `hOutOptional` | 三段式路径可选 | `stateVFirst=false` 时末两维为 `[K,V]`，否则为 `[V,K]`；与 q 同 dtype | 分块状态 |
 
 Python 稳定入口固定返回
 `(o, final_state, g_cumsum, A, beta_eff, h, q_hat, k_hat, q_rstd, k_rstd)` 十元组。
@@ -67,10 +77,11 @@ q_hat/k_hat 是原始 q/k 的别名，两个 rstd 为 None。`chunkSize=32` 不�
 `output_final_state`、`use_beta_sigmoid_in_kernel` 和 `return_intermediate_states`
 分别控制 final_state、beta_eff 和 h 是否为 None，这三项不看 `disable_recompute`。
 h 的 shape 为 dense `[B,NT,Hv,K,V]`，带 cu_seqlens 的 packed 为 `[1,total_NT,Hv,K,V]`；
-`state_v_first=True` 时末两维为 `[V,K]`。A5 prepare 路径导出遵循此契约，旧融合路径仍不导出 h。
+`state_v_first=True` 时末两维为 `[V,K]`。A2/A3 与 A5 三段式路径导出遵循此契约，旧融合路径仍不导出 h。
 
 `g/beta` 固定以 BSN 输入，在 ACLNN 内转为 BNS；任一输入为 FP32 时，
-另一个先提升为 FP32。两个输入均为主 dtype 时保留该 dtype，后续分支支持范围不变。
+另一个先提升为 FP32。两个输入均为主 dtype 时：A5 保留该 dtype，后续分支支持范围不变；
+A2/A3 统一提升为 FP32 计算（三段式路径与 Phase6 路径均如此）。
 Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 `use_gate_in_kernel=False`，非空 a_log/dt_bias 或启用 gate 均报错。
 
@@ -78,22 +89,25 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 
 | 名称 | 当前支持范围 | 说明 |
 | --- | --- | --- |
-| `layout` | 原 Phase6 路径支持 `BNSD/NTD`；A5 新路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
+| `layout` | 原 Phase6 路径在 A5 支持 `BNSD/NTD`、在 A2/A3 额外支持 `BSND/TND`（token-major 直读）；三段式路径支持 `BNSD/BSND/NTD/TND` | q/k/v 的输入布局；BSND/TND 输入在拼接路径内转为 head-first，o 固定输出 BSND |
 | `scale` | 通常为 `K**-0.5` | Query 缩放因子 |
 | `chunkSize` | `32`、`64`、`128` | 分块大小 |
-| `useExp2` | A5 新路径支持 `true/false` | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
-| `useQkL2norm` | A5 新路径支持 `true/false` | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K。`chunkSize=32` 必须为 true |
+| `useExp2` | 三段式路径支持：A5 为 `true/false`，A2/A3 仅 `false`（`true` 报错） | 只控制门控累计和后续状态、输出阶段使用 `exp2` 或 `exp`，三个小算子均按新路径规格选择优化实现 |
+| `useQkL2norm` | 三段式路径支持 `true/false`（A2/A3 与 A5） | true 时由 prepare 生成归一化 Q/K；false 时 H/O 直接使用输入 Q/K。`chunkSize=32` 必须为 true |
 | `isOutL2norm` | 算子定义缺省 `false`；公开入口不单独暴露 | `chunkSize=32` 是否把 L2 结果写出，由 `disable_recompute` 决定。`true` 时写出 q_hat、k_hat 和两个 rstd |
-| `allowNegEigval` | A5 新路径支持 | 为 true 时必须提供 `betaEffOutOptional` |
-| `stateVFirst` | A5 新路径支持 `true/false` | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
+| `allowNegEigval` | 三段式路径支持（A2/A3 与 A5） | 为 true 时必须提供 `betaEffOutOptional` |
+| `stateVFirst` | 三段式路径支持 `true/false`（A2/A3 与 A5） | 控制初始状态、分块状态和最终状态的末两维采用 `[V,K]` 或 `[K,V]` |
 
-当前未实现的扩展组合会返回参数错误，不会静默忽略。
+当前未实现的扩展组合在 A2/A3 上会返回参数错误，不会静默忽略；A5 上扩展开关仅在满足
+形状契约的三段式路径内生效——布尔开关与 aLog/dtBias 落入 Phase6 回退路径时被忽略且不报错，
+扩展输出（q_hat/k_hat/两个 rstd/beta_eff/h）非空时仍返回参数错误。
 
 ## 支持范围
 
 - A2（`ascend910b`）、A3（`ascend910_93`）、A5（`ascend950`）。
 - 原 Phase6 路径支持 FP16、BF16，`K=128`、`V=128/256`、`chunkSize=64/128`。
-- A5 三算子路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in [1,16]`。
+- A5 三段式路径支持 `useExp2=true/false`、`useQkL2norm=true/false`、gate-in-kernel（`aLogOptional`/`dtBiasOptional`）、BF16、`K=V=128`、`chunkSize=64`、`Hv/Hk in [1,16]`。
+- A2/A3 三段式路径支持 BF16、`K=V=128`、`chunkSize=64`、`Hv` 能被 `Hk` 整除、变长序列无空序列；`useQkL2norm`、gate-in-kernel（`aLogOptional`/`dtBiasOptional`）、beta sigmoid（`betaEffOutOptional`）、`allowNegEigval`（须提供 `betaEffOutOptional`）、`hOutOptional`、`stateVFirst` 均支持；`useExp2` 仅支持 `false`。
 - `chunkSize=32` 仅 A5，走独立融合 kernel。限制为 BF16 的 q/k/v/beta/o、FP32 的 g、`K=V=128`，并且必须 `useExp2=false`、`useQkL2norm=true`、核内 beta sigmoid。`allowNegEigval` 与 `stateVFirst` 均可为 true/false；前者为 true 时使用 `2*sigmoid(beta)`。layout 支持 `BNSD/BSND/NTD/TND`：BSND/TND 的 q/k/v 在 ACLNN 转为 head-major 后进核，g/beta 由 `[B,T,Hv]` 转为 `[B,Hv,T]` 后进核，o 固定 BSND。aLog/dtBias 必须为空。稳定入口仍返回十元组。支持 MHA、GVA（`Hv` 能被 `Hk` 整除）、定长和变长，变长要求物理 `B=1`。初始状态可选，dtype 为 BF16 或 FP32：无初始状态或 FP32 初始状态时最终状态为 FP32，BF16 初始状态时最终状态为 BF16。
 - 支持 MHA、GVA、定长和变长序列。
 - A2/A3 使用 `arch22` 私有实现，A5 使用 `arch35` 私有实现；两套架构代码隔离维护。
@@ -110,12 +124,6 @@ Python 接受 `a_log=None, dt_bias=None` 预留参数；当前仅支持
 ATK 用例和执行说明位于
 [`tests/atk/chunk_gated_delta_rule_fwd`](../../../../../../tests/atk/chunk_gated_delta_rule_fwd/README.md)。
 精度双标杆分别使用融合算子、上述公开算子链和 FP64 recurrence，并在相同冻结输入上比较结果。
-
-ACLNN ABI 合同可通过以下命令检查：
-
-```bash
-python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
-```
 
 ## 归一化结果导出与反向复用
 

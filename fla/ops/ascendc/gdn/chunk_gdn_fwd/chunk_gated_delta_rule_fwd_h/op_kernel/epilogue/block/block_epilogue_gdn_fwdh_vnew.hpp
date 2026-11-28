@@ -301,17 +301,43 @@ public:
 
             uint32_t decayOffset = 0;
             if constexpr (scalarGated) {
-                AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareBuffer_);
-                AscendC::PipeBarrier<PIPE_V>();
-                AscendC::Mul(calcUbTensor[gbrcEffStart * nvActual], wsUbTensor, calcUbTensor[gbrcEffStart * nvActual], mActualThisSubBlock * nvActual);
-                decayOffset = gbrcEffStart * nvActual;
+                uint32_t gbrcEffEnd = gbrcEffStart + mActualThisSubBlock;
+                if (gbrcEffEnd <= 64) {
+                    AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShape_, srcShape_, shareBuffer_);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Mul(calcUbTensor[gbrcEffStart * nvActual], wsUbTensor, calcUbTensor[gbrcEffStart * nvActual], mActualThisSubBlock * nvActual);
+                    decayOffset = gbrcEffStart * nvActual;
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+                    AscendC::Cast(vNewDecayUbTensor, calcUbTensor[decayOffset], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
+                } else {
+                    uint32_t rowsA = 64 - gbrcEffStart;
+                    uint32_t rowsB = gbrcEffEnd - 64;
+                    uint32_t dstShapeA_[2] = {64, nvActual};
+                    uint32_t srcShapeA_[2] = {64, 1};
+                    AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart], dstShapeA_, srcShapeA_, shareBuffer_);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Mul(calcUbTensor[gbrcEffStart * nvActual], wsUbTensor, calcUbTensor[gbrcEffStart * nvActual], rowsA * nvActual);
+                    decayOffset = gbrcEffStart * nvActual;
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Cast(vNewDecayUbTensor, calcUbTensor[decayOffset], AscendC::RoundMode::CAST_RINT, rowsA * nvActual);
+
+                    uint32_t rowsBPad = (rowsB + 7) / 8 * 8;
+                    uint32_t dstShapeB_[2] = {rowsBPad, nvActual};
+                    uint32_t srcShapeB_[2] = {rowsBPad, 1};
+                    AscendC::Broadcast<float, 2, 1>(calcUbTensor, gUbTensor[gbrcRealStart + 64], dstShapeB_, srcShapeB_, shareBuffer_);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+                    AscendC::Mul(calcUbTensor, wsUbTensor[rowsA * nvActual], calcUbTensor, rowsB * nvActual);
+                    AscendC::PipeBarrier<PIPE_V>();
+                    AscendC::Cast(vNewDecayUbTensor[rowsA * nvActual], calcUbTensor, AscendC::RoundMode::CAST_RINT, rowsB * nvActual);
+                }
             } else {
                 AscendC::Adds<float>(calcUbTensor, wsUbTensor, 0.0f, mActualThisSubBlock * nvActual);
+                AscendC::PipeBarrier<PIPE_V>();
+                AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
+                AscendC::Cast(vNewDecayUbTensor, calcUbTensor, AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
             }
-            AscendC::PipeBarrier<PIPE_V>();
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(EVENT_ID3 + pingpongFlag);
-
-            AscendC::Cast(vNewDecayUbTensor, calcUbTensor[decayOffset], AscendC::RoundMode::CAST_RINT, mActualThisSubBlock * nvActual);
             AscendC::PipeBarrier<PIPE_V>();
 
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(EVENT_ID1 + pingpongFlag);

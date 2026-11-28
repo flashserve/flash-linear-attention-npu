@@ -51,9 +51,19 @@ __aicore__ inline uint64_t Align32(uint64_t bytes)
            PRONE_BLOCK_BYTES_32;
 }
 
+// P3: 同一序列的相邻 task 复用 seqBegin/seqEnd，省 2 次 GM 标量读；
+// chunk_indices 乱序时按 seqIdx 相等性判命中，正确性不依赖顺序。
+struct PrepareWyReprBwdSeqCache {
+    uint32_t lastSeqIdx;
+    uint32_t seqBegin;
+    uint32_t seqEnd;
+    bool valid;
+};
+
 __aicore__ inline void PrepareWyReprBwdGetTaskInfo(GM_ADDR cuSeqlens, GM_ADDR chunkIndices,
                                                    const GDN::PrepareWyReprBwdTilingData &tiling, uint32_t taskIdx,
-                                                   PrepareWyReprBwdTaskInfo &task)
+                                                   PrepareWyReprBwdTaskInfo &task,
+                                                   PrepareWyReprBwdSeqCache *seqCache = nullptr)
 {
     if (cuSeqlens == nullptr) {
         uint32_t chunkNumPerB = static_cast<uint32_t>(tiling.chunkNumPerB);
@@ -76,8 +86,21 @@ __aicore__ inline void PrepareWyReprBwdGetTaskInfo(GM_ADDR cuSeqlens, GM_ADDR ch
         chunkIndicesTensor.SetGlobalBuffer((__gm__ uint64_t *)chunkIndices);
         uint32_t seqIdx = chunkIndicesTensor.GetValue(2 * taskIdx);
         uint32_t chunkIdx = chunkIndicesTensor.GetValue(2 * taskIdx + 1);
-        uint32_t seqBegin = cuSeqlensTensor.GetValue(seqIdx);
-        uint32_t seqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+        uint32_t seqBegin;
+        uint32_t seqEnd;
+        if (seqCache != nullptr && seqCache->valid && seqCache->lastSeqIdx == seqIdx) {
+            seqBegin = seqCache->seqBegin;
+            seqEnd = seqCache->seqEnd;
+        } else {
+            seqBegin = cuSeqlensTensor.GetValue(seqIdx);
+            seqEnd = cuSeqlensTensor.GetValue(seqIdx + 1);
+            if (seqCache != nullptr) {
+                seqCache->valid = true;
+                seqCache->lastSeqIdx = seqIdx;
+                seqCache->seqBegin = seqBegin;
+                seqCache->seqEnd = seqEnd;
+            }
+        }
         uint32_t timeBos = seqBegin + chunkIdx * static_cast<uint32_t>(tiling.chunkSize);
         uint32_t timeEos = timeBos + static_cast<uint32_t>(tiling.chunkSize) > seqEnd ?
                                seqEnd :

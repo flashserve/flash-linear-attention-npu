@@ -468,6 +468,46 @@ class HeaderKindGateTest(unittest.TestCase):
             "param 0: header tensor != call site int_array"
         ])
 
+    def test_generated_inner_scalar_types_and_macro_whitespace(self) -> None:
+        tool = _load_tool("op_abi_validate.py")
+        symbol = "aclnnInnerDemo"
+        cases = (
+            ("double", "1.0", ""),
+            ("float", ".5F", ""),
+            ("float", "1e-3f", ""),
+            ("double", "1.0f", "header double != call site float"),
+            ("float", "1.0", "header float != call site double"),
+            ("double", "scale", ""),
+            ("float", "static_cast<float>(scale)", ""),
+            ("int32_t", "1", ""),
+            ("int64_t", "2147483648", ""),
+            ("double", "local_scale", "cannot determine call-site type"),
+            ("float", "static_cast<float>(scale) + 1.0", "cannot determine call-site type"),
+            ("float", "(float)scale + 1.0", "cannot determine call-site type"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            header = root / "aclnnInner_demo.h"
+            report = root / "report.json"
+            argv = ["op_abi_validate.py", "--src-dir", tmp, "--opp-include", tmp, "--json", str(report)]
+            for kind, expression, error in cases:
+                header.write_text(
+                    f"aclnnStatus {symbol}GetWorkspaceSize(const aclTensor *x, {kind} scale, "
+                    "uint64_t *workspaceSize, aclOpExecutor **executor);", encoding="utf-8")
+                for whitespace, selection in ((" ", []), ("\n  ", ["--ops", "demo"])):
+                    with self.subTest(kind=kind, expression=expression, selection=selection):
+                        (root / "stable_demo.cpp").write_text(
+                            "void run(Tensor x, double scale) {\n  float local_scale = scale;\n"
+                            f'  FLA_STABLE_EXEC{whitespace}("{symbol}", meta, stream, '
+                            f"tensor(x), scalar({expression}));\n}}\n", encoding="utf-8")
+                        with mock.patch.object(sys, "argv", argv + selection):
+                            self.assertEqual(tool.main(), int(bool(error)))
+                        row = json.loads(report.read_text(encoding="utf-8"))[f"adapter:{symbol}"]
+                        if error:
+                            self.assertIn("param 1: " + error, row["problems"][0])
+                        else:
+                            self.assertEqual(row["call_site"], row["header"])
+
     def test_scoped_filter_checks_only_selected_adapter_sources(self) -> None:
         tool = _load_tool("op_abi_validate.py")
         adapters = {

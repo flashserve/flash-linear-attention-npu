@@ -84,12 +84,6 @@ A5 的独立 prepare 组合路径应与上述 DAV_2201 分派分别记录。
 
 ## 执行
 
-先执行不依赖 NPU/ATK 的 ACLNN ABI 合同，确认公开参数顺序、ctypes 类型和默认路径映射：
-
-```bash
-python3 tests/atk/chunk_gated_delta_rule_fwd/aclnn_abi_contract.py
-```
-
 公开 `aclnnChunkGatedDeltaRuleFwd` 保留完整扩展 ABI。当前 Phase6 默认路径使用
 `layout=BNSD`、`useExp2=false`、`allowNegEigval=false`、`stateVFirst=false`，且
 `aLog/dtBias` 与扩展中间输出为空；`finalStateOutOptional` 是否为空决定是否输出 final state。
@@ -127,7 +121,7 @@ bash tests/atk/run_test_cpu.sh -op=chunk_gated_delta_rule_fwd -npu_device_id=0 -
 
 ## 十项返回接口回归
 
-历史测试文件名保留，当前内容验证 Stable 参数转发和实际输出契约；ACLNN 原型由 `aclnn_abi_contract.py` 与共享 ABI 检查器验证。
+历史测试文件名保留，当前内容验证 Stable 参数转发和实际输出契约；ACLNN 原型由共享 ABI 检查器验证。
 
 前向十元组的后四项是 q_hat、k_hat、q_rstd、k_rstd。`disable_recompute=false` 时 g_cumsum、A、q_hat、k_hat 和两个 rstd 为 None。`true` 且核内做了 L2 时后四项是新张量，rstd 为 FP32 `[B,Hk,T]`；`chunkSize=64/128` 关闭核内 L2 时 q_hat、k_hat 是输入别名，rstd 为 None。本目录的 64/128 套只比较 o、final_state、g_cumsum 和 A，因此调用时保持 `disable_recompute=true`。chunkSize=32 的导出见 `chunk32/README.md`。
 
