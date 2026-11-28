@@ -48,7 +48,7 @@ public:
         AscendC::SetHF32TransMode(AscendC::HF32TransMode::NEAREST_EVEN);
     }
 
-    CATLASS_DEVICE void Load(AscendC::LocalTensor<float> dst,
+    CATLASS_DEVICE void Prefetch(AscendC::LocalTensor<float> dst,
         AscendC::GlobalTensor<float> src)
     {
         // Previous L1 readers are drained before any bank is overwritten.
@@ -56,7 +56,15 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID4);
         copyGm_(dst, src, L1Layout::template MakeLayout<float>(D, D), layout::RowMajor{D, D});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID4);
+    }
+
+    CATLASS_DEVICE void WaitPrefetch() {
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID4);
+    }
+
+    CATLASS_DEVICE void Load(AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src) {
+        Prefetch(dst, src);
+        WaitPrefetch();
     }
 
     CATLASS_DEVICE void Multiply(AscendC::LocalTensor<float> a,
@@ -110,21 +118,16 @@ public:
     CATLASS_DEVICE explicit ResidentGemmK32Pipeline(Arch::Resource<Arch::AtlasA2>& resource)
         : l0a_(resource.l0ABuf.template GetBufferByByte<float>(0)),
           l0b_(resource.l0BBuf.template GetBufferByByte<float>(0)),
-          l0c_(resource.l0CBuf.template GetBufferByByte<float>(0)),
-          l0aNext_(resource.l0ABuf.template GetBufferByByte<float>(BANK_BYTES)),
-          l0bNext_(resource.l0BBuf.template GetBufferByByte<float>(BANK_BYTES))
+          l0c_(resource.l0CBuf.template GetBufferByByte<float>(0))
     {
-        static_assert(D * K_TILE * sizeof(float) <= Arch::AtlasA2::L0A_SIZE);
-        static_assert(D * K_TILE * sizeof(float) <= Arch::AtlasA2::L0B_SIZE);
-        static_assert(MATRIX_BYTES <= Arch::AtlasA2::L0C_SIZE);
-        static_assert(BANK_BYTES == 16384);
-        static_assert(2 * BANK_BYTES <= Arch::AtlasA2::L0A_SIZE);
-        static_assert(2 * BANK_BYTES <= Arch::AtlasA2::L0B_SIZE);
+        static_assert(4 * BANK_BYTES <= Arch::AtlasA2::L0A_SIZE);
+        static_assert(4 * BANK_BYTES <= Arch::AtlasA2::L0B_SIZE);
+        static_assert(2 * MATRIX_BYTES <= Arch::AtlasA2::L0C_SIZE);
         AscendC::SetHF32Mode(AscendC::HF32Mode::DISABLE);
         AscendC::SetHF32TransMode(AscendC::HF32TransMode::NEAREST_EVEN);
     }
 
-    CATLASS_DEVICE void Load(AscendC::LocalTensor<float> dst,
+    CATLASS_DEVICE void Prefetch(AscendC::LocalTensor<float> dst,
         AscendC::GlobalTensor<float> src)
     {
         // Previous L1 readers are drained before any bank is overwritten.
@@ -132,7 +135,15 @@ public:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID4);
         copyGm_(dst, src, L1Layout::template MakeLayout<float>(D, D), layout::RowMajor{D, D});
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID4);
+    }
+
+    CATLASS_DEVICE void WaitPrefetch() {
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID4);
+    }
+
+    CATLASS_DEVICE void Load(AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src) {
+        Prefetch(dst, src);
+        WaitPrefetch();
     }
 
     CATLASS_DEVICE void Multiply(AscendC::LocalTensor<float> a,
@@ -142,40 +153,67 @@ public:
         const auto aLayout = L0ALayout::template MakeLayout<float>(D, K_TILE);
         const auto bLayout = L0BLayout::template MakeLayout<float>(K_TILE, D);
         const auto cLayout = layout::zN::MakeLayoutInL0C(MakeCoord(D, D));
-        // Previous Fixpipe must stop reading L0C before the next initialization.
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(EVENT_ID4);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(EVENT_ID4);
-        // Each call starts with exactly one binary FREE token per bank.
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_ID0);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(EVENT_ID1);
-        Preload(a, b, l1Layout, aLayout, bLayout, 0);
-        for (uint32_t k = 0; k < D; k += K_TILE) {
-            if (k + K_TILE < D) {
-                Preload(a, b, l1Layout, aLayout, bLayout, k + K_TILE);
-            }
-            const bool bank1 = ((k / K_TILE) & 1u) != 0;
-            const int32_t event = bank1 ? EVENT_ID1 : EVENT_ID0;
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(event);
-            auto currentA = bank1 ? l0aNext_ : l0a_;
-            auto currentB = bank1 ? l0bNext_ : l0b_;
-            // Same four ascending FP32 Mmad calls, init only at k==0.
-            mad_(l0c_, currentA, currentB, D, D, K_TILE, k == 0, 0);
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(event);
+        // Publish the previous accumulator after all optional duplicate stores.
+        if (issued_ != 0) {
+            AscendC::SetFlag<AscendC::HardEvent::FIX_M>((issued_ - 1) & 1);
         }
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_ID0);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(EVENT_ID1);
-        // Gate PIPE_M on completion of both asynchronous MTE1 drains before
-        // the next call can reseed FREE. All READY generations are consumed.
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(EVENT_ID0);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(EVENT_ID0);
+        const int accBank = issued_ & 1;
+        auto accumulator = l0c_[accBank * ELEMENTS];
+        // Four independent K panels. Only wait when reusing the same L0 slot.
+        // Keep the FP32 MMAD chain in increasing K order in one accumulator.
+        #pragma unroll
+        for (int slot = 0; slot < 4; ++slot) {
+            const uint32_t k = slot * K_TILE;
+            auto panelA = l0a_[slot * D * K_TILE];
+            auto panelB = l0b_[slot * D * K_TILE];
+            if (issued_ != 0) {
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(slot);
+            }
+            copyA_(panelA, a[l1Layout.GetOffset(MatrixCoord{0, k})], aLayout, l1Layout);
+            copyB_(panelB, b[l1Layout.GetOffset(MatrixCoord{k, 0})], bLayout, l1Layout);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(slot);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(slot);
+            if (slot == 0 && issued_ >= 2) {
+                AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(accBank);
+            }
+            mad_(accumulator, panelA, panelB, D, D, K_TILE, slot == 0, 0);
+            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(slot);
+        }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(EVENT_ID4);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(EVENT_ID4);
-        copyOut_(output, l0c_, layout::RowMajor{D, D}, cLayout);
+        copyOut_(output, accumulator, layout::RowMajor{D,D}, cLayout);
+        ++issued_;
+    }
+
+    CATLASS_DEVICE ~ResidentGemmK32Pipeline() {
+        if (issued_ == 0) return;
+        #pragma unroll
+        for (int slot = 0; slot < 4; ++slot)
+            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(slot);
+        if (issued_ >= 2) {
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>((issued_ - 2) & 1);
+        }
+        AscendC::PipeBarrier<PIPE_ALL>();
+    }
+
+    CATLASS_DEVICE void PrefetchPair(AscendC::LocalTensor<float> a, AscendC::LocalTensor<float> b,
+        AscendC::GlobalTensor<float> srcA, AscendC::GlobalTensor<float> srcB)
+    {
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID5);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(EVENT_ID5);
+        const auto layoutL1 = L1Layout::template MakeLayout<float>(D,D);
+        copyGm_(a,srcA,layoutL1,layout::RowMajor{D,D});
+        copyGm_(b,srcB,layoutL1,layout::RowMajor{D,D});
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID5);
+    }
+
+    CATLASS_DEVICE void WaitPair() {
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(EVENT_ID5);
     }
 
     // The injection is the initial value for both directional scans.
     CATLASS_DEVICE void StoreAgain(AscendC::GlobalTensor<float> output) {
-        copyOut_(output, l0c_, layout::RowMajor{D,D},
+        copyOut_(output, l0c_[((issued_ - 1) & 1) * ELEMENTS], layout::RowMajor{D,D},
                  layout::zN::MakeLayoutInL0C(MakeCoord(D,D)));
     }
 
@@ -188,22 +226,7 @@ public:
 
 private:
     AscendC::LocalTensor<float> l0a_, l0b_, l0c_;
-    AscendC::LocalTensor<float> l0aNext_, l0bNext_;
-
-    CATLASS_DEVICE void Preload(AscendC::LocalTensor<float> a,
-        AscendC::LocalTensor<float> b, const L1Layout& l1Layout,
-        const L0ALayout& aLayout, const L0BLayout& bLayout, uint32_t k)
-    {
-        const bool bank1 = ((k / K_TILE) & 1u) != 0;
-        const int32_t event = bank1 ? EVENT_ID1 : EVENT_ID0;
-        auto nextA = bank1 ? l0aNext_ : l0a_;
-        auto nextB = bank1 ? l0bNext_ : l0b_;
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(event);
-        copyA_(nextA, a[l1Layout.GetOffset(MatrixCoord{0, k})], aLayout, l1Layout);
-        copyB_(nextB, b[l1Layout.GetOffset(MatrixCoord{k, 0})], bLayout, l1Layout);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(event);
-    }
-
+    uint32_t issued_ = 0;
     typename Copies::CopyGmToL1A copyGm_;
     typename Copies::CopyL1ToL0A copyA_;
     typename Copies::CopyL1ToL0B copyB_;
@@ -417,31 +440,36 @@ __aicore__ inline void RunNewton(Params p) {
             AscendC::CrossCoreWaitFlag<2>(X_READY);
             mm.Load(x0a, wx0);
             AscendC::CrossCoreWaitFlag<2>(X_READY);
-            mm.Load(x1a, wx1);
+            mm.Prefetch(x1a, wx1);
+            if (p.iterations <= 1) mm.WaitPrefetch();
         } else {
             mm.Load(x0a, gmX[off0]);
-            mm.Load(x1a, gmX[off1]);
+            mm.Prefetch(x1a, gmX[off1]);
         }
         for (uint32_t iteration = FIRST_SPECIALIZED ? 1 : 0; iteration < p.iterations; ++iteration) {
             mm.Multiply(m0, x0a, wp0);
             AscendC::CrossCoreSetFlag<2, PIPE_FIX>(P_READY);
+            mm.WaitPrefetch();
             mm.Multiply(m1, x1a, wp1);
             AscendC::CrossCoreSetFlag<2, PIPE_FIX>(P_READY);
             const bool final = iteration + 1 == p.iterations;
             AscendC::CrossCoreWaitFlag<2>(R_READY);
             mm.Load(r0, wr0);
             mm.Multiply(x0a, r0, final ? gmY[off0] : wx0);
-            mm.DrainStore();
-            if (!final) {
-                mm.Load(x0b, wx0);
-                auto old = x0a; x0a = x0b; x0b = old;
-            }
             AscendC::CrossCoreWaitFlag<2>(R_READY);
             mm.Load(r1, wr1);
+            if (!final) {
+                // X0 feeds the next iteration; overlap its GM reload with X1's MMAD.
+                mm.DrainStore();
+                mm.Prefetch(x0b, wx0);
+            }
             mm.Multiply(x1a, r1, final ? gmY[off1] : wx1);
+            if (!final) mm.WaitPrefetch();
             mm.DrainStore();
             if (!final) {
-                mm.Load(x1b, wx1);
+                auto previous0 = x0a; x0a = x0b; x0b = previous0;
+                // The next P0 only needs X0. Wait for X1 immediately before P1.
+                mm.Prefetch(x1b, wx1);
                 auto old = x1a; x1a = x1b; x1b = old;
             }
         }
