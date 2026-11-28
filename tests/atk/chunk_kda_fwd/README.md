@@ -13,9 +13,10 @@
 - `q/k/v` 支持 `BFLOAT16/FLOAT16`；`g` 支持 `FLOAT/BFLOAT16`；`beta` 支持 `FLOAT/BFLOAT16`。
 - `K/V` 只支持两档且必须同档：`K=V=64` 或 `K=V=128`；混合档（如 `K=64,V=128`）与其它
   取值（含 `V=256`）返回 `ACLNN_ERR_PARAM_INVALID`，负向用例覆盖同类拦截。
-- `chunk_size` 只支持 `64`，其它取值（含 `128`）在参数校验阶段返回
-  `ACLNN_ERR_PARAM_INVALID`，负向用例覆盖该类拦截；rank-4 变长输入要求 `B=1`，
-  逻辑序列数最多 `1024`。
+- `chunk_size` 支持 `32` 和 `64`；chunk32 仅用于 Ascend950 的 `ChunkKdaFwdFused` 融合路径，
+  并要求 `K=V=128`、BF16 q/k/v、safe gate、核内 q/k L2 norm 和 beta sigmoid。其它取值
+  （含 `128`）在参数校验阶段返回 `ACLNN_ERR_PARAM_INVALID`，负向用例覆盖该类拦截；
+  rank-4 变长输入要求 `B=1`，逻辑序列数最多 `1024`。
 - `use_gate_in_kernel=true` 时必须提供 `A_log`；`safe_gate=true` 时 `lower_bound` 取 `[-5,0)`。
 - `initial_state` 如提供，末两维由 `state_v_first` 解释为 `[K,V]` 或 `[V,K]`。
 
@@ -46,13 +47,20 @@ CASE_START=0 CASE_END=5 \
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=accuracy
 ```
 
-确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 #440 的 63-token 单序列
-尾块场景，通过 96 个 value heads 放大并行调度覆盖，同时启用 `disable_recompute=true`、最终状态
-和全部中间量：
+性能用例包含同 shape 的 chunk64 ID 250 和 chunk32 ID 508。确定性回归会重复运行 MSS 用例并逐位比较全部可见输出。MSS 包含 chunk64 ID 250/298 及对应 chunk32 ID 508/509；其中 ID 298/509 覆盖 #440 的 63-token 单序列
+尾块场景，通过 96 个 value heads 放大并行调度覆盖。chunk32 不导出 recompute 中间量，其余
+shape、varlen、dtype 和 final state 配置与来源用例一致：
 
 ```bash
 DC_LOOP_NUMS=100 \
 bash tests/atk/run_test_cpu.sh -op=chunk_kda_fwd -npu_device_id=0 -scope=determinism
+```
+
+chunk32 负向回归已合并到父目录的 `negative_chunk32_guards.py`，覆盖零 head、head/lowerBound
+上限、七项 V2 守卫和 V1 对 chunk32 的拒绝：
+
+```bash
+python3 tests/atk/chunk_kda_fwd/negative_chunk32_guards.py
 ```
 
 性能、确定性、mssanitizer 和用例生成均通过统一脚本的对应 `-scope` 执行。

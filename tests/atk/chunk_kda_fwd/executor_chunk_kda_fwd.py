@@ -208,14 +208,16 @@ def _prepare_inputs(
     beta_target = _target_dtype(str(spec["beta_dtype"]), high_precision)
     fp32_target = torch.float64 if high_precision else torch.float32
 
-    if data_profile == "model_h96":
+    if data_profile in {"chunk32_fused", "model_h96"}:
+        # chunk32 在 kernel 内做 q/k L2 norm 和 beta sigmoid，输入不做这些预处理。
+        preprocess = data_profile == "model_h96"
         q_bsnd = _normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
-            std=float(spec["qk_scale"]), l2_normalize=True,
+            std=float(spec["qk_scale"]), l2_normalize=preprocess,
         )
         k_bsnd = _normal_quantized(
             (batch, total_t, h_num, k_dim), generator, q_original, q_target, device,
-            std=float(spec["qk_scale"]), l2_normalize=True,
+            std=float(spec["qk_scale"]), l2_normalize=preprocess,
         )
         v_bsnd = _normal_quantized(
             (batch, total_t, hv_num, v_dim), generator, q_original, q_target, device,
@@ -227,7 +229,7 @@ def _prepare_inputs(
         )
         beta_bsnd = _normal_quantized(
             (batch, total_t, hv_num), generator, beta_original, beta_target, device,
-            mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=True,
+            mean=float(spec["beta_bias"]), std=float(spec["beta_scale"]), sigmoid=preprocess,
         )
     else:
         data_scale = float(spec["data_scale"])
@@ -260,7 +262,7 @@ def _prepare_inputs(
 
     A_log = None
     if _as_bool(spec["use_gate_in_kernel"]):
-        if data_profile == "model_h96":
+        if data_profile in {"chunk32_fused", "model_h96"}:
             A_log = _normal_quantized(
                 (hv_num,), generator, torch.float32, fp32_target, device,
                 std=float(spec["a_log_scale"]),
@@ -271,7 +273,7 @@ def _prepare_inputs(
             )
     dt_bias = None
     if _as_bool(spec["dt_bias"]):
-        if data_profile == "model_h96":
+        if data_profile in {"chunk32_fused", "model_h96"}:
             dt_bias = _normal_quantized(
                 (hv_num * k_dim,), generator, torch.float32, fp32_target, device,
                 mean=float(spec["dt_bias_mean"]), std=float(spec["dt_bias_scale"]),
@@ -450,10 +452,16 @@ def _reference_impl(inputs: _PreparedInputs, spec: dict):
         length = end - start
         q_block = q[batch_id, start:end].permute(1, 0, 2).to(compute_dtype)
         k_block = k[batch_id, start:end].permute(1, 0, 2).to(compute_dtype)
+        if _as_bool(spec.get("use_qk_l2norm_in_kernel", False)):
+            epsilon = float(spec.get("epsilon", 1e-6))
+            q_block = q_block * torch.rsqrt(q_block.square().sum(dim=-1, keepdim=True) + epsilon)
+            k_block = k_block * torch.rsqrt(k_block.square().sum(dim=-1, keepdim=True) + epsilon)
         q_block = q_block.repeat_interleave(group, dim=0)
         k_block = k_block.repeat_interleave(group, dim=0)
         v_block = v[batch_id, start:end].permute(1, 0, 2).to(compute_dtype)
         beta_block = beta[batch_id, start:end].transpose(0, 1).to(compute_dtype)
+        if _as_bool(spec.get("use_beta_sigmoid_in_kernel", False)):
+            beta_block = torch.sigmoid(beta_block)
         g_block = gk[batch_id, start:end].permute(1, 0, 2).to(compute_dtype)
 
         exp_g = torch.exp2(g_block)
@@ -611,8 +619,14 @@ def _reference_model_parallel(inputs: _PreparedInputs, spec: dict):
             length = end - start
             q_block = q[batch_id, start:end, q_head].to(compute_dtype)
             k_block = k[batch_id, start:end, q_head].to(compute_dtype)
+            if _as_bool(spec.get("use_qk_l2norm_in_kernel", False)):
+                epsilon = float(spec.get("epsilon", 1e-6))
+                q_block = q_block * torch.rsqrt(q_block.square().sum(dim=-1, keepdim=True) + epsilon)
+                k_block = k_block * torch.rsqrt(k_block.square().sum(dim=-1, keepdim=True) + epsilon)
             v_block = v[batch_id, start:end, hv_index].to(compute_dtype)
             beta_block = beta[batch_id, start:end, hv_index].to(compute_dtype)
+            if _as_bool(spec.get("use_beta_sigmoid_in_kernel", False)):
+                beta_block = torch.sigmoid(beta_block)
             g_block = gk[batch_id, start:end, hv_index].to(compute_dtype)
             strict = strict_masks[length]
 
@@ -721,6 +735,9 @@ def _apply_output_policy(outputs: tuple, spec: dict) -> tuple:
         or _as_bool(spec["return_intermediate_states"])
     ):
         selected[10] = None
+    if int(spec["chunk_size"]) == 32:
+        # chunk32 不导出 gk、Aqk/Akk 或 recompute 中间量；golden 也必须隐藏这些槽位。
+        selected[2:11] = [None] * 9
     return tuple(selected)
 
 
@@ -814,6 +831,9 @@ def _public_kwargs(inputs: _PreparedInputs, spec: dict) -> dict:
         "disable_recompute": _as_bool(spec["disable_recompute"]),
         "return_intermediate_states": _as_bool(spec["return_intermediate_states"]),
         "state_v_first": _as_bool(spec["state_v_first"]),
+        "epsilon": float(spec.get("epsilon", 1e-6)),
+        "use_qk_l2norm_in_kernel": _as_bool(spec.get("use_qk_l2norm_in_kernel", False)),
+        "use_beta_sigmoid_in_kernel": _as_bool(spec.get("use_beta_sigmoid_in_kernel", False)),
     }
 
 
