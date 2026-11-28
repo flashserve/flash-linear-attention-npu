@@ -77,7 +77,8 @@ public:
         for (uint32_t i = 0; i < 6; ++i) {
             MTE2_MTE1Events_[i] = eventPipe.AllocEventID<AscendC::HardEvent::MTE2_MTE1>();
         }
-        for (uint32_t i = 0; i < 6; ++i) {
+        // FIX -> MTE1: L0C free per slot, then L1 result ready per head.
+        for (uint32_t i = 0; i < SLOT_COUNT + HEAD_COUNT; ++i) {
             FIX_MTE1Events_[i] = eventPipe.AllocEventID<AscendC::HardEvent::FIX_MTE1>();
         }
         for (uint32_t i = 0; i < 6; ++i) {
@@ -85,9 +86,6 @@ public:
         }
         for (uint32_t i = 0; i < 3; ++i) {
             MTE1_MEvents_[i] = eventPipe.AllocEventID<AscendC::HardEvent::MTE1_M>();
-        }
-        for (uint32_t i = 0; i < 3; ++i) {
-            FIX_MEvents_[i] = eventPipe.AllocEventID<AscendC::HardEvent::FIX_M>();
         }
         for (uint32_t i = 0; i < 3; ++i) {
             M_FIXEvents_[i] = eventPipe.AllocEventID<AscendC::HardEvent::M_FIX>();
@@ -215,7 +213,7 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[2 * eventIndex + 1]);
         }
         for (eventIndex = 0; eventIndex < SLOT_COUNT; ++eventIndex) {
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[eventIndex]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[eventIndex]);
         }
 
         for (taskIdx = coreIdx_; taskIdx < tiling_->taskNum; taskIdx += coreNum_) {
@@ -295,7 +293,7 @@ public:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[2 * eventIndex + 1]);
         }
         for (eventIndex = 0; eventIndex < SLOT_COUNT; ++eventIndex) {
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[eventIndex]);
+            AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[eventIndex]);
         }
         for (uint32_t i = 0; i < 6; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[i]);
@@ -303,7 +301,7 @@ public:
         for (uint32_t i = 0; i < 6; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[i]);
         }
-        for (uint32_t i = 0; i < 6; ++i) {
+        for (uint32_t i = 0; i < SLOT_COUNT + HEAD_COUNT; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[i]);
         }
         for (uint32_t i = 0; i < 6; ++i) {
@@ -311,9 +309,6 @@ public:
         }
         for (uint32_t i = 0; i < 3; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[i]);
-        }
-        for (uint32_t i = 0; i < 3; ++i) {
-            eventPipe.ReleaseEventID<AscendC::HardEvent::FIX_M>(FIX_MEvents_[i]);
         }
         for (uint32_t i = 0; i < 3; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::M_FIX>(M_FIXEvents_[i]);
@@ -531,9 +526,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAuL0BEvent]);
         CopyDauL1ToL0A{}(tensorDauL0A, tileDauL1A);
         CopyDauL1ToL0B{}(tensorDauL0B, tileDauL1B);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dAuL0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dAuL0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dAuL0CSlot]);
+        WaitMmadReady(dAuL0CSlot);
         tileMmad_(tileDauL0C, tensorDauL0A, tensorDauL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAuL0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAuL0BEvent]);
@@ -546,7 +539,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dAuL0CSlot]);
         CopyL0CToUb<decltype(blockDauCv)>{}(blockDauCv, tensorDauL0C, false, uint8_t{0});
         SetReady<PIPE_FIX>(FinalizeCvFlag::S1Ready);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dAuL0CSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dAuL0CSlot]);
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[hEvent]);
         // N=64 keeps every L0A/L0B/L0C slot within 16 KiB.
@@ -591,9 +584,7 @@ private:
                     tensorL1HTranspose, tla::MakeCoord(0, nOffset), tla::MakeShape(V_SIZE_128, nSize));
                 CopyDauL1ToL0B{}(tensorDw0L0BTranspose, tileDw0L1B);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dw0L0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dw0L0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dw0L0CSlot]);
+            WaitMmadReady(dw0L0CSlot);
             if (tiling_->stateVFirst != 0) {
                 tileMmad_(tileDw0L0C, tensorDw0L0A, tensorDw0L0BVFirst, true, 0);
             } else {
@@ -613,11 +604,11 @@ private:
             dw0FixpipeParams.unitFlag = 0;
             AscendC::Fixpipe<DT, ElementAccumulator, FIXPIPE_NZ_L1_CONFIG>(
                 dw0L1[headOffset][nOffset * CHUNK_SIZE_64], l0C[dw0L0CSlot], dw0FixpipeParams);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dw0L0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dw0L0CSlot]);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[duEvent]);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[hEvent]);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[static_cast<uint32_t>(headOffset) + HEAD_COUNT]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[SLOT_COUNT + static_cast<uint32_t>(headOffset)]);
     }
 
     __aicore__ inline void ProcessStage3Head(
@@ -691,15 +682,13 @@ private:
             Catlass::Arch::PositionL0C{});
         auto tileDAwL0C = tla::GetTile(
             tensorDAwL0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, chunkLen));
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[static_cast<uint32_t>(headOffset) + HEAD_COUNT]);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[SLOT_COUNT + static_cast<uint32_t>(headOffset)]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[aEvent]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAwL0AEvent]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAwL0BEvent]);
         CopyDauL1ToL0A{}(tensorDAwL0A, tileDw0L1);
         CopyDauL1ToL0B{}(tensorDAwL0B, tileKbgL1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dAwL0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dAwL0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dAwL0CSlot]);
+        WaitMmadReady(dAwL0CSlot);
         tileMmad_(tileDAwL0C, tensorDAwL0A, tensorDAwL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAwL0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dAwL0BEvent]);
@@ -710,7 +699,7 @@ private:
             tensorDAwCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dAwL0CSlot]);
         CopyL0CToUb<decltype(blockDAwCv)>{}(blockDAwCv, tensorDAwL0C, false, uint8_t{0});
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dAwL0CSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dAwL0CSlot]);
 
         // N=64 keeps every L0A/L0B/L0C slot within 16 KiB.
         for (uint32_t nOffset = 0; nOffset < K_SIZE_128; nOffset += 64) {
@@ -752,9 +741,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dvbL0BEvent]);
             typename TileCopyDvb::CopyL1ToL0A{}(tensorDvbL0A, tileAL1);
             typename TileCopyDvb::CopyL1ToL0B{}(tensorDvbL0B, tileDuL1B);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dvbL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dvbL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dvbL0CSlot]);
+            WaitMmadReady(dvbL0CSlot);
             TileMmadDvb{}(tileDvbL0C, tensorDvbL0A, tensorDvbL0B, true, 0);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dvbL0AEvent]);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dvbL0BEvent]);
@@ -765,7 +752,7 @@ private:
                 tensorDvbCv, tla::MakeCoord(0, nOffset), tla::MakeShape(chunkLen, nSize));
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dvbL0CSlot]);
             CopyL0CToUb<decltype(blockDvbCv)>{}(blockDvbCv, tensorDvbL0C, false, uint8_t{0});
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dvbL0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dvbL0CSlot]);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[aEvent]);
     }
@@ -854,9 +841,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA1L0BEvent]);
         CopyDauL1ToL0A{}(tensorDA1L0A, tileDA0L1);
         CopyDauL1ToL0B{}(tensorDA1L0B, tileAL1B);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dA1L0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dA1L0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dA1L0CSlot]);
+        WaitMmadReady(dA1L0CSlot);
         // Each Stage 5 GEMM initializes a separate L0C slot. Use the CATLASS
         // batch overload to avoid the conditional PIPE_M barrier for small tiles.
         tileMmad_(tensorDA1L0C, tensorDA1L0A, tensorDA1L0B, mActual, chunkLen, chunkLen, tileBatch);
@@ -873,8 +858,8 @@ private:
         dA1FixpipeParams.unitFlag = 0;
         AscendC::Fixpipe<DT, ElementAccumulator, FIXPIPE_NZ_L1_CONFIG>(
             dA0L1[headOffset], l0C[dA1L0CSlot], dA1FixpipeParams);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[static_cast<uint32_t>(headOffset) + HEAD_COUNT]);
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dA1L0CSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[SLOT_COUNT + static_cast<uint32_t>(headOffset)]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dA1L0CSlot]);
 
         const uint32_t a2L0ASlot = l0ASlot_;
         const uint32_t a2L0BSlot = l0BSlot_;
@@ -907,9 +892,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0BEvent]);
         CopyDauL1ToL0A{}(tensorA2L0A, tileKL1);
         CopyDauL1ToL0B{}(tensorA2L0B, tileKTL1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[a2L0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[a2L0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[a2L0CSlot]);
+        WaitMmadReady(a2L0CSlot);
         tileMmad_(tensorA2L0C, tensorA2L0A, tensorA2L0B, mActual, chunkLen, K_SIZE_128, tileBatch);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0BEvent]);
@@ -920,7 +903,7 @@ private:
             tensorA2Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[a2L0CSlot]);
         CopyL0CToUb<decltype(blockA2Cv)>{}(blockA2Cv, tensorA2L0C, false, uint8_t{0});
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[a2L0CSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[a2L0CSlot]);
     }
 
     __aicore__ inline void ProcessStage7Head(
@@ -973,15 +956,13 @@ private:
             Catlass::Arch::PositionL0C{});
         auto tileDA2L0C = tla::GetTile(
             tensorDA2L0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, chunkLen));
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[static_cast<uint32_t>(headOffset) + HEAD_COUNT]);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[SLOT_COUNT + static_cast<uint32_t>(headOffset)]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA2L0AEvent]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA2L0BEvent]);
         typename TileCopyDvb::CopyL1ToL0A{}(tensorDA2L0A, tileAL1);
         typename TileCopyDvb::CopyL1ToL0B{}(tensorDA2L0B, tileDA1L1);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[l1Event]);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dA2L0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dA2L0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dA2L0CSlot]);
+        WaitMmadReady(dA2L0CSlot);
         TileMmadDvb{}(tileDA2L0C, tensorDA2L0A, tensorDA2L0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA2L0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA2L0BEvent]);
@@ -992,7 +973,7 @@ private:
             tensorDA2Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dA2L0CSlot]);
         CopyL0CToUb<decltype(blockDA2Cv)>{}(blockDA2Cv, tensorDA2L0C, false, uint8_t{0});
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dA2L0CSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dA2L0CSlot]);
 
         // N=64 keeps every L0A/L0B/L0C slot within 16 KiB.
         for (uint32_t nOffset = 0; nOffset < K_SIZE_128; nOffset += 64) {
@@ -1028,9 +1009,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbgL0BEvent]);
             typename TileCopyDvb::CopyL1ToL0A{}(tensorDkbgL0A, tileAL1);
             typename TileCopyDvb::CopyL1ToL0B{}(tensorDkbgL0B, tileDw0L1B);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkbgL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkbgL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkbgL0CSlot]);
+            WaitMmadReady(dkbgL0CSlot);
             TileMmadDvb{}(tileDkbgL0C, tensorDkbgL0A, tensorDkbgL0B, true, 0);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbgL0AEvent]);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbgL0BEvent]);
@@ -1041,7 +1020,7 @@ private:
                 tensorDkbgCv, tla::MakeCoord(0, nOffset), tla::MakeShape(chunkLen, nSize));
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dkbgL0CSlot]);
             CopyL0CToUb<decltype(blockDkbgCv)>{}(blockDkbgCv, tensorDkbgL0C, false, uint8_t{0});
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkbgL0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dkbgL0CSlot]);
         }
     }
 
@@ -1133,9 +1112,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbL0BEvent]);
             CopyDw0L1ToL0A{}(tensorDkbL0A, tileDAL1);
             CopyDw0L1ToL0B{}(tensorDkbL0B, tileKL1);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkbL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkbL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkbL0CSlot]);
+            WaitMmadReady(dkbL0CSlot);
             tileMmad_(tileDkbL0C, tensorDkbL0A, tensorDkbL0B, true, 0);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbL0AEvent]);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbL0BEvent]);
@@ -1143,7 +1120,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dkbL0CSlot]);
             typename TileCopyDw0::template CopyL0CToDst<decltype(blockGmDkb)>{}(
                 blockGmDkb, tensorDkbL0C);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkbL0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dkbL0CSlot]);
         }
         // N=64 keeps every L0A/L0B/L0C slot within 16 KiB.
         for (uint32_t nOffset = 0; nOffset < K_SIZE_128; nOffset += 64) {
@@ -1183,9 +1160,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbTL0BEvent]);
             CopyStage9DkbTL1ToL0A{}(tensorDkbTL0A, tileDATL1);
             CopyStage9DkbTL1ToL0B{}(tensorDkbTL0B, tileKbL1);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkbTL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkbTL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkbTL0CSlot]);
+            WaitMmadReady(dkbTL0CSlot);
             tileMmad_(tileDkbTL0C, tensorDkbTL0A, tensorDkbTL0B, true, 0);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbTL0AEvent]);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkbTL0BEvent]);
@@ -1193,7 +1168,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dkbTL0CSlot]);
             typename TileCopyStage9DkbT::template CopyL0CToDst<decltype(blockGmDkbT)>{}(
                 blockGmDkbT, tensorDkbTL0C);
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkbTL0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dkbTL0CSlot]);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[l1Event]);
     }
@@ -1277,16 +1252,14 @@ private:
         CopyDauL1ToL0A{}(tensorDsL0A, tileDoL1);
         CopyDauL1ToL0B{}(tensorDsL0B, tileVNewL1);
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[vNewEvent]);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dsL0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dsL0CSlot]);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dsL0CSlot]);
+        WaitMmadReady(dsL0CSlot);
         tileMmad_(tileDsL0C, tensorDsL0A, tensorDsL0B, true, 0);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dsL0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dsL0BEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dsL0CSlot]);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dsL0CSlot]);
         CopyL0CToUb<decltype(blockDs0Cv)>{}(blockDs0Cv, tensorDsL0C, false, uint8_t{0});
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dsL0CSlot]);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dsL0CSlot]);
 
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[doEvent]);
     }
@@ -1450,9 +1423,7 @@ private:
                     tensorL1HTranspose, tla::MakeCoord(0, nOffset), tla::MakeShape(V_SIZE_128, nSize));
                 CopyDauL1ToL0B{}(tensorHL0BTranspose, tileHL1);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dqL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dqL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dqL0CSlot]);
+            WaitMmadReady(dqL0CSlot);
             if (tiling_->stateVFirst != 0) {
                 tileMmad_(tileDqL0C, tensorDoGL0A, tensorHL0BVFirst, true, 0);
             } else {
@@ -1473,7 +1444,7 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dqL0CSlot]);
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dqL0CSlot]);
             CopyL0CToUb<decltype(blockDqCv)>{}(blockDqCv, tensorDqL0C, false, uint8_t{0});
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dqL0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dqL0CSlot]);
 
             const uint32_t dkL0ASlot = l0ASlot_;
             const uint32_t dkL0BSlot = l0BSlot_;
@@ -1501,9 +1472,7 @@ private:
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkL0BEvent]);
             CopyStage9DkbTL1ToL0A{}(tensorDkL0A, tileDsTL1);
             CopyStage9DkbTL1ToL0B{}(tensorDkL0B, tileQL1);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dkL0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkL0CSlot]);
+            WaitMmadReady(dkL0CSlot);
             tileMmad_(tileDkL0C, tensorDkL0A, tensorDkL0B, true, 0);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkL0AEvent]);
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dkL0BEvent]);
@@ -1552,9 +1521,7 @@ private:
                     tensorL1DhTranspose, tla::MakeCoord(0, nOffset), tla::MakeShape(V_SIZE_128, nSize));
                 CopyDauL1ToL0B{}(tensorDk0L0BTranspose, tileDhL1);
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dk0L0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dk0L0CSlot]);
-            AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dk0L0CSlot]);
+            WaitMmadReady(dk0L0CSlot);
             if (tiling_->stateVFirst != 0) {
                 tileMmad_(tileDk0L0C, tensorDk0L0A, tensorDk0L0BVFirst, true, 0);
             } else {
@@ -1565,11 +1532,11 @@ private:
             AscendC::SetFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dk0L0CSlot]);
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dk0L0CSlot]);
             CopyL0CToUb<decltype(blockDk0Cv)>{}(blockDk0Cv, tensorDk0L0C, false, uint8_t{0});
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dk0L0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dk0L0CSlot]);
 
             AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dkL0CSlot]);
             CopyL0CToUb<decltype(blockDkCv)>{}(blockDkCv, tensorDkL0C, false, uint8_t{0});
-            AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dkL0CSlot]);
+            AscendC::SetFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[dkL0CSlot]);
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[dsEvent]);
     }
@@ -1579,6 +1546,14 @@ private:
         // The explicit sub-block overload needs 32-byte rows. Both the L0C fractal and UB row fit the padding.
         constexpr uint32_t columnsPerBlock = UB_ALIGN_BYTES / sizeof(DT);
         return (validColumns + columnsPerBlock - 1U) / columnsPerBlock * columnsPerBlock;
+    }
+
+    __aicore__ inline void WaitMmadReady(uint32_t slot)
+    {
+        // L0A/B loads precede this point on MTE1. Publish one Cube-ready event once FIX has also released L0C.
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE1>(FIX_MTE1Events_[slot]);
+        AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[slot]);
     }
 
     __aicore__ inline void WaitVectorInput(FinalizeCvFlag flag, uint32_t slot)
@@ -1598,10 +1573,9 @@ private:
     AscendC::TEventID inputFixToMte2_[HEAD_COUNT];
     AscendC::TEventID MTE1_MTE2Events_[6];
     AscendC::TEventID MTE2_MTE1Events_[6];
-    AscendC::TEventID FIX_MTE1Events_[6];
+    AscendC::TEventID FIX_MTE1Events_[SLOT_COUNT + HEAD_COUNT];
     AscendC::TEventID M_MTE1Events_[6];
     AscendC::TEventID MTE1_MEvents_[3];
-    AscendC::TEventID FIX_MEvents_[3];
     AscendC::TEventID M_FIXEvents_[3];
     GM_ADDR q_ = nullptr;
     GM_ADDR k_ = nullptr;
