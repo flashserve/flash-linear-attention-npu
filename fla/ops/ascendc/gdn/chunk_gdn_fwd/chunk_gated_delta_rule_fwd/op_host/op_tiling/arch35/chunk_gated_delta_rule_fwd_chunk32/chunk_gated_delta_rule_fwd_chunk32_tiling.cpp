@@ -29,6 +29,7 @@ constexpr size_t OUTPUT_Q_HAT = 4;
 constexpr size_t ATTR_CHUNK_SIZE = 1;
 constexpr size_t ATTR_OUTPUT_G_CUMSUM = 3;
 constexpr size_t ATTR_SCALE = 2;
+constexpr size_t ATTR_QKV_LAYOUT = 5;
 constexpr size_t ATTR_STATE_V_FIRST = 7;
 constexpr size_t ATTR_ALLOW_NEG_EIGVAL = 8;
 constexpr size_t ATTR_IS_OUT_L2NORM = 9;
@@ -247,14 +248,17 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
     tiling->stateVFirst = stateVFirst != nullptr && *stateVFirst ? 1U : 0U;
     const bool *allowNeg = context->GetAttrs()->GetAttrPointer<bool>(ATTR_ALLOW_NEG_EIGVAL);
     tiling->allowNegEigval = allowNeg != nullptr && *allowNeg ? 1U : 0U;
+    const int64_t *qkvLayout = context->GetAttrs()->GetAttrPointer<int64_t>(ATTR_QKV_LAYOUT);
+    const bool splitSequence = hasCu && qkvLayout != nullptr && *qkvLayout == CHUNK32_QKV_LAYOUT_NTD;
+    tiling->splitSequence = splitSequence ? 1U : 0U;
+    const uint64_t taskCount = splitSequence ? static_cast<uint64_t>(stateBatch) * headTasks : headTasks;
 
     uint32_t aicNum = 1;
     uint64_t workspaceBytes = DEFAULT_WORKSPACE_BYTES;
     const platform_ascendc::PlatformAscendC platform(context->GetPlatformInfo());
     workspaceBytes = platform.GetLibApiWorkSpaceSize();
     aicNum = std::max<uint32_t>(static_cast<uint32_t>(platform.GetCoreNumAic()), 1U);
-    const uint32_t blockDim =
-        std::min<uint32_t>(static_cast<uint32_t>(headTasks), aicNum);
+    const uint32_t blockDim = static_cast<uint32_t>(std::min<uint64_t>(taskCount, aicNum));
     tiling->coreNum = blockDim;
     size_t *workspace = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspace);

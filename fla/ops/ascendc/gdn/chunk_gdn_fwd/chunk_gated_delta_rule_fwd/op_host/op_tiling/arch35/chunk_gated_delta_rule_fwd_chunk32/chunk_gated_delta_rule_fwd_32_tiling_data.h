@@ -3,6 +3,9 @@
 
 #include <cstdint>
 
+// Chunk32 keeps NTD QKV head-major and schedules packed sequences independently.
+constexpr int64_t CHUNK32_QKV_LAYOUT_NTD = 2;
+
 struct ChunkGatedDeltaRuleFwd32TilingData {
     uint32_t B;
     uint32_t HV;
@@ -25,6 +28,7 @@ struct ChunkGatedDeltaRuleFwd32TilingData {
     uint32_t allowNegEigval;
     // 1: write q_hat, k_hat and both rstd. 0 is the inference launch.
     uint32_t isOutL2norm;
+    uint32_t splitSequence;
 };
 
 #endif
