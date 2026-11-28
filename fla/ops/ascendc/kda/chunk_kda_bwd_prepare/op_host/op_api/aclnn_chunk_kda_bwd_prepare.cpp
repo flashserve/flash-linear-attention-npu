@@ -39,8 +39,9 @@ aclnnStatus Missing(const char *name)
 {
     // CANN 9.0.0's OP_LOGE_WITH_INVALID_INPUT references an undefined param_name.
     // Use its structured reporter directly without redefining SDK macros.
-    OP_LOGE_WITHOUT_REPORT(OP_NAME, "OP[%s] get [%s] failed.", OP_NAME, name);
-    const std::vector<const char *> keys = {"op_name", "param_name"};
+    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+        OP_NAME, "internal",
+        "OP[" + std::string(OP_NAME) + "] get [" + std::string(name) + "] failed"); const std::vector<const char *> keys = {"op_name", "param_name"};
     const std::vector<const char *> values = {OP_NAME, name};
     REPORT_PREDEFINED_ERR_MSG("EZ0004", keys, values);
     return ACLNN_ERR_PARAM_NULLPTR;
@@ -239,8 +240,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
     if (status != ACLNN_SUCCESS) return status;
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto result = l0op::ChunkKdaBwdPrepare(
@@ -249,7 +251,9 @@ extern "C" aclnnStatus aclnnChunkKdaBwdPrepareGetWorkspaceSize(
         uniqueExecutor.get());
     for (const aclTensor *tensor : result) {
         if (!(tensor != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "contiguous",
+                "Contiguous failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

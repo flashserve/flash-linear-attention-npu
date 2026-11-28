@@ -4,6 +4,7 @@
  * the BSD 3-Clause License (the "License").
  */
 
+#include "op_common/log/log.h"
 #include "chunk_kda_fwd_prepare_tiling.h"
 
 #include <cmath>
@@ -294,8 +295,9 @@ bool ResolveSequenceInfo(gert::TilingContext *context,
         const uint64_t length = static_cast<uint64_t>(cu[seq + 1] - cu[seq]);
         const uint64_t sequenceChunks = CeilDiv(length, PREPARE_CHUNK_SIZE);
         if (totalChunks > std::numeric_limits<uint64_t>::max() - sequenceChunks) {
-            OP_LOGE_WITHOUT_REPORT(
-                context->GetNodeName(), "cu_seqlens: total chunk count overflows uint64");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), "internal",
+                "cu_seqlens: total chunk count overflows uint64");
             return false;
         }
         totalChunks += sequenceChunks;
@@ -475,7 +477,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
         useNormPtr == nullptr || useGatePtr == nullptr || useBetaPtr == nullptr ||
         allowNegPtr == nullptr || safeGatePtr == nullptr || lowerBoundPtr == nullptr ||
         useExp2Ptr == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 算子属性不完整。", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "算子属性不完整。");
 
         return ge::GRAPH_FAILED;
     }
@@ -620,12 +624,9 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     scheduleContext.isArch92 = isAscend9201;
     ChunkKdaFwdPrepareSchedule schedule;
     if (!ChunkKdaFwdPrepareTilingProcessor(scheduleContext).Process(schedule)) {
-        OP_LOGE_WITHOUT_REPORT(
-            context->GetNodeName(),
-            "%s: failed to build chunk-first/GVA schedule (aicCoreNum=%lu, totalChunks=%lu)",
-            __func__, static_cast<unsigned long>(aicCoreNum),
-            static_cast<unsigned long>(totalChunks));
-        return ge::GRAPH_FAILED;
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "failed to build chunk-first/GVA schedule"); return ge::GRAPH_FAILED;
     }
 
     uint64_t gateDtypeToken = 0;
@@ -680,15 +681,18 @@ ge::graphStatus Tiling4ChunkKdaFwdPrepare(gert::TilingContext *context)
     context->SetTilingKey(tilingKey);
     context->SetBlockDim(schedule.usedCoreNum);
     if (context->SetScheduleMode(PREPARE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 MIX AIC/AIV batch 调度模式失败。", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "设置 MIX AIC/AIV batch 调度模式失败。");
 
         return ge::GRAPH_FAILED;
     }
     size_t *workspace = context->GetWorkspaceSizes(1);
     if (workspace == nullptr ||
         schedule.workspaceBytes > std::numeric_limits<size_t>::max()) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-            "%s: workspace 大小超过平台 size_t 范围。", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "workspace 大小超过平台 size_t 范围。");
 
         return ge::GRAPH_FAILED;
     }

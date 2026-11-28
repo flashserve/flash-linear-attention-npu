@@ -74,8 +74,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     if (cuSeqlensOptional) {
         actualCuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (actualCuSeqlens == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert cuSeqlens to tensor failed.");
-            return {nullptr, nullptr, nullptr};
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkFwdH", "internal",
+                "Convert cuSeqlens to tensor failed"); return {nullptr, nullptr, nullptr};
         }
         const_cast<aclTensor *>(actualCuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualCuSeqlens)->SetViewFormat(Format::FORMAT_ND);
@@ -88,8 +89,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
     if (chunkIndicesOptional) {
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (actualChunkIndices == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert chunkIndices to tensor failed.");
-            return {nullptr, nullptr, nullptr};
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkFwdH", "internal",
+                "Convert chunkIndices to tensor failed"); return {nullptr, nullptr, nullptr};
         }
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
@@ -117,8 +119,9 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
                                        : initialStateOptional->GetDataType();
         finalStateOutKernel = executor->AllocTensor(MakeShape({0}), stateType, Format::FORMAT_ND);
         if (finalStateOutKernel == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Alloc finalStateOut placeholder failed.");
-            return {nullptr, nullptr, nullptr};
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkFwdH", "alloc",
+                "Alloc finalStateOut placeholder failed"); return {nullptr, nullptr, nullptr};
         }
     }
     // P1 varlen balanced partition: cu_seqlens is host-readable here, so the
@@ -147,7 +150,10 @@ const std::array<const aclTensor *, 3> ChunkFwdH(
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim, seqChunkCountsAttr,
                 layout));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkFwdH", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr, nullptr, nullptr};
     }
     return {hOut, vNewOut, finalStateOut};

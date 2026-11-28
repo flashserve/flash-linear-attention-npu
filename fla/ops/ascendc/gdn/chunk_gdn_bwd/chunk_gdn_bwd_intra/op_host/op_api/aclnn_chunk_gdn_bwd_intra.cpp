@@ -340,8 +340,9 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     aclOpExecutor *executorPtr = uniqueExecutor.get();
@@ -350,7 +351,9 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntraGetWorkspaceSize(
         scale, chunkSize, useExp2, wOut, uOut, dvLocalOut, executorPtr);
     for (const aclTensor *tensor : result) {
         if (!(tensor != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "contiguous",
+                "Contiguous failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -365,8 +368,10 @@ extern "C" aclnnStatus aclnnChunkGdnBwdIntra(
     L2_DFX_PHASE_2(aclnnChunkGdnBwdIntra);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

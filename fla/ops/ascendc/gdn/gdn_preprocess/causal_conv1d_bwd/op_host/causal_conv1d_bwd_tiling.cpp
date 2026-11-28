@@ -88,8 +88,9 @@ static ge::graphStatus CheckDtypes(gert::TilingContext *context, ge::DataType xD
         const auto *desc = context->GetInputDesc(requiredInputIndices[i]);
         OP_CHECK_IF(
             desc == nullptr,
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: required input %s descriptor is unavailable", __func__,
-                                   requiredInputNames[i]),
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "required input descriptor is unavailable"),
             return ge::GRAPH_FAILED);
         OP_CHECK_IF(desc->GetDataType() != xDtype,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, requiredInputNames[i],
@@ -126,15 +127,15 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     CausalConv1dBwdTilingData *tiling = context->GetTilingData<CausalConv1dBwdTilingData>();
     OP_CHECK_IF(
         tiling == nullptr,
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                std::string("tiling data: actual=null; expected=valid CausalConv1dBwdTilingData buffer").c_str()),
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "tiling data buffer is null"),
         return ge::GRAPH_FAILED);
     const auto memsetRc = memset_s(tiling, sizeof(CausalConv1dBwdTilingData), 0, sizeof(CausalConv1dBwdTilingData));
     OP_CHECK_IF(memsetRc != EOK,
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                        std::string("memset_s(tiling): rc=" + std::to_string(memsetRc) +
-                                    "; expected rc=0 (EOK); failed to initialize tiling data")
-                            .c_str()),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "failed to initialize tiling data"),
                 return ge::GRAPH_FAILED);
 
     auto xShape = context->GetInputShape(X_INPUT_INDEX)->GetStorageShape();
@@ -142,7 +143,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     auto wShape = context->GetInputShape(WEIGHT_INPUT_INDEX)->GetStorageShape();
     auto xDesc = context->GetInputDesc(X_INPUT_INDEX);
     OP_CHECK_IF(xDesc == nullptr,
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: required input x descriptor is unavailable", __func__),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "required input x descriptor is unavailable"),
                 return ge::GRAPH_FAILED);
     auto xDtype = xDesc->GetDataType();
     if (CheckDtypes(context, xDtype) != ge::GRAPH_SUCCESS) {
@@ -318,7 +321,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         const gert::CompileTimeTensorDesc *qslDesc = context->GetOptionalInputDesc(QUERY_START_LOC_INPUT_INDEX);
         OP_CHECK_IF(
             qslDesc == nullptr,
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: queryStartLoc descriptor is unavailable in varlen mode", __func__),
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "queryStartLoc descriptor is unavailable in varlen mode"),
             return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslDesc->GetDataType() != ge::DT_INT64,
                     OP_LOGE_FOR_INVALID_DTYPE(OP_NAME, "queryStartLoc",
@@ -328,8 +333,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         const gert::Tensor *qslTensor = context->GetOptionalInputTensor(QUERY_START_LOC_INPUT_INDEX);
         const int64_t *qslData = (qslTensor != nullptr) ? qslTensor->GetData<int64_t>() : nullptr;
         OP_CHECK_IF(qslData == nullptr,
-                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: queryStartLoc host tensor data is unavailable in varlen mode",
-                                           __func__),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "tiling failed"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(qslData[0] != 0 || qslData[B] != static_cast<int64_t>(totalTokens),
                     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
@@ -398,9 +404,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         fe::PlatFormInfos *platformInfoPtr = context->GetPlatformInfo();
         OP_CHECK_IF(
             platformInfoPtr == nullptr,
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                    std::string("platformInfo: actual=null; expected=valid platform metadata for resource queries")
-                        .c_str()),
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "platformInfo is null"),
             return ge::GRAPH_FAILED);
         auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
         const auto npuArch = ascendcPlatform.GetCurNpuArch();
@@ -412,13 +418,15 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
         }
         coreNum = ascendcPlatform.GetCoreNumAiv();
         OP_CHECK_IF(coreNum == 0,
-                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                            std::string("coreNum: actual=0; expected > 0 AIV cores from platform metadata").c_str()),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "AIV coreNum is 0"),
                     return ge::GRAPH_FAILED);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
         OP_CHECK_IF(ubSize == 0,
-                    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                            std::string("ubSize: actual=0 bytes; expected > 0 bytes from platform metadata").c_str()),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "UB size is 0"),
                     return ge::GRAPH_FAILED);
         sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     }
@@ -676,11 +684,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     }
 
     OP_CHECK_IF(need > ubSize,
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                        std::string("UB capacity: requiredBytes=" + std::to_string(need) +
-                                    "; availableBytes=" + std::to_string(ubSize) +
-                                    "; expected requiredBytes <= availableBytes for selected tile")
-                            .c_str()),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "UB capacity is insufficient"),
                 return ge::GRAPH_FAILED);
 
     // The kernel entry is not template-specialized by activation. Keep one
@@ -734,10 +740,9 @@ static ge::graphStatus CausalConv1dBwdTilingFunc(gert::TilingContext *context)
     context->SetBlockDim(mainCoreNum);
     const auto scheduleRc = context->SetScheduleMode(1);
     OP_CHECK_IF(scheduleRc != ge::GRAPH_SUCCESS,
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s",
-                        std::string("SetScheduleMode: mode=1; rc=" + std::to_string(scheduleRc) +
-                                    "; expected rc=0 (GRAPH_SUCCESS)")
-                            .c_str()),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    OP_NAME, "tiling",
+    "SetScheduleMode failed"),
                 return ge::GRAPH_FAILED);
 
     tiling->B = B;

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "op_common/log/log.h"
 #include "../../op_kernel/chunk_gdn_bwd_intra_struct.h"
 #include <cstring>
 
@@ -154,8 +155,9 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
     const bool arch92 = arch == NpuArch::DAV_9201;
     const bool arch35 = arch == NpuArch::DAV_3510;
     if (!arch22 && !arch92 && !arch35) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-                               "%s: only DAV_2201, DAV_3510 and DAV_9201 are supported.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "only DAV_2201, DAV_3510 and DAV_9201 are supported");
         return ge::GRAPH_FAILED;
     }
     // A6 uses fixed GVA keys; A2/A3 and A5 also support runtime GVA.
@@ -197,7 +199,9 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                     !IntraCheckedMultiply(tensorBytes, seqlen, tensorBytes) ||
                     !IntraCheckedMultiply(tensorBytes, 128 * sizeof(uint16_t), tensorBytes) ||
                     tensorBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: tensor address range overflow.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "tensor address range overflow");
         return ge::GRAPH_FAILED;
     }
 
@@ -267,7 +271,9 @@ ge::graphStatus Tiling4ChunkGdnBwdIntra(gert::TilingContext *context)
                         l0aBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
                         l0bBytes < GDN::Arch22::L0_HOST_MIN_BYTES ||
                         l0cBytes < GDN::Arch22::L0_HOST_MIN_BYTES) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: insufficient on-chip memory for arch22 schedule.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "insufficient on-chip memory for arch22 schedule");
         return ge::GRAPH_FAILED;
     }
     }

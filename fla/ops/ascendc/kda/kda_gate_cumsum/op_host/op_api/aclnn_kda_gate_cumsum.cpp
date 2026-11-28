@@ -188,22 +188,30 @@ aclnnStatus aclnnKdaGateCumsumGetWorkspaceSize(
         }
     }
     if (KdaGateDataContiguous(g, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous conversion of g failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (KdaGateDataContiguous(aLogOptional, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous conversion of aLogOptional failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (KdaGateDataContiguous(dtBiasOptional, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous conversion of dtBiasOptional failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto result = l0op::KdaGateCumsum(g, aLogOptional, dtBiasOptional, cuSeqlensOptional, chunkSize,
                                       useGateInKernel, safeGate, lowerBound, gkOut, executorPtr);
     if (result[0] == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output (gkOut)", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(KdaGateCumsum) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

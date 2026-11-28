@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "op_common/log/log.h"
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
@@ -71,7 +72,10 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
         OP_ATTR(outputFinalState, chunkSize, logicalBatch, logicalSeqlen,
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkGatedDeltaRuleFwdH", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr, nullptr, nullptr};
     }
     return {hOut, vNewOut, finalStateOut};

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "chunk_gated_delta_rule_fwd_32_tiling_data.h"
 
@@ -100,8 +101,9 @@ ge::graphStatus TilingForChunkGatedDeltaRuleFwdChunk32(gert::TilingContext *cont
                     stateShape == nullptr || qDesc == nullptr || kDesc == nullptr ||
                     vDesc == nullptr || betaDesc == nullptr || gDesc == nullptr ||
                     stateDesc == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: tiling metadata of q/k/v/beta/g/o/final_state is missing", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "tiling",
+            "tiling metadata of q/k/v/beta/g/o/final_state is missing");
         return ge::GRAPH_FAILED;
     }
 

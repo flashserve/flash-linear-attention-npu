@@ -49,7 +49,9 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -58,55 +60,81 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(ChunkKdaBwdRecomputeParams &params, aclOpExecutor *executor)
 {
     if (!(DataContiguous(params.q, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous q failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(q) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.k, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous k failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(k) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.v, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous v failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(v) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.g, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous g failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(g) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.beta, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous beta failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(beta) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.a, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous a failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(a) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.aLogOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous aLogOptional failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(aLogOptional) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.dtBiasOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous dtBiasOptional failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(dtBiasOptional) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.wOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous wOut failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(wOut) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.uOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous uOut failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(uOut) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.qgOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous qgOut failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(qgOut) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.kgOut, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous kgOut failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(kgOut) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.gkOutOptional, executor) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous gkOutOptional failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(gkOutOptional) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -154,14 +182,17 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
 
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(conversion) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     const bool useGateInKernel = params.gkOutOptional != nullptr;
@@ -169,7 +200,9 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
     if (gkBuffer == nullptr) {
         gkBuffer = executorPtr->AllocTensor(params.g->GetViewShape(), DataType::DT_FLOAT, Format::FORMAT_ND);
         if (!(gkBuffer != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Unable to allocate internal gk output.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "alloc",
+            "Unable to allocate internal gk output");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     }
@@ -180,7 +213,9 @@ aclnnStatus aclnnChunkKdaBwdRecomputeGetWorkspaceSize(
         params.wOut, params.uOut, params.qgOut,
         params.kgOut, gkBuffer, executorPtr);
     if (!(outputs[0] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: ChunkKdaBwdRecompute launch failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "launcher",
+            "ChunkKdaBwdRecompute launch failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

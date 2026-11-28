@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "chunk_kda_bwd_recompute.h"
 #include <cstring>
 #include "opdev/make_op_executor.h"
@@ -36,8 +37,9 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
     // Reserved attribute: tensors still use the existing rank-4 BNSD contract.
     if (!inputLayout || (std::strcmp(inputLayout, "BNSD") != 0 &&
                          std::strcmp(inputLayout, "NTD") != 0)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "Recompute input_layout must be BNSD or NTD.");
-        return {nullptr, nullptr, nullptr, nullptr, nullptr};
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkKdaBwdRecompute", "layout",
+            "Recompute input_layout must be BNSD or NTD"); return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
 
     const aclTensor *actualCuSeqlens = nullptr;
@@ -57,7 +59,10 @@ const std::array<const aclTensor *, 5> ChunkKdaBwdRecompute(
         OP_OUTPUT(wOut, uOut, qgOut, kgOut, gkOut),
         OP_ATTR(chunkSize, useGateInKernel, useExp2, static_cast<float>(lowerBound), inputLayout, modelLayout, qkHeadMajor));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwdRecompute failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkKdaBwdRecompute", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr, nullptr, nullptr, nullptr, nullptr};
     }
     return {wOut, uOut, qgOut, kgOut, gkOut};

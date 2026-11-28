@@ -1,6 +1,7 @@
 #ifndef CHUNK_KDA_BWD_C_TILING_PROCESSOR_H
 #define CHUNK_KDA_BWD_C_TILING_PROCESSOR_H
 
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
@@ -138,8 +139,9 @@ public:
         if (ctx_.useGateInKernel) {
             if (ctx_.shapes[KDA_C_RAW_G] == nullptr ||
                             ctx_.shapes[KDA_C_A_LOG] == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            ctx_.nodeName, "%s: tiling metadata of raw_g/a_log is missing", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            ctx_.nodeName, "tiling",
+            "tiling metadata of raw_g/a_log is missing");
         return ge::GRAPH_FAILED;
     }
             if ((ctx_.types[KDA_C_RAW_G] != ge::DT_FLOAT &&
@@ -434,10 +436,9 @@ private:
                     64U * 64U * sizeof(uint16_t)),
             240U * 1024U + 2U * 128U * sizeof(float));
         if (wyEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
-            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName,
-                "%s: derived WY slot needs %lu bytes, exceeds the shared %lu bytes slot",
-                __func__, wyEnd, static_cast<uint64_t>(KDA_C_SLOT_BYTES));
-            return ge::GRAPH_FAILED;
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, "tiling",
+                "derived WY slot exceeds the shared slot"); return ge::GRAPH_FAILED;
         }
 
         const uint64_t c = 64;
@@ -473,10 +474,9 @@ private:
                          tiling_.intraResultDkUpperOffset) +
                      bc * k * sizeof(float));
         if (intraEnd > static_cast<uint64_t>(KDA_C_SLOT_BYTES)) {
-            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName,
-                "%s: derived Intra slot needs %lu bytes, exceeds the shared %lu bytes slot",
-                __func__, intraEnd, static_cast<uint64_t>(KDA_C_SLOT_BYTES));
-            return ge::GRAPH_FAILED;
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, "tiling",
+                "derived Intra slot exceeds the shared slot"); return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
     }

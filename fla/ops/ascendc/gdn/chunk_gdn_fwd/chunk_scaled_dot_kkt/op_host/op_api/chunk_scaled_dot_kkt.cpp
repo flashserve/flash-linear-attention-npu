@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "op_common/log/log.h"
 #include "aclnn_chunk_scaled_dot_kkt.h"
 
 #include "opdev/make_op_executor.h"
@@ -30,8 +31,9 @@ const aclTensor *ChunkScaledDotKkt(
     if (cuSeqlensOptional != nullptr) {
         cuSeqlens = executor->ConvertToTensor(cuSeqlensOptional, DataType::DT_INT64);
         if (cuSeqlens == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert cu_seqlens to tensor failed.");
-            return nullptr;
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkScaledDotKkt", "internal",
+                "Convert cu_seqlens to tensor failed"); return nullptr;
         }
         const_cast<aclTensor *>(cuSeqlens)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(cuSeqlens)->SetViewFormat(Format::FORMAT_ND);
@@ -39,8 +41,9 @@ const aclTensor *ChunkScaledDotKkt(
 
         chunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (chunkIndices == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert chunk_indices to tensor failed.");
-            return nullptr;
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkScaledDotKkt", "internal",
+                "Convert chunk_indices to tensor failed"); return nullptr;
         }
         const_cast<aclTensor *>(chunkIndices)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(chunkIndices)->SetViewFormat(Format::FORMAT_ND);
@@ -51,7 +54,10 @@ const aclTensor *ChunkScaledDotKkt(
         ChunkScaledDotKkt, OP_INPUT(k, g, beta, cuSeqlens, chunkIndices),
         OP_OUTPUT(a), OP_ATTR(chunkSize));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkScaledDotKkt", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return nullptr;
     }
     return a;

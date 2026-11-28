@@ -844,7 +844,9 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -941,8 +943,9 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     aclOpExecutor *executorPtr = uniqueExecutor.get();
@@ -1007,7 +1010,9 @@ aclnnStatus aclnnChunkKdaFwdPrepareGetWorkspaceSize(
         params.kHatOut, params.qRstdOut, params.kRstdOut, params.betaEffOut,
         GetOutputMode(params), executorPtr);
     if (!(result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: result[0] != nullptr && result[1] != nullptr && result[3] != nullptr && result[4] != nullptr && result[6] != nullptr && result[7] != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op outputs are nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -1025,8 +1030,10 @@ aclnnStatus aclnnChunkKdaFwdPrepare(
     L2_DFX_PHASE_2(aclnnChunkKdaFwdPrepare);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

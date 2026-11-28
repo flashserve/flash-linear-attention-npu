@@ -100,7 +100,9 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
 #ifdef OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON
     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(OP_NAME, name, reason);
 #else
-    OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: invalid %s: %s", __func__, name, reason.c_str());
+    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+        OP_NAME, "internal",
+        "invalid " + std::string(name) + ": " + std::string(reason.c_str()));
 #endif
     return ACLNN_ERR_PARAM_INVALID;
 }
@@ -277,7 +279,9 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
  {
      tensor = l0op::Contiguous(tensor, executor);
      if (!(tensor != nullptr)) {
-         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+             OP_NAME, "contiguous",
+             "Contiguous failed");
          return ACLNN_ERR_INNER_NULLPTR;
      }
      return ACLNN_SUCCESS;
@@ -286,7 +290,9 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
  static aclnnStatus ParamsDataContiguous(SolveTriParams &params, aclOpExecutor *executorPtr)
  {
      if (!(DataContiguous(params.x, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous x failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(x) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
      return ACLNN_SUCCESS;
@@ -319,8 +325,9 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
  
      auto uniqueExecutor = CREATE_EXECUTOR();
      if (uniqueExecutor.get() == nullptr) {
-         OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                            "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+             OP_NAME, "executor",
+             "CREATE_EXECUTOR returned nullptr");
          return ACLNN_ERR_INNER_CREATE_EXECUTOR;
      }
      auto executorPtr = uniqueExecutor.get();
@@ -331,22 +338,26 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
     }
  
      if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(conversion) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
  
      auto result = l0op::SolveTri(params.x, params.cuSeqlens, params.chunkIndices,
                                    params.layout, params.xOut, executorPtr);
      if (!(result != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
-            __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(SolveTri) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
  
      auto viewCopyResult = l0op::ViewCopy(result, params.xOut, executorPtr);
      if (!(viewCopyResult != nullptr)) {
-         OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
+         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+             OP_NAME, "view_copy",
+             "ViewCopy(x) failed");
          return ACLNN_ERR_INNER_NULLPTR;
      }
  
@@ -360,8 +371,10 @@ aclnnStatus InvalidArgument(const char *name, const std::string &reason)
      L2_DFX_PHASE_2(aclnnSolveTri);
               const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
          if (runRet != ACLNN_SUCCESS) {
-             OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                                    static_cast<int>(runRet));
+             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                 OP_NAME, "executor",
+                 "CommonOpExecutorRun failed, ret = " +
+                     std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
              return runRet;
          }
      return ACLNN_SUCCESS;

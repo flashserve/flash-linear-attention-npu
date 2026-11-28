@@ -693,7 +693,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CREATE_EXECUTOR returned nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -740,19 +742,25 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
     }
     if (queryUsesDirectView) {
         if (CreateViewIfNonContiguous(params.query, executorPtr) != ACLNN_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a contiguous view", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "contiguous",
+                "Contiguous failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (keyUsesDirectView) {
         if (CreateViewIfNonContiguous(params.key, executorPtr) != ACLNN_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a contiguous view", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "contiguous",
+                "Contiguous failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     if (valueUsesDirectView) {
         if (CreateViewIfNonContiguous(params.value, executorPtr) != ACLNN_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a contiguous view", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "contiguous",
+                "Contiguous failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -766,7 +774,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
             initialStateForKernel->GetViewStrides(),
             initialStateForKernel->GetViewOffset());
         if (initialStateForKernel == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: state kernel tensor allocation failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "alloc",
+                "state kernel tensor allocation failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -779,7 +789,9 @@ aclnnStatus aclnnRecurrentKdaGetWorkspaceSize(
             finalStateForKernel->GetViewStrides(),
             finalStateForKernel->GetViewOffset());
         if (finalStateForKernel == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: state kernel tensor allocation failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "alloc",
+                "state kernel tensor allocation failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }

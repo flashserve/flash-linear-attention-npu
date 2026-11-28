@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * Licensed under the BSD 3-Clause License.
  */
+#include "op_common/log/log.h"
 #include "merge_fwd_bwd_kernel.h"
 #include "opdev/format_utils.h"
 #include "opdev/make_op_executor.h"
@@ -23,9 +24,9 @@ const std::array<const aclTensor *, 1> MergeFwdBwdKernel(
     if (IsPrivateFormat(h->GetStorageFormat()) || IsPrivateFormat(h->GetViewFormat()) ||
         IsPrivateFormat(agHm->GetStorageFormat()) || IsPrivateFormat(agHm->GetViewFormat()) ||
         !IsContiguous(h)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
-                "MergeFwdBwdKernel requires contiguous h and a non-private format.");
-        return {nullptr};
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "MergeFwdBwdKernel", "contiguous",
+            "MergeFwdBwdKernel requires contiguous h and a non-private format"); return {nullptr};
     }
     auto *mutableH = const_cast<aclTensor *>(h);
     mutableH->SetStorageFormat(Format::FORMAT_ND);
@@ -44,7 +45,10 @@ const std::array<const aclTensor *, 1> MergeFwdBwdKernel(
         OP_OUTPUT(h),
         OP_ATTR(forward, rank, preOrPostNumRanks, stateVFirst));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE MergeFwdBwdKernel failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "MergeFwdBwdKernel", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr};
     }
     return {h};

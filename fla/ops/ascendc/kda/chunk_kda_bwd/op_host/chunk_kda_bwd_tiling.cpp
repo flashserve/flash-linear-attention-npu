@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "chunk_kda_bwd_tiling.h"
 
@@ -307,8 +308,9 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
                     hShape == nullptr || wDesc == nullptr ||
                     qgDesc == nullptr || kgDesc == nullptr ||
                     vNewDesc == nullptr || hDesc == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: tiling metadata of w/qg/kg/v_new/h is missing", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "tiling",
+            "tiling metadata of w/qg/kg/v_new/h is missing");
         return ge::GRAPH_FAILED;
     }
 
@@ -397,8 +399,9 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
 
     const uint64_t cTotalWorkspace = cProcessor.GetWorkspaceSize();
     if (cTotalWorkspace < systemWorkspace) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-            "%s: Kernel C workspace is smaller than system workspace.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "Kernel C workspace is smaller than system workspace");
         return ge::GRAPH_FAILED;
     }
     const uint64_t cUserWorkspace = cTotalWorkspace - systemWorkspace;
@@ -453,8 +456,9 @@ ge::graphStatus Tiling4ChunkKdaBwd(gert::TilingContext *context)
     tiling->kernelCWorkspaceOffset = encodeOffset(cursor);
     cursor += cUserWorkspace;
     if (cursor / KDA::KDA_BWD_WORKSPACE_ALIGN > UINT32_MAX) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-            "%s: single-launch private workspace exceeds the 2 TiB limit.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "launcher",
+            "single-launch private workspace exceeds the 2 TiB limit");
         return ge::GRAPH_FAILED;
     }
     const uint64_t totalWorkspace = systemWorkspace + cursor;

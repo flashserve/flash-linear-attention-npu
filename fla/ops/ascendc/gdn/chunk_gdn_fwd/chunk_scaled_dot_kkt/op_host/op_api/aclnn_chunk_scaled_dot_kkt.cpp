@@ -194,12 +194,16 @@ aclnnStatus aclnnChunkScaledDotKktGetWorkspaceSize(
     const auto result = l0op::ChunkScaledDotKkt(
         p.k, p.g, p.beta, p.cuSeqlens, p.chunkIndices, p.chunkSize, p.a, executorPtr);
     if (result == nullptr) {
-        OP_LOGE_WITHOUT_REPORT("aclnnChunkScaledDotKkt", "%s: operator returned no output", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnChunkScaledDotKkt", "l0op",
+            "l0op(ChunkScaledDotKkt) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     const auto copied = l0op::ViewCopy(result, p.a, executorPtr);
     if (copied == nullptr) {
-        OP_LOGE_WITHOUT_REPORT("aclnnChunkScaledDotKkt", "%s: view copy of a failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnChunkScaledDotKkt", "internal",
+            "view copy of a failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     *workspaceSize = uniqueExecutor->GetWorkspaceSize();
@@ -213,8 +217,10 @@ aclnnStatus aclnnChunkScaledDotKkt(
     L2_DFX_PHASE_2(aclnnChunkScaledDotKkt);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

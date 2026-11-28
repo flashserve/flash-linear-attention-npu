@@ -110,31 +110,45 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(PrepareWyReprBwdDaParams &params, aclOpExecutor *executorPtr)
 {
     if (DataContiguous(params.k, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(k) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.v, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous v failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(v) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.beta, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous beta failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(beta) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.a, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous a failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(a) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.dw, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dw failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(dw) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.du, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous du failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(du) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.g, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(g) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -202,18 +216,24 @@ aclnnStatus aclnnPrepareWyReprBwdDaGetWorkspaceSize(
         return ret;
     }
     if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(conversion) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::PrepareWyReprBwdDa(params.k, params.v, params.beta, params.a, params.dw, params.du, params.g, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.dAOut, executorPtr);
     if (result == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(PrepareWyReprBwdDa) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto viewCopyResult = l0op::ViewCopy(result, params.dAOut, executorPtr);
     if (viewCopyResult == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view_copy",
+            "ViewCopy(dA) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -228,8 +248,10 @@ aclnnStatus aclnnPrepareWyReprBwdDa(void *workspace, uint64_t workspaceSize, acl
     L2_DFX_PHASE_2(aclnnPrepareWyReprBwdDa);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

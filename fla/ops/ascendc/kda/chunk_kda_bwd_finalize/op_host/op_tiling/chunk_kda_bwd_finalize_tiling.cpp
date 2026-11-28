@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "chunk_kda_bwd_finalize_tiling.h"
 
 #include <cmath>
@@ -524,8 +525,9 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     shape.rawTokenMajor = mixed;
     const auto npuArch = platform.GetCurNpuArch();
     OP_CHECK_IF(npuArch != NpuArch::DAV_2201 && npuArch != NpuArch::DAV_3510,
-                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-                        "ChunkKdaBwdFinalize requires NpuArch::DAV_2201 or DAV_3510."),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+    context->GetNodeName(), "platform",
+    "unsupported NpuArch for ChunkKdaBwdFinalize tiling"),
                 return ge::GRAPH_FAILED);
     const bool arch22 = npuArch == NpuArch::DAV_2201;
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,

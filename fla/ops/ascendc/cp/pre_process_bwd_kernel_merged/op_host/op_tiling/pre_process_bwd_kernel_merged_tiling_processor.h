@@ -17,6 +17,7 @@
 #ifndef PRE_PROCESS_BWD_KERNEL_MERGED_TILING_PROCESSOR_H
 #define PRE_PROCESS_BWD_KERNEL_MERGED_TILING_PROCESSOR_H
 
+#include "op_common/log/log.h"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -314,9 +315,11 @@ public:
         const uint64_t totalCore = static_cast<uint64_t>(ctx_.totalCoreNum);
 
         if (totalCore == 0) {
-        OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: platform reported 0 AIC cores.", __func__);
-        return ge::GRAPH_FAILED;
-    }
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                ctx_.nodeName, "aicNum", "0",
+                "platform must report at least one AIC core");
+            return ge::GRAPH_FAILED;
+        }
 
         // 本版 kernel 在核内按"整头"处理（不做列 tile 拆分），因此统一走仅按 head 连续分核：
         // 同一 head 的全部 chunk 留在同一 AIV，禁止按 chunk 分核。

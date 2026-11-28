@@ -90,8 +90,9 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
     const aclTensor *actualChunkIndices = ConvertIntArrayToTensor(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && actualCuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && actualChunkIndices == nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert optional int array to tensor failed.");
-        return {nullptr, nullptr, nullptr};
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkGatedDeltaRuleBwdDhu", "internal",
+            "Convert optional int array to tensor failed"); return {nullptr, nullptr, nullptr};
     }
 
     const aclTensor *dh0OutKernel = dh0Out;
@@ -99,8 +100,9 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
         dh0OutKernel = executor->AllocTensor(MakeShape({0}), dhOut->GetDataType(), Format::FORMAT_ND);
     }
     if (dh0OutKernel == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Alloc internal dh0 failed.");
-        return {nullptr, nullptr, nullptr};
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkGatedDeltaRuleBwdDhu", "alloc",
+            "Alloc internal dh0 failed"); return {nullptr, nullptr, nullptr};
     }
 
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(
@@ -110,7 +112,10 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleBwdDhu(
         OP_OUTPUT(dhOut, dh0OutKernel, dv2Out),
         OP_ATTR(scale, chunkSize, useExp2, stateVFirst, layout));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkGatedDeltaRuleBwdDhu", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr, nullptr, nullptr};
     }
     return {dhOut, dh0OutKernel, dv2Out};

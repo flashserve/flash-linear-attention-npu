@@ -93,9 +93,9 @@ inline aclnnStatus PrepareOutputs(const std::array<const aclTensor *, 5> &output
             kernelOutputs[index] = executor->AllocTensor(
                 outputs[index]->GetViewShape(), outputs[index]->GetDataType(), op::Format::FORMAT_ND);
             if (kernelOutputs[index] == nullptr) {
-                OP_LOGE_WITHOUT_REPORT("ChunkGatedDeltaRuleBwdFinalize",
-                                      "Failed to allocate a temporary Finalize output[%zu].", index);
-                return ACLNN_ERR_INNER_NULLPTR;
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    "ChunkGatedDeltaRuleBwdFinalize", "alloc",
+                    "Failed to allocate a temporary Finalize output[" + std::to_string(index)); return ACLNN_ERR_INNER_NULLPTR;
             }
         }
     }
@@ -109,9 +109,9 @@ inline aclnnStatus CopyOutputs(const std::array<const aclTensor *, 5> &kernelOut
         if (kernelOutputs[index] != outputs[index] &&
             op::CopyNpuToNpu(kernelOutputs[index], outputs[index], executor) != ACLNN_SUCCESS) {
             // 显式 copy 保留临时存储，连续 ViewCopy 会把 kernel 输出重新绑定到原输入。
-            OP_LOGE_WITHOUT_REPORT("ChunkGatedDeltaRuleBwdFinalize",
-                                  "Failed to copy a temporary Finalize output[%zu].", index);
-            return ACLNN_ERR_INNER_NULLPTR;
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkGatedDeltaRuleBwdFinalize", "copy_output",
+                "Failed to copy a temporary Finalize output[" + std::to_string(index)); return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     return ACLNN_SUCCESS;

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "op_common/log/log.h"
 #include "chunk_gated_delta_rule_fwd.h"
 
 #include "opdev/make_op_executor.h"
@@ -77,8 +78,9 @@ const std::array<const aclTensor *, 4> ChunkGatedDeltaRuleFwd(
     const aclTensor *chunkIndices = ConvertMetadata(chunkIndicesOptional, executor);
     if ((cuSeqlensOptional != nullptr && cuSeqlens == nullptr) ||
         (chunkIndicesOptional != nullptr && chunkIndices == nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Convert Phase 6 metadata failed.");
-        return {nullptr, nullptr, nullptr, nullptr};
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkGatedDeltaRuleFwd", "internal",
+            "Convert Phase 6 metadata failed"); return {nullptr, nullptr, nullptr, nullptr};
     }
 
     const aclError ret = ADD_TO_LAUNCHER_LIST_AICORE(
@@ -90,7 +92,10 @@ const std::array<const aclTensor *, 4> ChunkGatedDeltaRuleFwd(
         OP_ATTR(outputFinalState, chunkSize, scale, outputGCumsum, rawGLayout, qkvLayout, oLayout,
                 stateVFirst, allowNegEigval, isOutL2norm, outputH, outputBetaEff));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkGatedDeltaRuleFwd failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkGatedDeltaRuleFwd", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr, nullptr, nullptr, nullptr};
     }
     return {oOut, finalStateOut, gCumsumBthOut, aOut};

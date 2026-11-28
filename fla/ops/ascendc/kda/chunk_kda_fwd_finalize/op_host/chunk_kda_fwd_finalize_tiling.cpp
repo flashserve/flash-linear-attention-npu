@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "chunk_kda_fwd_finalize_tiling.h"
 
 #include <cstdint>
@@ -381,8 +382,9 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     scheduleContext.isVarLen = isVarLen;
     ChunkKdaFwdFinalizeSchedule schedule;
     if (!ChunkKdaFwdFinalizeTilingProcessor(scheduleContext).Process(schedule)) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-            "%s: chunk-first/head 分核或 workspace 规划失败。", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "chunk-first/head 分核或 workspace 规划失败。");
 
         return ge::GRAPH_FAILED;
     }
@@ -415,10 +417,9 @@ ge::graphStatus Tiling4ChunkKdaFwdFinalize(gert::TilingContext *context)
     context->SetBlockDim(schedule.usedCoreNum);
     if (useAivInputMover &&
         context->SetScheduleMode(FINALIZE_MIX_BATCH_MODE) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: 设置 A5/A6 MIX AIC/AIV batch 调度模式失败",
-                               __func__);
-
-        return ge::GRAPH_FAILED;
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "launcher",
+            "set A5/A6 MIX AIC/AIV batch schedule mode failed"); return ge::GRAPH_FAILED;
     }
     size_t *workspace = context->GetWorkspaceSizes(1);
     if (workspace == nullptr ||

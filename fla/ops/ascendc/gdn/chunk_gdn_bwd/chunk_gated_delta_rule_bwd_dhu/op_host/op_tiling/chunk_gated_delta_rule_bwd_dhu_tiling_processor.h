@@ -15,6 +15,7 @@
 #ifndef CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 #define CHUNK_GATED_DELTA_RULE_BWD_DHU_TILING_PROCESSOR_H
 
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
@@ -129,18 +130,24 @@ public:
     ge::graphStatus Process()
     {
         if (PreCheck() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu PreCheck failed.", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, "internal",
+                "ChunkGatedDeltaRuleBwdDhu PreCheck failed");
 
             return ge::GRAPH_FAILED;
         }
         if (CommonTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu CommonTiling failed.", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, "tiling",
+                "ChunkGatedDeltaRuleBwdDhu CommonTiling failed");
 
             return ge::GRAPH_FAILED;
         }
         if (IsVariableLength()) {
             if (VariableLenTiling() != ge::GRAPH_SUCCESS) {
-                OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed.", __func__);
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    ctx_.nodeName, "tiling",
+                    "ChunkGatedDeltaRuleBwdDhu VariableLenTiling failed");
 
                 return ge::GRAPH_FAILED;
             }
@@ -153,7 +160,9 @@ public:
             tiling_.isVariable = 0;
         }
         if (WorkspaceTiling() != ge::GRAPH_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(ctx_.nodeName, "%s: ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed.", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, "tiling",
+                "ChunkGatedDeltaRuleBwdDhu WorkspaceTiling failed");
 
             return ge::GRAPH_FAILED;
         }
