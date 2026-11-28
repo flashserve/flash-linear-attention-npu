@@ -88,7 +88,7 @@ ge::graphStatus ValidateFinalize(
         return ge::GRAPH_FAILED;
     }
     if (!arch22 && useBetaSigmoid) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "use_beta_sigmoid_in_kernel", "true", "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx.nodeName, "use_beta_sigmoid_in_kernel", "true", "A5/A6 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
 
         return ge::GRAPH_FAILED;
     }
@@ -467,8 +467,8 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     const auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t aicCoreNum = static_cast<uint32_t>(platform.GetCoreNumAic());
     if (aicCoreNum == 0) {
-        // The A5 aclnn direct-launch context may omit platform info.  This
-        // checkpoint is A5-only and must still expose all 28 physical AICs.
+        // Direct-launch/camodel contexts may omit the reported core count.
+        // Keep the existing A5 default; other targets use one AIC/AIV group.
         aicCoreNum = platform.GetCurNpuArch() == NpuArch::DAV_3510 ? 28U : 1U;
         OP_LOGW(context->GetNodeName(),
                 "platform info did not report AIC count; fallback to %u", aicCoreNum);
@@ -523,9 +523,11 @@ ge::graphStatus Tiling4ChunkKdaBwdFinalize(gert::TilingContext *context)
     shape.vTokenMajor = modelTm;
     shape.rawTokenMajor = mixed;
     const auto npuArch = platform.GetCurNpuArch();
-    OP_CHECK_IF(npuArch != NpuArch::DAV_2201 && npuArch != NpuArch::DAV_3510,
-                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-                        "ChunkKdaBwdFinalize requires NpuArch::DAV_2201 or DAV_3510."),
+    OP_CHECK_IF(npuArch != NpuArch::DAV_2201 && npuArch != NpuArch::DAV_3510 &&
+                    npuArch != NpuArch::DAV_9201,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "NpuArch",
+                    std::to_string(static_cast<uint32_t>(npuArch)),
+                    "ChunkKdaBwdFinalize requires DAV_2201, DAV_3510 or DAV_9201"),
                 return ge::GRAPH_FAILED);
     const bool arch22 = npuArch == NpuArch::DAV_2201;
     if (ValidateFinalize(context, ctx, shape, arch22, *useBetaSigmoid,

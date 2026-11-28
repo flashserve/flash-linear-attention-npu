@@ -65,7 +65,7 @@ public:
                     ",use_gate=" + (ctx_.useGateInKernel ? "true" : "false") + ",use_exp2=" +
                     (ctx_.useExp2 ? "true" : "false") + ",state_v_first=" +
                     (ctx_.stateVFirst ? "true" : "false"),
-                "A5 v1 requires chunkSize=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
+                "Finalize v1 requires chunkSize=64, safe_gate/use_gate/use_exp2=true, state_v_first=false");
 
             return ge::GRAPH_FAILED;
         }
@@ -146,7 +146,7 @@ public:
             OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(ctx_.nodeName, "K,V,chunkNum",
                 std::to_string(tiling_.K) + "," + std::to_string(tiling_.V) + "," +
                     std::to_string(tiling_.totalChunkNum),
-                "A5 v1 requires NQ=NV, K=V=128 and nonempty tensors");
+                "Finalize v1 requires NQ=NV, K=V=128 and nonempty tensors");
 
             return ge::GRAPH_FAILED;
         }

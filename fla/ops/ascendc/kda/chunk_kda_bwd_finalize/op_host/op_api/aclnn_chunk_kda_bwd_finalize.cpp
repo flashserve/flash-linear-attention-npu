@@ -159,7 +159,7 @@ extern "C" aclnnStatus aclnnChunkKdaBwdFinalizeGetWorkspaceSize(
     if (useBetaSigmoidInKernel) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "useBetaSigmoidInKernel", "true",
-            "A5 finalize: useBetaSigmoidInKernel=true is reserved but not supported");
+            "A5/A6 finalize: useBetaSigmoidInKernel=true is reserved but not supported");
         return ACLNN_ERR_PARAM_INVALID;
     }
 #endif

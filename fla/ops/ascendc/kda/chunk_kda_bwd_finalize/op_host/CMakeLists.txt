@@ -1,17 +1,20 @@
 unset(chunk_kda_bwd_finalize_depends CACHE)
-if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950" AND
+   NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
     add_compile_definitions(KDA_BWD_STAGES_ARCH22)
 endif()
 add_op_to_compiled_list()
 if(BUILD_OPEN_PROJECT)
     target_sources(op_host_aclnnExc PRIVATE chunk_kda_bwd_finalize_def.cpp)
-    if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+    if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950" AND
+       NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
         target_compile_definitions(op_host_aclnnExc PRIVATE KDA_BWD_STAGES_ARCH22)
     endif()
 endif()
 
 add_modules_sources(OPTYPE chunk_kda_bwd_finalize ACLNNTYPE aclnn_exclude)
-if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950")
+if(NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend950" AND
+   NOT "${ASCEND_COMPUTE_UNIT}" STREQUAL "ascend960dt")
     set_source_files_properties(
         ${CMAKE_CURRENT_SOURCE_DIR}/op_api/chunk_kda_bwd_finalize.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/op_api/aclnn_chunk_kda_bwd_finalize.cpp

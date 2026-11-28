@@ -45,7 +45,7 @@ const std::array<const aclTensor *, 7> ChunkKdaBwdFinalize(
 #ifndef KDA_BWD_STAGES_ARCH22
     if (useBetaSigmoidInKernel) {
         OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID,
-                "A5 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
+                "A5/A6 finalize: use_beta_sigmoid_in_kernel=true is reserved but not supported");
         return empty;
     }
 #endif
