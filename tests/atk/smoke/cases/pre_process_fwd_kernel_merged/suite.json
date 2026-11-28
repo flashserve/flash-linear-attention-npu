@@ -1,0 +1,7 @@
+{
+  "source_root": "fla/ops/ascendc/cp/pre_process_fwd_kernel_merged",
+  "platforms": {
+    "A2": true,
+    "A5": true
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "source_root": "fla/ops/ascendc/gdn/chunk_gdn_bwd/chunk_gdn_bwd_intra",
+  "platforms": {
+    "A5": true
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "source_root": "fla/ops/ascendc/cp/merge_fwd_bwd_kernel",
+  "platforms": {
+    "A2": true,
+    "A5": true
+  }
+}

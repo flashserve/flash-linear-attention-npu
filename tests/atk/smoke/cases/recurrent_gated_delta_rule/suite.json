@@ -1,0 +1,7 @@
+{
+  "source_root": "fla/ops/ascendc/gdn/recurrent_gdn/recurrent_gated_delta_rule",
+  "platforms": {
+    "A2": true,
+    "A5": true
+  }
+}
