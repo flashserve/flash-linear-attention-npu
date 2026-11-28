@@ -783,6 +783,7 @@ private:
         const uint32_t chunkLen = static_cast<uint32_t>(chunk.chunkLen);
         const uint32_t mActual = chunkLen == 1 ? 16 : chunkLen;
         const uint32_t mAlign = (chunkLen + 15U) / 16U * 16U;
+        constexpr uint32_t tileBatch = 1;
         const uint32_t localHv = static_cast<uint32_t>(headOffset);
         const uint32_t l1Event = static_cast<uint32_t>(headOffset);
         const int64_t hk = hv / tiling_->headRatio;
@@ -848,8 +849,6 @@ private:
         auto tensorDA1L0C = tla::MakeTensor(
             l0C[dA1L0CSlot], tla::MakeLayoutL0C(mActual, chunkLen),
             Catlass::Arch::PositionL0C{});
-        auto tileDA1L0C = tla::GetTile(
-            tensorDA1L0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, chunkLen));
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[l1Event]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA1L0AEvent]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA1L0BEvent]);
@@ -858,7 +857,9 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dA1L0CSlot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[dA1L0CSlot]);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dA1L0CSlot]);
-        tileMmad_(tileDA1L0C, tensorDA1L0A, tensorDA1L0B, true, 0);
+        // Each Stage 5 GEMM initializes a separate L0C slot. Use the CATLASS
+        // batch overload to avoid the conditional PIPE_M barrier for small tiles.
+        tileMmad_(tensorDA1L0C, tensorDA1L0A, tensorDA1L0B, mActual, chunkLen, chunkLen, tileBatch);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA1L0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[dA1L0BEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dA1L0CSlot]);
@@ -902,8 +903,6 @@ private:
         auto tensorA2L0C = tla::MakeTensor(
             l0C[a2L0CSlot], tla::MakeLayoutL0C(mActual, chunkLen),
             Catlass::Arch::PositionL0C{});
-        auto tileA2L0C = tla::GetTile(
-            tensorA2L0C, tla::MakeCoord(0, 0), tla::MakeShape(mActual, chunkLen));
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0AEvent]);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0BEvent]);
         CopyDauL1ToL0A{}(tensorA2L0A, tileKL1);
@@ -911,7 +910,7 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[a2L0CSlot]);
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(MTE1_MEvents_[a2L0CSlot]);
         AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[a2L0CSlot]);
-        tileMmad_(tileA2L0C, tensorA2L0A, tensorA2L0B, true, 0);
+        tileMmad_(tensorA2L0C, tensorA2L0A, tensorA2L0B, mActual, chunkLen, K_SIZE_128, tileBatch);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0AEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(M_MTE1Events_[a2L0BEvent]);
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[a2L0CSlot]);
