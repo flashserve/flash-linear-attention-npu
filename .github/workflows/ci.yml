@@ -695,7 +695,7 @@ jobs:
           # PR code can write test output. Only checkouts with the same executable source
           # share writable snapshots. Each case also keys its effective runtime and input data.
           source=$(git ls-files --stage -z -- . ':(exclude,glob)**/*.md' \
-            ':(exclude,glob)tests/atk/smoke/cases/*/*/*.json' ':(exclude)tests/atk/smoke/suites.json' \
+            ':(exclude,glob)tests/atk/smoke/cases/*/*/*.json' ':(exclude,glob)tests/atk/smoke/cases/*/suite.json' \
             ':(exclude,glob)ci/model_cases/*_cases.json' | sha256sum)
           source=${source%% *}
           echo "prefix=npu-smoke-v1-${{ matrix.platform }}-${{ runner.arch }}-$source-" >> "$GITHUB_OUTPUT"

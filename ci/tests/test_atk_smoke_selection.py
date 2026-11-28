@@ -2,6 +2,7 @@
 
 import json
 import os
+import runpy
 from pathlib import Path
 import subprocess
 import sys
@@ -11,13 +12,12 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[2]
 SMOKE = REPO / "tests/atk/smoke"
-ROOTS = json.loads((SMOKE / "source_roots.json").read_bytes())
+ROOTS, SUITES = runpy.run_path(str(SMOKE / "run.py"))["load_catalog"]()
 
 
 class AtkSmokeSelectionTests(unittest.TestCase):
     def test_registered_roots_are_independent_operator_directories(self):
-        suites = json.loads((SMOKE / "suites.json").read_bytes())
-        self.assertEqual(set(ROOTS), {s["op"] for s in suites})
+        self.assertEqual(set(ROOTS), {s["op"] for s in SUITES})
         for op, root in ROOTS.items():
             with self.subTest(op=op):
                 self.assertTrue(root.startswith("fla/ops/ascendc/"))
@@ -64,8 +64,8 @@ class AtkSmokeSelectionTests(unittest.TestCase):
             git("add", ".")
             git("commit", "-qm", "base")
             old.unlink()
-            add_file(ROOTS["chunk_gated_delta_rule_fwd_h"] + "/op_kernel/new file.cpp")
-            add_file(ROOTS["chunk_gated_delta_rule_fwd_h"] + "/op_host/api.cpp")
+            add_file(ROOTS["chunk_gated_delta_rule_bwd_dhu"] + "/op_kernel/new file.cpp")
+            add_file(ROOTS["chunk_gated_delta_rule_bwd_dhu"] + "/op_host/api.cpp")
             add_file("fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_gated_delta_rule_fwd/"
                      "op_kernel/internal/operators/chunk_fwd_o/op_kernel/internal.h")
             add_file("fla/ops/ascendc/kda/chunk_kda_bwd_other/kernel.cpp")
@@ -74,7 +74,7 @@ class AtkSmokeSelectionTests(unittest.TestCase):
             git("commit", "-qm", "move and edit operators")
             self.assertEqual(select("affected", "--platform", "A2").splitlines(), ["chunk_fwd_h"])
             self.assertEqual(select("affected", "--platform", "A5").splitlines(),
-                             ["chunk_fwd_h", "chunk_gated_delta_rule_fwd_h"])
+                             ["chunk_fwd_h", "chunk_gated_delta_rule_bwd_dhu"])
             self.assertEqual(len(json.loads(select("matrix"))["include"]), 3)
             add_file("docs/common.md")
             add_file(ROOTS["chunk_fwd_h"] + "/README.md")
@@ -93,12 +93,17 @@ class AtkSmokeSelectionTests(unittest.TestCase):
             git("add", ".")
             git("commit", "-qm", "shared forward-state reference")
             self.assertEqual(select("affected", "--platform", "A5").splitlines(),
-                             ["chunk_fwd_h", "chunk_gated_delta_rule_bwd"])
+                             [op for op in ("chunk_fwd_h", "chunk_gated_delta_rule_bwd") if op in ROOTS])
+            add_file("tests/atk/smoke/cases/causal_conv1d/suite.json")
+            git("add", ".")
+            git("commit", "-qm", "register one operator")
+            self.assertEqual(select("affected", "--platform", "A2").splitlines(), ["causal_conv1d"])
+            self.assertEqual(select("affected", "--platform", "A5").splitlines(), ["causal_conv1d"])
+
             add_file("tests/atk/smoke/executor.py")
             git("add", ".")
             git("commit", "-qm", "shared ATK test harness")
-            registered = json.loads((SMOKE / "suites.json").read_bytes())
-            enabled = [{"op": s["op"], "platform": s["platform"]} for s in registered if s.get("ci_enabled", True)]
+            enabled = [{"op": s["op"], "platform": s["platform"]} for s in SUITES if s.get("ci_enabled", True)]
             self.assertCountEqual(json.loads(select("matrix"))["include"], enabled)
 
             add_file(ROOTS["chunk_kda_bwd_recompute"] + "/op_kernel/recompute.cpp")

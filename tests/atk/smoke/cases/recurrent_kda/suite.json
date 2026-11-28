@@ -1,0 +1,7 @@
+{
+  "source_root": "fla/ops/ascendc/kda/recurrent_kda",
+  "platforms": {
+    "A2": true,
+    "A5": true
+  }
+}

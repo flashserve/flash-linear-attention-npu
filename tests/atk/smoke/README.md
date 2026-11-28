@@ -1,14 +1,14 @@
 # A2 和 A5 的 ATK 冒烟用例
 
-A2、A5 在各自的 NPU CI 任务中运行本次改动命中的算子用例。当前 CI 启用 22 个算子、37 个算子与平台组合。A2 选入 3,945 条，A5 选入 7,677 条。本次冒烟中，名称以 `chunk_gdn` 或 `chunk_gated_delta` 开头的算子仅在 A5 登记用例。数字按来源组计数，同一输入可能出现在历史组和 PR 组。完整的输入、种子、输出比较方式和 CV 阈值随组保留。
+A2、A5 在各自的 NPU CI 任务中运行本次改动命中的算子用例。运行下文的 `matrix` 命令可查看当前启用的算子和平台。本次冒烟中，名称以 `chunk_gdn` 或 `chunk_gated_delta` 开头的算子仅在 A5 登记用例。数字按来源组计数，同一输入可能出现在历史组和 PR 组。完整的输入、种子、输出比较方式和 CV 阈值随组保留。
 
 ## 哪些修改会触发冒烟
 
-常规 NPU CI 对比本次实际合并的目标分支提交和合并结果。选算子 ATK 时先忽略所有 `.md` 文件（大小写均可），包括算子目录里的 README。只改 Markdown 时，算子 ATK 为 0 项。其余变更按 [source_roots.json](source_roots.json) 中的算子目录和 [suites.json](suites.json) 中登记的平台匹配。多个目录取并集，跨算子移动文件会检查新旧两个目录。
+常规 NPU CI 对比本次实际合并的目标分支提交和合并结果。选算子 ATK 时先忽略所有 `.md` 文件（大小写均可），包括算子目录里的 README。只改 Markdown 时，算子 ATK 为 0 项。其余变更按各算子 `cases/<算子>/suite.json` 的 `source_root` 和 `platforms` 匹配。多个目录取并集，跨算子移动文件会检查新旧两个目录。
 
 - 修改 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/`，A2 和 A5 都运行 `chunk_fwd_h`。
-- 修改同级的 `chunk_gated_delta_rule_fwd_h/`，只有 A5 有登记用例。融合算子目录下的 `op_kernel/internal/operators/` 归其外层算子。
-- PR 只改某个算子的平台 `cases.json` 时，该平台也会运行这个算子的 ATK。修改冒烟 Python 执行器、标杆或公共清单时，两个平台分别运行已启用的全部算子，覆盖跨算子标杆依赖。
+- 修改 `chunk_gated_delta_rule_bwd_dhu/`，只有 A5 有登记用例。融合算子目录下的 `op_kernel/internal/operators/` 归其外层算子。
+- PR 只改某个算子的平台 `cases.json` 时，该平台也会运行这个算子的 ATK。修改某个 `suite.json` 会检查该算子已启用的平台。修改冒烟 Python 执行器或标杆时，两个平台分别运行已启用的全部算子，覆盖跨算子标杆依赖。
 - 在 PR 上按现有方式触发 `/run-npu-ci quick` 或 `/run-npu-ci full` 即可。容器入口读取目标分支 workflow 已提供的 `NPU_CI_BASE_SHA`。常规冒烟即使只修改模型用例，也会执行 KDA/GDN 模型回归。
 - 未命中已登记目录时直接进入模型回归。显式指定 `ops=...` 的编译诊断沿用现有流程。
 
@@ -19,7 +19,7 @@ python3 tests/atk/smoke/run.py matrix --git-range BASE MERGED_HEAD
 python3 tests/atk/smoke/run.py affected --platform A5 --git-range BASE MERGED_HEAD
 ```
 
-`matrix` 省略 `--git-range` 会输出全量清单。新增守护算子时，在 `source_roots.json` 登记独立源码目录，在 `suites.json` 登记算子和平台。修改用例后运行 `python3 tests/atk/smoke/run.py validate`。
+`matrix` 省略 `--git-range` 会输出全量清单。新增守护算子时，在对应算子目录的 `suite.json` 登记独立源码目录和平台，例如 [chunk_fwd_h 的登记文件](cases/chunk_fwd_h/suite.json)。修改用例后运行 `python3 tests/atk/smoke/run.py validate`。
 
 ## Runner 依赖和结果
 
@@ -56,7 +56,7 @@ python3 tests/atk/smoke/run.py run --op chunk_fwd_o --platform A2 \
 
 每个来源组单独启动 ATK，运行 NPU、CPU 同精度和 CPU 升精度三路。任一用例超差、缺少输出或缺少报告都会让命令返回非零。日志和原生报告写入独立的 `atk-results/<算子>-<平台>-*/<组名>/`。加 `--group <组名>` 可重跑指定组。
 
-## 入选依据
+## 拆分前全量基线的入选依据
 
 11 月 25 日和 26 日的 A2、A5 真卡基线使用 FLA wheel `0.dev20261124+main.fe8a05d`，平台各自按通过记录选取。11 月 26 日复测组保留执行器原始输出类型，其余组保留上次实测的输出类型处理。KDA chunk32 的 state 配置和 A5 的 ChunkFwdO 优化配置各自保留独立用例组。[标杆提交](https://gitcode.com/chen-linxin4/work_tool/tree/72d372032214b8866cd6073431b0d478e7744ba5/FLA_ATK)
 
@@ -78,7 +78,7 @@ python3 tests/atk/smoke/run.py run --op chunk_fwd_o --platform A2 \
 | `chunk_fwd_h` | 200 / 200 | 200 / 200 |
 | `chunk_kda_bwd_recompute` | 200 / 200 | 0 / 200 |
 
-A5 的 recompute 用例 ID 0–199 均在 `w`、`qg`、`kg` 超差。三路均执行了 200 次。已在 `suites.json` 对该算子的 A5 条目设置 `"ci_enabled": false`，暂时排除其全部 6 组、711 条单算子用例。A2 照常调度。修复后可先用 `python3 tests/atk/smoke/run.py run --op chunk_kda_bwd_recompute --platform A5` 复测，再移除该开关恢复 CI。
+A5 的 recompute 用例 ID 0–199 均在 `w`、`qg`、`kg` 超差。三路均执行了 200 次。已在该算子的 `suite.json` 设置 `"A5": false`，暂时排除其全部 6 组、711 条单算子用例。A2 照常调度。修复后可先用 `python3 tests/atk/smoke/run.py run --op chunk_kda_bwd_recompute --platform A5` 复测，再将 A5 设为 true 恢复 CI。
 
 在仓库根目录重新生成这两组精度输入：
 

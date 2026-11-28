@@ -21,11 +21,23 @@ def read(path):
     return json.loads(path.read_bytes())
 
 
-def source_roots(suites):
-    roots = read(ROOT / "source_roots.json")
-    if set(roots) != {suite["op"] for suite in suites}:
-        raise ValueError("Every smoke operator needs one source directory in source_roots.json")
-    return roots
+def load_catalog():
+    roots = {}
+    suites = []
+    for path in sorted((ROOT / "cases").glob("*/suite.json")):
+        op = path.parent.name
+        entry = read(path)
+        roots[op] = entry["source_root"]
+        for platform, enabled in entry["platforms"].items():
+            if platform not in ("A2", "A5") or not isinstance(enabled, bool):
+                raise ValueError(f"Invalid platform configuration in {path}")
+            suite = {"op": op, "platform": platform}
+            if not enabled:
+                suite["ci_enabled"] = False
+            suites.append(suite)
+    if not suites:
+        raise ValueError("Expected at least one registered smoke suite")
+    return roots, suites
 
 
 def affected_pairs(pairs, roots, base, head, repo):
@@ -38,7 +50,7 @@ def affected_pairs(pairs, roots, base, head, repo):
     paths = {os.fsdecode(raw) for raw in data.split(b"\0") if raw and not raw.lower().endswith(b".md")}
     # Bundled references can import other operators' references. Exercise their
     # consumers too when changing the Python harness, reference code or catalog.
-    if paths & {"tests/atk/smoke/suites.json", "tests/atk/smoke/source_roots.json"} or any(
+    if any(
         path.endswith(".py") and path.startswith(("tests/atk/smoke/", "tests/atk/common/"))
         for path in paths
     ):
@@ -52,7 +64,8 @@ def affected_pairs(pairs, roots, base, head, repo):
     if "tests/atk/chunk_fwd_h/fwd_h_cpu.py" in paths:
         changed_ops.add("chunk_gated_delta_rule_bwd")
     return {(op, platform) for op, platform in pairs
-            if op in changed_ops or f"tests/atk/smoke/cases/{op}/{platform}/cases.json" in paths}
+            if op in changed_ops or f"tests/atk/smoke/cases/{op}/suite.json" in paths
+            or f"tests/atk/smoke/cases/{op}/{platform}/cases.json" in paths}
 
 
 def case_path(suite):
@@ -346,14 +359,13 @@ def main():
     run.add_argument("--output", type=Path, default=Path("atk-results"))
     run.add_argument("--group", help="Run a single suite for local reproduction")
     args = parser.parse_args()
-    suites = read(ROOT / "suites.json")
+    roots, suites = load_catalog()
     indexed = {case_path(s) for s in suites}
     if len(indexed) != len(suites) or indexed != set(
         (ROOT / "cases").glob("*/*/*.json")
     ):
-        raise ValueError("Expected one cases.json per operator and platform in suites.json")
+        raise ValueError("Expected one cases.json per operator and platform registered by suite.json")
     if args.action in ("matrix", "affected"):
-        roots = source_roots(suites)
         pairs = {(s["op"], s["platform"]) for s in suites if s.get("ci_enabled", True)}
         if args.git_range:
             pairs = affected_pairs(pairs, roots, *args.git_range, ROOT.parents[2])
@@ -374,7 +386,6 @@ def main():
             )
         )
     elif args.action == "validate":
-        source_roots(suites)
         counts = [len(cases) for entry in suites for _, cases in groups_for(entry)]
         print(f"{sum(counts)} cases in {len(counts)} groups across {len(suites)} platform files")
     else:
