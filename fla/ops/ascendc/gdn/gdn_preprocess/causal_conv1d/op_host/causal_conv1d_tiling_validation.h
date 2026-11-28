@@ -6,6 +6,7 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+#include "op_common/log/log.h"
 #include "err/ops_err.h"
 
 /*!
@@ -93,25 +94,33 @@ inline ge::graphStatus ResolveMetadataInputs(gert::TilingContext *context, Resol
     if (ResolveMetadataPair(context, QUERY_START_LOC_INDEX, QUERY_START_LOC_CPU_INDEX, "queryStartLoc",
                                     "queryStartLocCpu", inputs.queryStartLocIndex,
                                     inputs.queryStartLocUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve queryStartLoc inputs", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "failed to resolve queryStartLoc inputs");
         return ge::GRAPH_FAILED;
     }
     if (ResolveMetadataPair(context, CACHE_INDICES_INDEX, CACHE_INDICES_CPU_INDEX, "cacheIndices",
                                     "cacheIndicesCpu", inputs.cacheIndicesIndex,
                                     inputs.cacheIndicesUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve cacheIndices inputs", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "failed to resolve cacheIndices inputs");
         return ge::GRAPH_FAILED;
     }
     if (ResolveMetadataPair(context, HAS_INITIAL_STATE_INDEX, HAS_INITIAL_STATE_CPU_INDEX, "hasInitialState",
                                     "hasInitialStateCpu", inputs.hasInitialStateIndex,
                                     inputs.hasInitialStateUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve hasInitialState inputs", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "failed to resolve hasInitialState inputs");
         return ge::GRAPH_FAILED;
     }
     if (ResolveMetadataPair(context, NUM_ACCEPTED_TOKENS_INDEX, NUM_ACCEPTED_TOKENS_CPU_INDEX,
                                     "numAcceptedTokens", "numAcceptedTokensCpu", inputs.numAcceptedTokensIndex,
                                     inputs.numAcceptedTokensUseCpu) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: failed to resolve numAcceptedTokens inputs", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "failed to resolve numAcceptedTokens inputs");
         return ge::GRAPH_FAILED;
     }
     if (inputs.queryStartLocUseCpu) {
@@ -255,7 +264,9 @@ inline ge::graphStatus GetShapeDtypeInfo(gert::TilingContext *context, const Cau
     const bool isDecodeMode = (attrInfo.runMode == 1);
     ResolvedMetadataInputs metadataInputs;
     if (ResolveMetadataInputs(context, metadataInputs) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: ResolveMetadataInputs error", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "ResolveMetadataInputs error");
         return ge::GRAPH_FAILED;
     }
     tiling.activationMode = attrInfo.activationMode;

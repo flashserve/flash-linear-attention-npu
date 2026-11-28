@@ -78,7 +78,9 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(ChunkLocalCumsumParams &params, aclOpExecutor *executorPtr)
 {
     if (DataContiguous(params.g, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(g) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -129,7 +131,9 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
     }
 
     if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(conversion) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -137,13 +141,17 @@ aclnnStatus aclnnChunkLocalCumsumGetWorkspaceSize(
                                         params.chunkSize, params.reverse, params.scale, params.headFirst,
                                         params.outputDtypeOptional, params.out, executorPtr);
     if (result == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator returned no output", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(ChunkLocalCumsum) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto viewCopyResult = l0op::ViewCopy(result, params.out, executorPtr);
     if (viewCopyResult == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult is nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view_copy",
+            "ViewCopy(out) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -157,8 +165,10 @@ aclnnStatus aclnnChunkLocalCumsum(void *workspace, uint64_t workspaceSize, aclOp
     L2_DFX_PHASE_2(aclnnChunkLocalCumsum);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

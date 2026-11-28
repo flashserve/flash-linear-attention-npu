@@ -6,6 +6,7 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
+#include "op_common/log/log.h"
 #include "err/ops_err.h"
 
 /*!
@@ -61,8 +62,9 @@ void RecurrentKdaTiling::InitCompileInfo()
 {
     auto platformInfoPtr = context_->GetPlatformInfo();
     if (platformInfoPtr == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            context_->GetNodeName(), "%s: platform metadata is unavailable during tiling", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context_->GetNodeName(), "tiling",
+            "platform metadata is unavailable during tiling");
         return;
     }
     const auto &ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);

@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+#include "op_common/log/log.h"
 #include "chunk_kda_fwd.h"
 
 #include "opdev/make_op_executor.h"
@@ -70,8 +71,9 @@ KdaCoreOutputs KdaChunkForward(
     if (chunkIndicesOptional != nullptr) {
         actualChunkIndices = executor->ConvertToTensor(chunkIndicesOptional, DataType::DT_INT64);
         if (actualChunkIndices == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "failed to convert chunk metadata to tensor.");
-            return {};
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkKdaFwd", "internal",
+                "failed to convert chunk metadata to tensor"); return {};
         }
         const_cast<aclTensor *>(actualChunkIndices)->SetStorageFormat(Format::FORMAT_ND);
         const_cast<aclTensor *>(actualChunkIndices)->SetViewFormat(Format::FORMAT_ND);
@@ -88,7 +90,10 @@ KdaCoreOutputs KdaChunkForward(
                 safeGate, static_cast<float>(lowerBound), useGateInKernel,
                 false, stage));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaFwd failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkKdaFwd", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {};
     }
     return {attnOut, finalStateOut, gkOut, aqkOut, akkOut, wOut, uOut,

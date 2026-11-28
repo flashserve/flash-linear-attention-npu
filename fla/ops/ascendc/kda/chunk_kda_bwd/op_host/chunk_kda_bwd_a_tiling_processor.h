@@ -1,6 +1,7 @@
 #ifndef CHUNK_KDA_BWD_A_TILING_PROCESSOR_H
 #define CHUNK_KDA_BWD_A_TILING_PROCESSOR_H
 
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include <algorithm>
 #include <cstddef>
@@ -50,8 +51,9 @@ public:
     {
         if (ctx_.aqkShape == nullptr || ctx_.vNewShape == nullptr ||
             ctx_.hShape == nullptr || ctx_.doShape == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(
-                ctx_.nodeName, "%s: tiling metadata of aqk/v_new/h/d_o is missing", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                ctx_.nodeName, "tiling",
+                "tiling metadata of aqk/v_new/h/d_o is missing");
             return ge::GRAPH_FAILED;
         }
         if (ctx_.dataType != ge::DT_FLOAT16 && ctx_.dataType != ge::DT_BF16) {

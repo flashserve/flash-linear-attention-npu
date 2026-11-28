@@ -460,7 +460,9 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 {
     tensor = l0op::Contiguous(tensor, executor);
     if (!(tensor != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: tensor != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -477,39 +479,57 @@ static aclnnStatus OptionalDataContiguous(const aclTensor *&tensor, aclOpExecuto
 static aclnnStatus ParamsDataContiguous(ChunkGatedDeltaRuleBwdDhuParams &params, aclOpExecutor *executorPtr)
 {
     if (!(DataContiguous(params.q, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous q failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(q) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.k, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous k failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(k) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.w, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous w failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(w) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.dO, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dO failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(dO) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(DataContiguous(params.dv, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dv failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(dv) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(OptionalDataContiguous(params.gOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous g failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(g) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(OptionalDataContiguous(params.gkOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous gk failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(gk) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(OptionalDataContiguous(params.h0Optional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous h0 failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(h0) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(OptionalDataContiguous(params.dhtOptional, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Contiguous dht failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(dht) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -586,8 +606,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -598,7 +619,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
         return ret;
     }
     if (!(ParamsDataContiguous(params, executorPtr) == ACLNN_SUCCESS)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: input contiguous conversion failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous(conversion) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -611,39 +634,45 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhuGetWorkspaceSize(
     // tiling 拒绝参数还是内部失败，这里按内部失败 561103 上报，参数类根因以
     // tiling 的结构化报文为准（pre_process_bwd 因全部校验在 tiling 而保留 161002）。
     if (!(result[0] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
-            __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(ChunkGatedDeltaRuleBwdDhu) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[1] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
-            __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(ChunkGatedDeltaRuleBwdDhu) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (!(result[2] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: operator returned no output; see the preceding tiling/impl error for the root cause",
-            __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(ChunkGatedDeltaRuleBwdDhu) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     auto viewCopyResult = l0op::ViewCopy(result[0], params.dhOut, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view_copy",
+            "ViewCopy(dh) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (params.dh0Out != nullptr) {
         viewCopyResult = l0op::ViewCopy(result[1], params.dh0Out, executorPtr);
         if (!(viewCopyResult != nullptr)) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "view_copy",
+                "ViewCopy(dh0) failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
     viewCopyResult = l0op::ViewCopy(result[2], params.dv2Out, executorPtr);
     if (!(viewCopyResult != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view_copy",
+            "ViewCopy(dv2) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -658,8 +687,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdDhu(
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdDhu);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

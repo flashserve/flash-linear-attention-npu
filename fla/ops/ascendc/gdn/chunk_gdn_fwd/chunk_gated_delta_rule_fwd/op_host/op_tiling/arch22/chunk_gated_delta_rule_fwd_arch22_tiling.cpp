@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "../../chunk_gated_delta_rule_fwd_tiling.h"
 
@@ -210,8 +211,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     const auto *gDesc = context->GetInputDesc(INPUT_RAW_G);
     if (qDesc == nullptr || kDesc == nullptr || vDesc == nullptr || betaDesc == nullptr ||
                     aDesc == nullptr || gDesc == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: tiling descriptors of q/k/v/A/beta/raw_g are missing", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "tiling",
+            "ChunkGatedDeltaRuleFwd: %s: tiling descriptors of q/k/v/A/beta/raw_g are missing");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType inputDtype = qDesc->GetDataType();
@@ -440,14 +442,18 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     if (Tiling4ChunkGatedDeltaRuleFwdArch22StateOutput(
                     context, hoPipelineReserved || ownerLocalPossible, ownerLocalPossible) !=
                     ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Reuse of the accepted Phase 5 suffix tiling failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "ChunkGatedDeltaRuleFwd: %s: Reuse of the accepted Phase 5 suffix tiling failed");
         return ge::GRAPH_FAILED;
     }
 
     size_t *workspaceSizes = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
     if (workspaceSizes[0] < systemWorkspace) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Phase 5 workspace is smaller than system workspace.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "ChunkGatedDeltaRuleFwd: %s: Phase 5 workspace is smaller than system workspace");
         return ge::GRAPH_FAILED;
     }
 
@@ -508,7 +514,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     abc.totalTokens = isVarlen ? tokens : 0;
     if (BuildAbcCubeTiling(abc.BT, abc.K, inputDtype,
                                    abc.cubeTilingData) != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Failed to build the Phase 6 KKT Matmul tiling.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "ChunkGatedDeltaRuleFwd: %s: Failed to build the Phase 6 KKT Matmul tiling");
         return ge::GRAPH_FAILED;
     }
     uint64_t workspaceOffset = AlignUp(workspaceSizes[0] - systemWorkspace, WORKSPACE_ALIGNMENT);
@@ -533,13 +541,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                         MulOverflow(elementCount, sizeof(float), &bytes) ||
                         AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
                         AddOverflow(workspaceOffset, alignedBytes, &nextOffset)) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-                            "Stage P workspace limit exceeded: region=g_last_exp, B=%" PRIu64 ", NT=%" PRIu64
-                            ", Hv=%" PRIu64 ", headStride=%" PRIu64 ", offset=%" PRIu64
-                            ", elementBytes=%zu, alignment=%" PRIu64
-                            "; require offset+AlignUp(B*NT*headStride*elementBytes,alignment) <= UINT64_MAX=%" PRIu64 ".",
-                            abc.B, abc.NT, abc.Hv, headStride, workspaceOffset, sizeof(float),
-                            WORKSPACE_ALIGNMENT, UINT64_MAX);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "Stage P workspace limit exceeded");
         return ge::GRAPH_FAILED;
     }
         trailer.gLastExpOffset = workspaceOffset;
@@ -549,11 +553,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
                         MulOverflow(elementCount, sizeof(float), &bytes) ||
                         AlignUpChecked(bytes, WORKSPACE_ALIGNMENT, &alignedBytes) ||
                         AddOverflow(workspaceOffset, alignedBytes, &nextOffset)) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-                            "Stage P workspace limit exceeded: region=g_decay, B=%" PRIu64 ", Hv=%" PRIu64
-                            ", T=%" PRIu64 ", offset=%" PRIu64 ", elementBytes=%zu, alignment=%" PRIu64
-                            "; require offset+AlignUp(B*Hv*T*elementBytes,alignment) <= UINT64_MAX=%" PRIu64 ".",
-                            abc.B, abc.Hv, abc.T, workspaceOffset, sizeof(float), WORKSPACE_ALIGNMENT, UINT64_MAX);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "Stage P workspace limit exceeded");
         return ge::GRAPH_FAILED;
     }
         trailer.gDecayOffset = workspaceOffset;
@@ -604,7 +606,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     // 回绕后的值当成功分配上报。
     uint64_t totalWorkspaceSize = 0;
     if (AddOverflow(systemWorkspace, workspaceOffset, &totalWorkspaceSize)) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Phase 6 total workspace size wraps uint64.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "ChunkGatedDeltaRuleFwd: %s: Phase 6 total workspace size wraps uint64");
         return ge::GRAPH_FAILED;
     }
     workspaceSizes[0] = totalWorkspaceSize;
@@ -612,10 +616,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     GdnMegaArch22FwdHTilingData hTiling;
     const uint64_t hTilingSize = hTiling.GetDataSize();
     if (hTilingSize != sizeof(::GdnMegaArch22FwdHTilingData)) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
-            "%s: FwdH tiling size mismatch, host=%zu, kernel=%zu", __func__, hTilingSize,
-            sizeof(::GdnMegaArch22FwdHTilingData));
-        return ge::GRAPH_FAILED;
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "FwdH tiling size mismatch"); return ge::GRAPH_FAILED;
     }
     const uint64_t oTilingOffset = AlignUp(hTilingSize, TILING_ALIGNMENT);
     const uint64_t phase5TrailerEnd = oTilingOffset + sizeof(GDN::GdnMegaArch22FwdOTilingData) +
@@ -625,13 +628,17 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch22(gert::TilingContext *context
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     const uint64_t rawTilingSize = phase6TrailerOffset + sizeof(trailer);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Phase 6 combined tiling exceeds raw tiling capacity.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "ChunkGatedDeltaRuleFwd: %s: Phase 6 combined tiling exceeds raw tiling capacity");
         return ge::GRAPH_FAILED;
     }
     if (memcpy_s(static_cast<uint8_t *>(rawTiling->GetData()) + phase6TrailerOffset,
                          rawTiling->GetCapacity() - phase6TrailerOffset,
                          &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Serialize Phase 6 ABC trailer failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "internal",
+            "ChunkGatedDeltaRuleFwd: %s: Serialize Phase 6 ABC trailer failed");
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);

@@ -159,23 +159,33 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 static aclnnStatus ParamsDataContiguous(RecomputeWUFwdParams &params, aclOpExecutor *executorPtr)
 {
     if (DataContiguous(params.k, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous k failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "contiguous",
+            "Contiguous(k) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.v, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous v failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "contiguous",
+            "Contiguous(v) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.beta, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous beta failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "contiguous",
+            "Contiguous(beta) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.a, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous a failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "contiguous",
+            "Contiguous(a) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (DataContiguous(params.g, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: Contiguous g failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "contiguous",
+            "Contiguous(g) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -251,25 +261,33 @@ aclnnStatus aclnnRecomputeWUFwdGetWorkspaceSize(
     CHECK_RET(CheckNotNull(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_NULLPTR);
     CHECK_RET(CheckParams(params) == ACLNN_SUCCESS, ACLNN_ERR_PARAM_INVALID);
     if (ParamsDataContiguous(params, executorPtr) != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: input contiguous conversion failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "contiguous",
+            "Contiguous(conversion) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto result = l0op::RecomputeWUFwd(params.k, params.v, params.beta, params.a, params.g, params.gk, params.cuSeqlensOptional, params.chunkIndicesOptional, params.chunkSize, params.wOut, params.uOut, executorPtr);
     if (result[0] == nullptr || result[1] == nullptr) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: operator returned no output", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "l0op",
+            "l0op(RecomputeWUFwd) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     // If the output tensor is non-contiguous, convert the calculated contiguous tensor to non-contiguous.
     auto viewCopyResult = l0op::ViewCopy(result[0], params.wOut, executorPtr);
     if (viewCopyResult == nullptr) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: view copy of w failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "internal",
+            "view copy of w failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
     viewCopyResult = l0op::ViewCopy(result[1], params.uOut, executorPtr);
     if (viewCopyResult == nullptr) {
-        OP_LOGE_WITHOUT_REPORT("aclnnRecomputeWUFwd", "%s: view copy of u failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "aclnnRecomputeWUFwd", "internal",
+            "view copy of u failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 
@@ -286,8 +304,10 @@ aclnnStatus aclnnRecomputeWUFwd(void *workspace, uint64_t workspaceSize, aclOpEx
     L2_DFX_PHASE_2(aclnnRecomputeWUFwd);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

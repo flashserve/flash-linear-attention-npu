@@ -64,7 +64,9 @@ aclnnStatus MakeContiguous(const aclTensor *&tensor, aclOpExecutor *executor)
     }
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to create a contiguous input.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -166,7 +168,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to create an executor.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "Failed to create an executor");
 
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
@@ -192,7 +196,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         executorPtr);
     for (const aclTensor *tensor : result) {
         if (tensor == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: failed to create a Finalize output tensor", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "internal",
+                "failed to create a Finalize output tensor");
 
             return ACLNN_ERR_INNER_NULLPTR;
         }
@@ -202,7 +208,9 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
     for (size_t index = 0; index < result.size(); ++index) {
         const aclTensor *copied = l0op::ViewCopy(result[index], outputs[index], executorPtr);
         if (copied == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: Failed to copy output[%%zu] to the output view.", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "copy_output",
+                "Failed to copy output to the output view");
 
             return ACLNN_ERR_INNER_NULLPTR;
         }
@@ -220,8 +228,10 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
     L2_DFX_PHASE_2(aclnnChunkGatedDeltaRuleBwdFinalize);
     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
     if (runRet != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                               static_cast<int>(runRet));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CommonOpExecutorRun failed, ret = " +
+                std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
         return runRet;
     }
     return ACLNN_SUCCESS;

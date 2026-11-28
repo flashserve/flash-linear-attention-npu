@@ -449,7 +449,9 @@ static aclnnStatus DataContiguous(const aclTensor *&tensor, aclOpExecutor *execu
 {
     tensor = l0op::Contiguous(tensor, executor);
     if (tensor == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: contiguous tensor is nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "contiguous",
+            "Contiguous failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     return ACLNN_SUCCESS;
@@ -640,7 +642,9 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
                    DFX_OUT(hOut, vNewOut, finalStateOut));
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: CREATE_EXECUTOR returned nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -678,24 +682,31 @@ aclnnStatus aclnnChunkFwdHGetWorkspaceSize(
         params.hOut, params.vNewOut, params.finalStateOut, executorPtr);
     if (!(result[0] != nullptr && result[1] != nullptr &&
           (!outputFinalState || result[2] != nullptr))) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: operator returned no output; see tiling/kernel report", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(ChunkFwdH) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto viewCopyResult0 = l0op::ViewCopy(result[0], params.hOut, executorPtr);
     if (viewCopyResult0 == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult0 is nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view_copy",
+            "ViewCopy(h) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     auto viewCopyResult1 = l0op::ViewCopy(result[1], params.vNewOut, executorPtr);
     if (viewCopyResult1 == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult1 is nullptr", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "view_copy",
+            "ViewCopy(vNew) failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     if (outputFinalState && params.finalStateOut != nullptr) {
         auto viewCopyResult2 = l0op::ViewCopy(result[2], params.finalStateOut, executorPtr);
         if (viewCopyResult2 == nullptr) {
-            OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: viewCopyResult2 is nullptr", __func__);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                OP_NAME, "view_copy",
+                "ViewCopy(finalState) failed");
             return ACLNN_ERR_INNER_NULLPTR;
         }
     }
@@ -712,8 +723,10 @@ aclnnStatus aclnnChunkFwdH(void *workspace, uint64_t workspaceSize, aclOpExecuto
     L2_DFX_PHASE_2(aclnnChunkFwdH);
                     const aclnnStatus runRet = CommonOpExecutorRun(workspace, workspaceSize, executor, stream);
             if (runRet != ACLNN_SUCCESS) {
-                OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: operator launch failed, rc=%d", __func__,
-                                       static_cast<int>(runRet));
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    OP_NAME, "executor",
+                    "CommonOpExecutorRun failed, ret = " +
+                        std::to_string(static_cast<int64_t>(static_cast<int>(runRet))));
                 return runRet;
             }
     return ACLNN_SUCCESS;

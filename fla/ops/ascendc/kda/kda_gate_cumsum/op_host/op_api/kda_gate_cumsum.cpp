@@ -5,6 +5,7 @@
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND.
  */
 
+#include "op_common/log/log.h"
 #include "kda_gate_cumsum.h"
 
 #include "opdev/make_op_executor.h"
@@ -54,7 +55,10 @@ const std::array<const aclTensor *, 1> KdaGateCumsum(
         OP_ATTR(chunkSize, useGateInKernel, safeGate, static_cast<float>(lowerBound),
                 rank, batch, seqlen, heads, headDim));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE KdaGateCumsum failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "KdaGateCumsum", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {nullptr};
     }
     return {gkOut};

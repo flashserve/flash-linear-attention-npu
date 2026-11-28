@@ -1,3 +1,4 @@
+#include "op_common/log/log.h"
 #include "chunk_kda_bwd.h"
 
 #include "opdev/make_op_executor.h"
@@ -66,7 +67,10 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
                 disableRecompute, useExp2, stateVFirst,
                 deferGatePost));
     if (ret != ACLNN_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE ChunkKdaBwd failed.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            "ChunkKdaBwd", "launcher",
+            "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                std::to_string(static_cast<int64_t>(ret)));
         return {};
     }
     if (deferGatePost) {
@@ -86,7 +90,10 @@ ChunkKdaBwdOutputs ChunkKdaBwd(
                 OP_ATTR(chunkSize, safeGate, lowerBound, false));
         }
         if (ret != ACLNN_SUCCESS) {
-            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ADD_TO_LAUNCHER_LIST_AICORE GatePost failed.");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                "ChunkKdaBwd", "launcher",
+                "ADD_TO_LAUNCHER_LIST_AICORE failed, ret = " +
+                    std::to_string(static_cast<int64_t>(ret)));
             return {};
         }
     }

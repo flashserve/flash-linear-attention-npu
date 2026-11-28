@@ -202,8 +202,9 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
 
     auto uniqueExecutor = CREATE_EXECUTOR();
     if (uniqueExecutor.get() == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME,
-                           "%s: CREATE_EXECUTOR returned nullptr; propagate the resource first error.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "executor",
+            "CREATE_EXECUTOR returned nullptr");
         return ACLNN_ERR_INNER_CREATE_EXECUTOR;
     }
     auto executorPtr = uniqueExecutor.get();
@@ -211,7 +212,9 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     // ag_hm is read-only, so a contiguous copy is safe. h is not copied.
     const aclTensor *agContig = l0op::Contiguous(agHm, executorPtr);
     if (!(agContig != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: agContig != nullptr failed", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "l0op",
+            "l0op(agContig) returned nullptr");
         return ACLNN_ERR_INNER_NULLPTR;
     }
     h->SetOriginalShape(h->GetViewShape());
@@ -220,7 +223,9 @@ aclnnStatus aclnnMergeFwdBwdKernelGetWorkspaceSize(
     auto outputs = l0op::MergeFwdBwdKernel(
         h, agContig, preOrPostNumRanks, rank, forward, stateVFirst, executorPtr);
     if (!(outputs[0] != nullptr)) {
-        OP_LOGE_WITHOUT_REPORT(OP_NAME, "%s: MergeFwdBwdKernel launch failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "launcher",
+            "MergeFwdBwdKernel launch failed");
         return ACLNN_ERR_INNER_NULLPTR;
     }
 

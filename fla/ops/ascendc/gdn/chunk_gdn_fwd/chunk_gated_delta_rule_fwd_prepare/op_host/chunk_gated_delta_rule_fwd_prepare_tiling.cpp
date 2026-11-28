@@ -59,8 +59,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const gert::StorageShape *gShape = context->GetRequiredInputShape(PREPARE_INPUT_G);
     const gert::StorageShape *betaShape = context->GetRequiredInputShape(PREPARE_INPUT_BETA);
     if (qShape == nullptr || kShape == nullptr || vShape == nullptr || gShape == nullptr || betaShape == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: tiling metadata of q/k/v/g/beta is missing", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "tiling",
+            "tiling metadata of q/k/v/g/beta is missing");
         return ge::GRAPH_FAILED;
     }
 
@@ -156,8 +157,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     const auto *gDesc = context->GetInputDesc(PREPARE_INPUT_G);
     const auto *betaDesc = context->GetInputDesc(PREPARE_INPUT_BETA);
     if (qDesc == nullptr || gDesc == nullptr || betaDesc == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(
-            OP_NAME, "%s: tiling descriptors of q/g/beta are missing", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            OP_NAME, "tiling",
+            "tiling descriptors of q/g/beta are missing");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType qDtype = qDesc->GetDataType();
@@ -253,7 +255,9 @@ static ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdPrepare(gert::TilingContext 
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t *ws = context->GetWorkspaceSizes(1);
     if (ws == nullptr) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: GetWorkspaceSizes returned null.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "GetWorkspaceSizes returned null");
 
         return ge::GRAPH_FAILED;
     }

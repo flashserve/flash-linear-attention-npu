@@ -2,6 +2,7 @@
  * Copyright (c) 2026 Tianjin University, Ltd.
  * CANN Open Software License Agreement Version 2.0.
  */
+#include "op_common/log/log.h"
 #include "graph/utils/type_utils.h"
 #include "../../../op_kernel/internal/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling.h"
 #include "../../../op_kernel/internal/operators/chunk_gated_delta_rule_fwd_h/op_host/chunk_gated_delta_rule_fwd_h_tiling_processor.h"
@@ -356,7 +357,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, recomputeContext.ubSize);
     RecomputeWUFwdTilingProcessor recomputeProcessor(recomputeContext, recomputeTiling);
     if (recomputeProcessor.Process() != ge::GRAPH_SUCCESS) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: RecomputeWUFwd tiling failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "RecomputeWUFwd tiling failed");
         return ge::GRAPH_FAILED;
     }
 
@@ -466,12 +469,16 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
     auto *rawTiling = context->GetRawTilingData();
     OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
     if (rawTilingSize > rawTiling->GetCapacity()) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Combined tiling data exceeds raw tiling capacity.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "Combined tiling data exceeds raw tiling capacity");
         return ge::GRAPH_FAILED;
     }
     void *rawData = rawTiling->GetData();
     if (memset_s(rawData, rawTiling->GetCapacity(), 0, rawTilingSize) != EOK) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Clear raw tiling data failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "Clear raw tiling data failed");
         return ge::GRAPH_FAILED;
     }
     hTiling.SaveToBuffer(rawData, rawTiling->GetCapacity());
@@ -479,7 +486,9 @@ ge::graphStatus Tiling4ChunkGatedDeltaRuleFwdArch35StateOutput(gert::TilingConte
                          rawTiling->GetCapacity() - oTilingOffset, &oTiling, sizeof(oTiling)) != EOK ||
                     memcpy_s(static_cast<uint8_t *>(rawData) + trailerOffset,
                              rawTiling->GetCapacity() - trailerOffset, &trailer, sizeof(trailer)) != EOK) {
-        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s: Serialize combined tiling data failed.", __func__);
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "tiling",
+            "Serialize combined tiling data failed");
         return ge::GRAPH_FAILED;
     }
     rawTiling->SetDataSize(rawTilingSize);
