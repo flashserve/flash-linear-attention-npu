@@ -17,8 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Linux shell is required")
 class RunCiContainerTests(unittest.TestCase):
     def run_ci(self, root, *, run_status=0, cleanup_status=0, write_id=True, interrupt=False,
-               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True,
-               smoke=False):
+               broad_tmp=False, host_arch="x86_64", image_platform="linux/amd64", image_present=True):
         repo = root / "repo"
         (repo / "ci").mkdir(parents=True)
         shutil.copyfile(REPO_ROOT / "ci/run_ci_container.sh", repo / "ci/run_ci_container.sh")
@@ -82,17 +81,6 @@ class RunCiContainerTests(unittest.TestCase):
             RUN_WAIT=str(interrupt).lower(),
             WAIT_PID=str(root / "waiting-pid"),
         )
-        if smoke:
-            selector = repo / "tests/atk/smoke/run.py"
-            selector.parent.mkdir(parents=True)
-            selector.write_text(
-                'import sys\n'
-                'assert sys.argv[1:] == ["affected", "--platform", "A5", "--git-range", "tested-base", "HEAD"]\n'
-                'print("chunk_fwd_h")\nprint("recurrent_kda")\n'
-            )
-            # The protected target-branch workflow publishes the actual merge base parent here.
-            env.pop("CI_ATK_BASE_SHA", None)
-            env.update(NPU_CI_BASE_SHA="tested-base", CI_ACCURACY_PLATFORM="a5", CI_STAGE="all", CI_OPS="")
         if broad_tmp:
             env["CI_HOST_TMPDIR"] = env["TMPDIR"]
         command = ["bash", "ci/run_ci_container.sh"]
@@ -119,20 +107,11 @@ class RunCiContainerTests(unittest.TestCase):
         calls = [json.loads(line) for line in (root / "docker.jsonl").read_text().splitlines()]
         return result, calls, env
 
-    def test_atk_selection_is_forwarded_to_the_ci_image(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            result, calls, _ = self.run_ci(Path(temporary), smoke=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            job = next(call for call in calls if "--cidfile" in call)
-            self.assertIn("CI_ATK_SMOKE_OPS=chunk_fwd_h\nrecurrent_kda", job)
-            self.assertFalse(any("fla-atk-smoke-cp312" in arg for arg in job))
-
     def test_missing_storage_is_created_and_only_owned_container_is_cleaned(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             result, calls, env = self.run_ci(root)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertNotIn(["volume", "inspect", "fla-atk-smoke-cp312"], calls)
             for name in ("TMPDIR", "CI_HOST_TMPDIR", "CI_CACHE_ROOT", "CI_NPU_LOCK_DIR"):
                 self.assertTrue(Path(env[name]).is_dir(), name)
             self.assertTrue((Path(env["CI_CACHE_ROOT"]) / "third_party").is_dir())

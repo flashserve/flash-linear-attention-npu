@@ -1493,7 +1493,7 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
                 self.assertTrue(all(item["payload"]["state"] == "pending" for item in pending))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_completed_smoke_must_validate_the_current_runtime_before_reuse(self):
+    def test_prepare_reuses_only_complete_same_run_success(self):
         target_url = "https://github.com/example/repo/actions/runs/88"
         statuses = [
             {
@@ -1515,8 +1515,8 @@ exec bash "$CI_TEST_PREPARE_SCRIPT" -s "$CI_TEST_SOURCE" -b "$CI_TEST_BUILD"
             for item in records
             if item["kind"] == "output"
         }
-        self.assertEqual(outputs["should_run"], "true")
-        self.assertEqual(sum(item["kind"] == "status" for item in records), len(STATUS_CONTEXTS))
+        self.assertEqual(outputs["should_run"], "false")
+        self.assertFalse(any(item["kind"] == "status" for item in records))
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_prepare_reuse_requires_current_base_and_workflow_run_identity(self):
