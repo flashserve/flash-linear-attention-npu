@@ -2378,3 +2378,32 @@ def npu_pre_process_fwd_kernel_merged(k, w, u, g=None, *, gk=None, bg=None,
         64 if chunk_size is None else int(chunk_size),
         _current_stream_ptr(),
     )
+
+
+def _vdn_device(anchor, *others):
+    """Keep descriptors and the selected stream on the same NPU."""
+    torch, torch_npu = _modules()
+    for arg in (anchor, *others):
+        if arg.device.type != "npu" or arg.device != anchor.device:
+            raise ValueError("VDN stages require all tensors on the same NPU")
+        if not arg.is_contiguous() or torch_npu.get_npu_format(arg) not in (0, 2, 30, 47):
+            raise ValueError("VDN stages require contiguous tensors in a public NPU format")
+    return torch.npu.device(anchor.device)
+
+
+def npu_vdn_scan(transition, prefix, suffix):
+    """Update the prefilled FP32 prefix and suffix banks in place."""
+    with _vdn_device(transition, prefix, suffix):
+        return _op("npu_vdn_scan")(transition, prefix, suffix, _current_stream_ptr())
+
+
+def npu_vdn_add_diagonal(correction, two_eye):
+    """Add the two 64-by-64 diagonal tiles of two_eye to each correction in place."""
+    with _vdn_device(correction, two_eye):
+        return _op("npu_vdn_add_diagonal")(correction, two_eye, _current_stream_ptr())
+
+
+def npu_vdn_bridge(prefix, suffix, bounds, logs, start, out):
+    """Write the FP32 or BF16 alpha-bridge state of the requested frames."""
+    with _vdn_device(prefix, suffix, bounds, logs, out):
+        return _op("npu_vdn_bridge")(prefix, suffix, bounds, logs, start, out, _current_stream_ptr())

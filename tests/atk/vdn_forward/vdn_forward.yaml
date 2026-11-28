@@ -1,0 +1,282 @@
+name: vdn_forward
+api: pytorch
+api_type: executor_vdn_forward
+version: v2.1
+generate: generator_vdn_forward
+dtype_numbers: 1
+extra_numbers: 0
+standard:
+  acc: mixed_tolerance_bm
+  perf: not_key
+inputs:
+- name: q
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -0.08
+        - 0.08
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values:
+      - 1
+      - 5
+      - 7
+      - 8
+      - 9
+      - 11
+      - 32
+      - 85
+      - 87
+    - values:
+      - 1
+      - 2
+      - 3
+      - 7
+    - values:
+      - 1
+      - 13
+      - 33
+      - 405
+    - values:
+      - 128
+- name: k
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -0.08
+        - 0.08
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values:
+      - 1
+    - values:
+      - 1
+    - values:
+      - 1
+    - values:
+      - 128
+- name: v
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - -1.0
+        - 1.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 4
+    dim_values:
+    - values:
+      - 1
+    - values:
+      - 1
+    - values:
+      - 1
+    - values:
+      - 128
+- name: beta
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+    - bf16
+  ranges:
+    valid:
+      values:
+      - - 0.0
+        - 1.0
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 3
+    dim_values:
+    - values:
+      - 1
+    - values:
+      - 1
+    - values:
+      - 1
+- name: alpha
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - 0.79
+        - 0.99
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 3
+    dim_values:
+    - values:
+      - 1
+    - values:
+      - 1
+    - values:
+      - 128
+- name: bounds
+  type: tensor
+  required: true
+  dtypes:
+    values:
+    - int64
+  ranges:
+    valid:
+      values:
+      - - 0
+        - 1
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 2
+    dim_values:
+    - values:
+      - 1
+    - values:
+      - 2
+- name: text_state
+  type: tensor
+  required: false
+  dtypes:
+    values:
+    - fp32
+  ranges:
+    valid:
+      values:
+      - - -0.025
+        - 0.025
+    invalid:
+      values: []
+  shapes:
+    dim_numbers:
+      values:
+      - 3
+    dim_values:
+    - values:
+      - 1
+    - values:
+      - 128
+    - values:
+      - 128
+- name: delta_rule
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - string
+  ranges:
+    valid:
+      values:
+      - vdn_solve
+      - newton_schulz
+    invalid:
+      values: []
+- name: fuse_silu
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []
+- name: fuse_qk_l2norm
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []
+- name: frame_tile
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - int
+  ranges:
+    valid:
+      values:
+      - 1
+      - 4
+      - 8
+      - 32
+      - 64
+    invalid:
+      values: []
+- name: pad_tail
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []
+- name: value_first
+  type: attr
+  required: true
+  dtypes:
+    values:
+    - bool
+  ranges:
+    valid:
+      values:
+      - false
+      - true
+    invalid:
+      values: []

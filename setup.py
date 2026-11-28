@@ -533,6 +533,8 @@ class FlaNpuBuildPy(_build_py):
         if built_package_dir.exists():
             shutil.rmtree(built_package_dir)
         super().run()
+        from build_vdn_pipeline import stage_vdn_pipeline
+        stage_vdn_pipeline(REPO_ROOT, built_package_dir, Path(self.build_lib).parent / "vdn_pipeline")
         run_package = _RUN_PACKAGE or _find_single_run_package()
         _stage_run_package(run_package, Path(self.build_lib) / "fla_npu" / "opp")
         from build_layer_manifest import write_layer_manifest

@@ -1,0 +1,47 @@
+[
+  {"id": 0, "name": "vdn_forward_mss_00_vdn_solve_f1_h1_s1", "default_seed": 431, "version": "v2.1", "api": "pytorch", "api_type": "executor_vdn_forward", "standard": {"acc": "mixed_tolerance_bm", "perf": "not_key"}, "outputs": null, "inputs": [
+    {"name": "q", "type": "tensor", "required": true, "dtype": "fp32", "shape": [1, 1, 1, 128], "range_values": [-0.08, 0.08]},
+    {"name": "k", "type": "tensor", "required": true, "dtype": "fp32", "shape": [1, 1, 1, 128], "range_values": [-0.08, 0.08]},
+    {"name": "v", "type": "tensor", "required": true, "dtype": "fp32", "shape": [1, 1, 1, 128], "range_values": [-1.0, 1.0]},
+    {"name": "beta", "type": "tensor", "required": true, "dtype": "fp32", "shape": [1, 1, 1], "range_values": [0.0, 1.0]},
+    {"name": "alpha", "type": "tensor", "required": true, "dtype": "fp32", "shape": [1, 1, 128], "range_values": [0.79, 0.99]},
+    {"name": "bounds", "type": "tensor", "required": true, "dtype": "int64", "shape": [1, 2], "range_values": [0, 0]},
+    {"name": "text_state", "type": "tensor", "required": false, "dtype": "fp32", "shape": [1, 128, 128], "range_values": [-0.025, 0.025]},
+    {"name": "delta_rule", "type": "attr", "required": true, "dtype": "string", "shape": null, "range_values": "vdn_solve"},
+    {"name": "fuse_silu", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": false},
+    {"name": "fuse_qk_l2norm", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": false},
+    {"name": "frame_tile", "type": "attr", "required": true, "dtype": "int", "shape": null, "range_values": 1},
+    {"name": "pad_tail", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true},
+    {"name": "value_first", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": false}
+  ]},
+  {"id": 1, "name": "vdn_forward_mss_01_vdn_solve_f11_h3_s33", "default_seed": 431, "version": "v2.1", "api": "pytorch", "api_type": "executor_vdn_forward", "standard": {"acc": "mixed_tolerance_bm", "perf": "not_key"}, "outputs": null, "inputs": [
+    {"name": "q", "type": "tensor", "required": true, "dtype": "bf16", "shape": [11, 3, 33, 128], "range_values": [-0.08, 0.08]},
+    {"name": "k", "type": "tensor", "required": true, "dtype": "bf16", "shape": [11, 3, 33, 128], "range_values": [-0.08, 0.08]},
+    {"name": "v", "type": "tensor", "required": true, "dtype": "bf16", "shape": [11, 3, 33, 128], "range_values": [-1.0, 1.0]},
+    {"name": "beta", "type": "tensor", "required": true, "dtype": "fp32", "shape": [11, 3, 33], "range_values": [0.0, 1.0]},
+    {"name": "alpha", "type": "tensor", "required": true, "dtype": "fp32", "shape": [11, 3, 128], "range_values": [0.79, 0.99]},
+    {"name": "bounds", "type": "tensor", "required": true, "dtype": "int64", "shape": [11, 2], "range_values": [0, 10]},
+    {"name": "text_state", "type": "tensor", "required": false, "dtype": "fp32", "shape": [3, 128, 128], "range_values": "null"},
+    {"name": "delta_rule", "type": "attr", "required": true, "dtype": "string", "shape": null, "range_values": "vdn_solve"},
+    {"name": "fuse_silu", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true},
+    {"name": "fuse_qk_l2norm", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true},
+    {"name": "frame_tile", "type": "attr", "required": true, "dtype": "int", "shape": null, "range_values": 8},
+    {"name": "pad_tail", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true},
+    {"name": "value_first", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true}
+  ]},
+  {"id": 2, "name": "vdn_forward_mss_02_newton_schulz_f32_h7_s1", "default_seed": 431, "version": "v2.1", "api": "pytorch", "api_type": "executor_vdn_forward", "standard": {"acc": "mixed_tolerance_bm", "perf": "not_key"}, "outputs": null, "inputs": [
+    {"name": "q", "type": "tensor", "required": true, "dtype": "bf16", "shape": [32, 7, 1, 128], "range_values": [-0.08, 0.08]},
+    {"name": "k", "type": "tensor", "required": true, "dtype": "bf16", "shape": [32, 7, 1, 128], "range_values": [-0.08, 0.08]},
+    {"name": "v", "type": "tensor", "required": true, "dtype": "bf16", "shape": [32, 7, 1, 128], "range_values": [-1.0, 1.0]},
+    {"name": "beta", "type": "tensor", "required": true, "dtype": "bf16", "shape": [32, 7, 1], "range_values": [0.0, 1.0]},
+    {"name": "alpha", "type": "tensor", "required": true, "dtype": "fp32", "shape": [32, 7, 128], "range_values": [0.79, 0.99]},
+    {"name": "bounds", "type": "tensor", "required": true, "dtype": "int64", "shape": [32, 2], "range_values": [0, 31]},
+    {"name": "text_state", "type": "tensor", "required": false, "dtype": "fp32", "shape": [7, 128, 128], "range_values": [-0.025, 0.025]},
+    {"name": "delta_rule", "type": "attr", "required": true, "dtype": "string", "shape": null, "range_values": "newton_schulz"},
+    {"name": "fuse_silu", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": false},
+    {"name": "fuse_qk_l2norm", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true},
+    {"name": "frame_tile", "type": "attr", "required": true, "dtype": "int", "shape": null, "range_values": 32},
+    {"name": "pad_tail", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true},
+    {"name": "value_first", "type": "attr", "required": true, "dtype": "attr_bool", "shape": null, "range_values": true}
+  ]}
+]

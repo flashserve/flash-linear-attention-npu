@@ -275,6 +275,10 @@ def filter_adapters(
     }
     if not selected:
         return adapters
+    # VDN forward composes three independent ACLNN stages in Python.
+    if "vdn_forward" in selected:
+        selected.remove("vdn_forward")
+        selected.update(("vdn_scan", "vdn_bridge", "vdn_add_diagonal"))
     matches = {}
     for name in sorted(selected):
         owner = INTERNAL_OP_ABI_OWNERS.get(name, name)
