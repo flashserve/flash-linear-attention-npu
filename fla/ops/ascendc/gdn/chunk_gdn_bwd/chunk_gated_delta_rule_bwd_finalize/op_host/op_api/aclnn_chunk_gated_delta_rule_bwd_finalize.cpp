@@ -31,7 +31,7 @@ aclnnStatus CheckA5HeadsAndMetadata(const aclTensor *q, const aclTensor *v,
         const int64_t hv = vShape.GetDim(1);
         if (hk <= 0 || hv <= 0 || hv % hk != 0 || hv / hk > GDN::FinalizeHost::kA5PublishedMaxG) {
             const std::string actual = "HK=" + std::to_string(hk) + ", HV=" + std::to_string(hv);
-            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "integer in [1, 16] on A5");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "HV/HK", actual.c_str(), "integer in [1, 16] on A5/A6");
             return ACLNN_ERR_PARAM_INVALID;
         }
     }
@@ -40,12 +40,12 @@ aclnnStatus CheckA5HeadsAndMetadata(const aclTensor *q, const aclTensor *v,
     }
     if (qShape.GetDimNum() != 4) {
         const std::string rank = std::to_string(qShape.GetDimNum());
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q rank", rank.c_str(), "4 in A5 varlen mode");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q rank", rank.c_str(), "4 in A5/A6 varlen mode");
         return ACLNN_ERR_PARAM_INVALID;
     }
     if (qShape.GetDim(0) != 1) {
         const std::string batch = std::to_string(qShape.GetDim(0));
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.B", batch.c_str(), "1 in A5 varlen mode");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(OP_NAME, "q.B", batch.c_str(), "1 in A5/A6 varlen mode");
         return ACLNN_ERR_PARAM_INVALID;
     }
     GDN::FinalizeHost::MetadataError error;
@@ -136,10 +136,14 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalizeGetWorkspaceSize(
         return ACLNN_ERR_PARAM_NULLPTR;
     }
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (npuArch != NpuArch::DAV_3510) {
+    bool isArch92 = false;
+#ifdef GDN_FINALIZE_ENABLE_ARCH92
+    isArch92 = npuArch == NpuArch::DAV_9201;
+#endif
+    if (npuArch != NpuArch::DAV_3510 && !isArch92) {
         const std::string actual = std::to_string(static_cast<int32_t>(npuArch));
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "npuArch", actual.c_str(), "DAV_2201 or DAV_3510");
+            OP_NAME, "npuArch", actual.c_str(), "DAV_2201, DAV_3510 or DAV_9201");
         return ACLNN_ERR_PARAM_INVALID;
     }
 

@@ -37,14 +37,16 @@ dq, dk, dv, dbeta, dg = chunk_gated_delta_rule_bwd_finalize(
 
 ## 支持平台
 
-实现注册 A2（Ascend 910B）、A3（Ascend 910C，`ascend910_93`）和 A5（Ascend 950），使用相同公开接口。
+实现注册 A2（Ascend 910B）、A3（Ascend 910C，`ascend910_93`）、A5（Ascend 950）和 A6（Ascend 960DT），使用相同公开接口。
 Python 公共入口会在调用前检查输入 tensor 所在的 NPU；其他设备返回不支持错误。
 A2/A3 共用 `DAV_2201` / `arch22` 路径，完整 Finalize 链在一次混合 AIC/AIV kernel 中执行，
 tiling 和 workspace 在内部按平台选择。精度、性能和内存检测结论须以对应设备、版本的 ATK 记录为准；
 910B 的实机验证不能替代 910C 的实机验证。
 
 Host 校验、view 规范化和 arch22 tiling 位于 A2/A3 私有路径，A5 沿用原有流程。
-公共 Host 对象保留 A2/A3 与 A5 的实现，并在运行期按 `NpuArch` 分派。
+公共 Host 对象按 `NpuArch` 分派；A6 通过 `ascend960dt` 构建启用 `DAV_9201`，
+沿用 A5 的输入 view 规范化和输出分配。A6 仅完成编码，尚未进行编译或设备验证，
+本节列出的是实现目标范围，精度、性能和内存异常检查均无 A6 验证结论。
 
 ## aclnn
 
@@ -94,6 +96,7 @@ aclnnStatus aclnnChunkGatedDeltaRuleBwdFinalize(
 | --- | --- | --- | --- | --- |
 | A2 / A3 | 128、256 | 64、128 | 正整数 | 同为 BF16 或同为 FP32 |
 | A5 | 128 | 64 | 1 到 16 | 同为 BF16 或同为 FP32 |
+| A6（已编码，未验证） | 128 | 64 | 1 到 16 | 同为 BF16 或同为 FP32 |
 
 定长模式下 `NT=ceil(T/BT)`；变长模式下 `B=1`，`NT` 为所有序列的 chunk 总数。
 两种模式均支持不满一个 chunk 的尾块。
@@ -109,7 +112,7 @@ host 同时检查内部地址乘积和 workspace 大小，溢出时返回参数�
 `chunk_indices` 必须完整、唯一地列出所有非空序列的 chunk；每个 pair 的序列编号
 及该序列内 chunk 编号均须有效。pair 顺序可以打乱，`h/dh` 的 NT 轴须与此顺序一致，
 不能只打乱 pair 而沿用旧顺序的 state。重复、缺漏、越界或指向空序列的 pair 返回
-`ACLNN_ERR_PARAM_INVALID`，不进入设备 kernel。A5 的 `HV/HK` 非整数或超过 16 时也返回该错误码，
+`ACLNN_ERR_PARAM_INVALID`，不进入设备 kernel。A5/A6 的 `HV/HK` 非整数或超过 16 时也返回该错误码，
 消息包含实际 `HK/HV` 和允许范围。
 
 `cu_seqlens` 和 `chunk_indices` 必须同时为空或同时提供。普通稠密格式的非连续输入
@@ -123,7 +126,7 @@ A5 保留原有的连续化、输出分配和描述符处理，本次不增加�
 | 属性 | 默认值 | 约束 |
 | --- | --- | --- |
 | `scale` | Python: `1/sqrt(128)` | 有限值；A2/A3 Host 显式检查 FP32 可表示范围 |
-| `chunk_size` | `64` | A2/A3 支持 64/128；A5 支持 64；必须等于 A 的末维 |
+| `chunk_size` | `64` | A2/A3 支持 64/128；A5/A6 支持 64；必须等于 A 的末维 |
 | `use_qk_l2_norm_in_kernel` | `false` | `true` 时必须提供 `q_rstd/k_rstd` |
 | `use_beta_sigmoid_in_kernel` | `false` | `true` 时必须提供 `beta_raw` |
 | `use_gate_in_kernel` | `false` | 只支持 `false` |
