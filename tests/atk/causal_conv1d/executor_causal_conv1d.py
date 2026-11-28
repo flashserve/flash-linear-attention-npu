@@ -49,8 +49,8 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     return {
         "x": _randn((B * T, D), dtype_name, calc_dtype, device, seed + 1),
         "weight": _randn((W, D), dtype_name, calc_dtype, device, seed + 2),
-        "bias": _randn((D,), dtype_name, calc_dtype, device, seed + 3) if spec.get("with_bias", True) else None,
-        "conv_states": _zeros((B, W - 1, D), dtype_name, calc_dtype, device) if spec.get("with_conv_states", True) else None,
+        "bias": _randn((D,), dtype_name, calc_dtype, device, seed + 3),
+        "conv_states": _zeros((B, W - 1, D), dtype_name, calc_dtype, device),
         "query_start_loc": torch.arange(0, (B + 1) * T, T, dtype=torch.int32, device=device),
     }
 
@@ -103,14 +103,14 @@ class FunctionApi(BaseApi):
 
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
-        self.high_precision = self.device == "cpu" and bool(task_result.is_benchmark_task)
+        self.high_precision = self.device == "cpu"
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME, self.task_result.case_config)
+        spec = _case_spec(input_data, OP_NAME)
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":
             outputs = run_cpu(spec, self.high_precision)
         else:
             raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
-        return _finite_tuple(outputs)
+        return _finite_tuple(outputs, golden=self.device == "cpu")

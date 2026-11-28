@@ -68,7 +68,7 @@ def runtime_fingerprint():
                 add(p)
             elif not (p.is_relative_to(opp) or p.is_relative_to(package)):
                 scan(p)
-    for directory in ("ci/model_cases", "tests/atk", "examples", "fla"):
+    for directory in ("ci/model_cases", "tests/atk/smoke", "examples", "fla"):
         for p in (root / directory).rglob("*.py"):
             add(p)
     add(Path(__file__).resolve())

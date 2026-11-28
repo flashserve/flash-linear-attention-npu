@@ -21,12 +21,20 @@ from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 
 from _ascendc_common_executor import (
+    _RCP_LN2,
     _calc_dtype,
     _case_spec,
+    _chunks,
     _finite_tuple,
+    _gate,
+    _int_tensor,
+    _kda_gate,
     _marker_device,
+    _num_chunks,
     _orig_dtype,
+    _rand,
     _randn,
+    _zeros,
 )
 
 
@@ -38,23 +46,23 @@ def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: boo
     calc_dtype = _calc_dtype(dtype_name, high_precision)
     seed = int(spec.get("seed", 20260817))
     B, T, D, W = (int(spec[x]) for x in ("B", "T", "D", "W"))
-    def sample(shape, seed_offset, periodic_offset):
-        if spec.get("input_pattern") != "periodic37":
-            return _randn(shape, dtype_name, calc_dtype, device, seed + seed_offset)
-        values = torch.arange(math.prod(shape), dtype=torch.float32) + seed % 37 + periodic_offset
-        return ((values.remainder(37) - 18) / 64).reshape(shape).to(device=device, dtype=calc_dtype)
-
-    inputs = {
-        "x": sample((B, T, D), 1, 9),
-        "weight": sample((W, D), 2, 11),
-        "dy": sample((B, T, D), 3, 17),
+    return {
+        "x": _randn((B, T, D), dtype_name, calc_dtype, device, seed + 1),
+        "weight": _randn((W, D), dtype_name, calc_dtype, device, seed + 2),
+        "dy": _randn((B, T, D), dtype_name, calc_dtype, device, seed + 3),
     }
-    if spec.get("with_y", False) or spec.get("activation", 0):
-        # Construct the same quantized preactivation for the DUT and both references.
-        x, weight = inputs["x"].cpu().float(), inputs["weight"].cpu().float()
-        y = F.conv1d(x.transpose(1, 2), weight.T.unsqueeze(1), padding=W - 1, groups=D)
-        inputs["y"] = y[:, :, :T].transpose(1, 2).contiguous().to(_orig_dtype(dtype_name)).to(device, calc_dtype)
-    return inputs
+
+
+def _causal_conv1d_ref(x, weight, bias):
+    calc = torch.float64 if x.dtype == torch.float64 else torch.float32
+    y = F.conv1d(
+        x.to(calc).permute(0, 2, 1).contiguous(),
+        weight.to(calc).t().unsqueeze(1).contiguous(),
+        bias=bias.to(calc) if bias is not None else None,
+        padding=weight.shape[0] - 1,
+        groups=x.shape[-1],
+    )
+    return y[..., : x.shape[1]].permute(0, 2, 1).contiguous().to(x.dtype)
 
 
 def _activation_bwd_grad(dy, y, activation: int):
@@ -83,7 +91,7 @@ def _causal_conv1d_bwd_ref(
         )
 
     x_in, w_in, dy_in = inputs["x"], inputs["weight"], inputs["dy"]
-    calc = x_in.dtype
+    calc = torch.float64 if x_in.dtype == torch.float64 else torch.float32
 
     B, T, D = x_in.shape
     W = w_in.shape[0]
@@ -138,42 +146,16 @@ def _causal_conv1d_bwd_ref(
     )
 
 
-def run_torch_ref(
-    spec: dict[str, Any],
-    device: torch.device,
-    high_precision: bool = False,
-):
-    """使用 PyTorch 小算子拼接作为参考实现，可运行在 CPU 或 CUDA GPU。"""
-    inputs = build_inputs(spec, device, high_precision=high_precision)
+def run_cpu(spec: dict[str, Any], high_precision: bool = False):
+    inputs = build_inputs(spec, torch.device("cpu"), high_precision=high_precision)
     return _causal_conv1d_bwd_ref(
         inputs,
-        y_optional=inputs.get("y"),
-        activation=spec.get("activation", 0),
-        input_layout=spec.get("input_layout", "BSND"),
+        y_optional=None,
+        initial_state=None,
+        dht=None,
+        activation=0,
+        input_layout="BSND",
     )
-
-
-def run_cpu(spec: dict[str, Any], high_precision: bool = False):
-    """运行 CPU PyTorch reference。"""
-    return run_torch_ref(
-        spec,
-        torch.device("cpu"),
-        high_precision=high_precision,
-    )
-
-
-def run_gpu(spec: dict[str, Any], high_precision: bool = False, device_id=0):
-    """运行 GPU PyTorch reference。"""
-    if not torch.cuda.is_available():
-        raise RuntimeError("当前环境未检测到可用 CUDA GPU，无法运行 gpu reference。")
-    device = torch.device(f"cuda:{device_id}")
-
-    return run_torch_ref(
-        spec,
-        device,
-        high_precision=high_precision,
-    )
-
 
 
 def run_npu(spec: dict[str, Any], input_data: InputDataset):
@@ -181,10 +163,7 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
     inputs = build_inputs(spec, _marker_device(input_data), high_precision=False)
     from fla_npu.ops import ascendc
 
-    return ascendc.npu_causal_conv1d_bwd(
-        inputs["x"], inputs.get("y"), inputs["weight"], inputs["dy"],
-        activation=spec.get("activation", 0), input_layout=spec.get("input_layout", "BSND"),
-    )[:3]
+    return ascendc.causal_conv1d_bwd(inputs["x"], None, inputs["weight"], inputs["dy"], initial_state=None, dht=None, activation=0, input_layout="BSND")[:3]
 
 
 @register("executor_causal_conv1d_bwd")
@@ -193,20 +172,14 @@ class FunctionApi(BaseApi):
 
     def __init__(self, task_result: TaskResult):
         super(FunctionApi, self).__init__(task_result)
-        self.is_benchmark_task = bool(task_result.is_benchmark_task)
+        self.high_precision = self.device == "cpu"
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME, self.task_result.case_config)
+        spec = _case_spec(input_data, OP_NAME)
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":
-            outputs = run_cpu(spec, self.is_benchmark_task)
-        elif self.device == "gpu":
-            outputs = run_gpu(spec, self.is_benchmark_task)
+            outputs = run_cpu(spec, self.high_precision)
         else:
-            raise RuntimeError(
-                f"{OP_NAME} 仅支持 NPU、CPU 与 GPU设备，"
-                f"当前设备：{self.device!r}"
-            )
-
-        return _finite_tuple(outputs)
+            raise RuntimeError(f"{OP_NAME} 仅支持 NPU DUT 与 CPU 标杆节点，当前设备：{self.device!r}")
+        return _finite_tuple(outputs, golden=self.device == "cpu")

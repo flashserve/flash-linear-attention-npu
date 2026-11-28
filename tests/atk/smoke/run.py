@@ -44,25 +44,18 @@ def affected_pairs(pairs, roots, base, head, repo):
     # Disabling rename detection returns both the deleted and the added path.
     # NUL delimiters preserve file names containing tabs, spaces and newlines.
     data = subprocess.check_output(
-        ["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--", "fla/ops/ascendc/", "tests/atk/"],
+        ["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--", "fla/ops/ascendc/", "tests/atk/smoke/"],
         cwd=repo,
     )
     paths = {os.fsdecode(raw) for raw in data.split(b"\0") if raw and not raw.lower().endswith(b".md")}
     # Bundled references can import other operators' references. Exercise their
     # consumers too when changing the Python harness, reference code or catalog.
-    if any(
-        path.endswith(".py") and path.startswith(("tests/atk/smoke/", "tests/atk/common/"))
-        for path in paths
-    ):
+    if any(path.endswith(".py") and path.startswith("tests/atk/smoke/") for path in paths):
         return pairs
     changed_ops = {
         op for op, root in roots.items()
-        if any(path == root or path.startswith(root + "/")
-               or (path.startswith(f"tests/atk/{op}/") and path.endswith(".py"))
-               for path in paths)
+        if any(path == root or path.startswith(root + "/") for path in paths)
     }
-    if "tests/atk/chunk_fwd_h/fwd_h_cpu.py" in paths:
-        changed_ops.add("chunk_gated_delta_rule_bwd")
     return {(op, platform) for op, platform in pairs
             if op in changed_ops or f"tests/atk/smoke/cases/{op}/suite.json" in paths
             or f"tests/atk/smoke/cases/{op}/{platform}/cases.json" in paths}
@@ -100,12 +93,11 @@ def groups_for(entry):
             raise ValueError(f"Invalid or duplicate ATK group {name!r} in {path}")
         seen.add(name)
         reference = group["reference"]
-        reference_dir = ROOT.parent / entry["op"] if group.get("reference_source") == "repository" else path.parent.parent
         if (
             Path(reference).name != reference
             or not reference.startswith("executor_")
             or not reference.endswith(".py")
-            or not (reference_dir / reference).is_file()
+            or not (path.parent.parent / reference).is_file()
         ):
             raise ValueError(f"Invalid or missing reference {reference!r} for {name}")
         suite = {**group, **entry}

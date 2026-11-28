@@ -27,15 +27,26 @@ class AtkSmokeSelectionTests(unittest.TestCase):
 
     def test_cv_cases_match_operator_generator_on_both_platforms(self):
         for op in ("chunk_fwd_h", "chunk_kda_bwd_recompute"):
-            generated = json.loads((SMOKE.parent / op / f"atk_{op}.json").read_bytes())
-            self.assertEqual(len(generated), 200)
+            folder = SMOKE / "cases" / op
+            generator = runpy.run_path(str(folder / f"gen_{op}.py"))
+            platform_cases = {}
             for arch in ("A2", "A5"):
                 with self.subTest(op=op, platform=arch):
-                    groups = json.loads((SMOKE / "cases" / op / arch / "cases.json").read_bytes())
+                    groups = json.loads((folder / arch / "cases.json").read_bytes())
                     group, = (g for g in groups if g["group"] == f"{op}-{arch}-cv200")
-                    self.assertEqual(group["cases"], generated)
+                    cases = group["cases"]
+                    platform_cases[arch] = cases
+                    self.assertEqual([case["id"] for case in cases], list(range(200)))
                     self.assertEqual(group["output"], "native")
-                    self.assertTrue(all("cv_fused_double_benchmark" in c["standard"]["acc"] for c in generated))
+                    self.assertTrue(group["require_fp64_golden"])
+                    self.assertTrue(all("cv_fused_double_benchmark" in c["standard"]["acc"] for c in cases))
+                    if op == "chunk_fwd_h":
+                        self.assertEqual(cases, generator["_payloads"](generator["build_accuracy_specs"]()))
+                    else:
+                        for case in cases:
+                            spec = next(i["range_values"] for i in case["inputs"] if i["name"] == "case_spec")
+                            self.assertEqual(json.loads(spec), generator["_spec"](case["id"]))
+            self.assertEqual(platform_cases["A2"], platform_cases["A5"])
 
     def test_changed_paths_drive_matrix_and_platform_execution(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -91,9 +102,8 @@ class AtkSmokeSelectionTests(unittest.TestCase):
             self.assertEqual(select("affected", "--platform", "A2"), "")
             add_file("tests/atk/chunk_fwd_h/fwd_h_cpu.py")
             git("add", ".")
-            git("commit", "-qm", "shared forward-state reference")
-            self.assertEqual(select("affected", "--platform", "A5").splitlines(),
-                             [op for op in ("chunk_fwd_h", "chunk_gated_delta_rule_bwd") if op in ROOTS])
+            git("commit", "-qm", "edit legacy standalone ATK reference")
+            self.assertEqual(json.loads(select("matrix")), {"include": []})
             add_file("tests/atk/smoke/cases/causal_conv1d/suite.json")
             git("add", ".")
             git("commit", "-qm", "register one operator")

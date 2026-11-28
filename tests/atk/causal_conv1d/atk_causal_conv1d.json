@@ -2,31 +2,16 @@
   {
     "id": 0,
     "default_seed": 20260817,
-    "name": "causal_conv1d_0000_bf16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
+    "name": "causal_conv1d",
+    "aclnn_name": "",
     "version": "v2.1",
-    "expected_error_msg": null,
     "api": "pytorch",
     "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
+    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key"
     },
     "outputs": null,
     "inputs": [
@@ -42,12 +27,7 @@
           0,
           0
         ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "fp32_marker",
@@ -61,12 +41,7 @@
           0,
           0
         ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "case_spec",
@@ -74,13 +49,8 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":true,\"with_conv_states\":true}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "range_values": "{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":0,\"seed\":20260817,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
+        "backward": false
       },
       {
         "name": "dtype",
@@ -89,12 +59,7 @@
         "dtype": "string",
         "shape": null,
         "range_values": "bf16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "B",
@@ -103,12 +68,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "T",
@@ -117,12 +77,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "D",
@@ -131,12 +86,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "W",
@@ -145,12 +95,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "case_id",
@@ -159,12 +104,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 0,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "seed",
@@ -173,26 +113,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260817,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "route",
@@ -201,54 +122,32 @@
         "dtype": "string",
         "shape": null,
         "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
+      },
+      {
+        "name": "soc",
+        "type": "attr",
+        "required": true,
+        "dtype": "string",
+        "shape": null,
+        "range_values": "ascend910b",
+        "backward": false
       }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
+    ]
   },
   {
     "id": 1,
     "default_seed": 20260818,
-    "name": "causal_conv1d_0001_fp16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
+    "name": "causal_conv1d",
+    "aclnn_name": "",
     "version": "v2.1",
-    "expected_error_msg": null,
     "api": "pytorch",
     "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
+    "expected_error_msg": null,
     "backward": false,
     "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
+      "acc": "mixed_tolerance_bm",
+      "perf": "not_key"
     },
     "outputs": null,
     "inputs": [
@@ -264,12 +163,7 @@
           0,
           0
         ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "fp32_marker",
@@ -283,12 +177,7 @@
           0,
           0
         ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "case_spec",
@@ -296,13 +185,8 @@
         "required": true,
         "dtype": "non_param",
         "shape": null,
-        "range_values": "{\"name\":\"fp16_small\",\"dtype\":\"fp16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":true,\"with_conv_states\":true}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "range_values": "{\"name\":\"fp16_small\",\"dtype\":\"fp16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":1,\"seed\":20260818,\"route\":\"ascendc\",\"soc\":\"ascend910b\"}",
+        "backward": false
       },
       {
         "name": "dtype",
@@ -311,12 +195,7 @@
         "dtype": "string",
         "shape": null,
         "range_values": "fp16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "B",
@@ -325,12 +204,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "T",
@@ -339,12 +213,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "D",
@@ -353,12 +222,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "W",
@@ -367,12 +231,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "case_id",
@@ -381,12 +240,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "seed",
@@ -395,26 +249,7 @@
         "dtype": "int",
         "shape": null,
         "range_values": 20260818,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "route",
@@ -423,206 +258,7 @@
         "dtype": "string",
         "shape": null,
         "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
-  },
-  {
-    "id": 2,
-    "default_seed": 20260819,
-    "name": "causal_conv1d_0002_bf16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
-    "version": "v2.1",
-    "expected_error_msg": null,
-    "api": "pytorch",
-    "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
-    "backward": false,
-    "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "bf16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":2,\"seed\":20260819,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":false,\"with_conv_states\":true}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "bf16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "D",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "W",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_id",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 2,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20260819,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       },
       {
         "name": "soc",
@@ -631,1148 +267,8 @@
         "dtype": "string",
         "shape": null,
         "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
+        "backward": false
       }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
-  },
-  {
-    "id": 3,
-    "default_seed": 20260820,
-    "name": "causal_conv1d_0003_fp16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
-    "version": "v2.1",
-    "expected_error_msg": null,
-    "api": "pytorch",
-    "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
-    "backward": false,
-    "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"name\":\"fp16_small\",\"dtype\":\"fp16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":3,\"seed\":20260820,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":false,\"with_conv_states\":true}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "fp16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "D",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "W",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_id",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 3,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20260820,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
-  },
-  {
-    "id": 4,
-    "default_seed": 20260821,
-    "name": "causal_conv1d_0004_bf16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
-    "version": "v2.1",
-    "expected_error_msg": null,
-    "api": "pytorch",
-    "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
-    "backward": false,
-    "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "bf16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":4,\"seed\":20260821,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":true,\"with_conv_states\":false}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "bf16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "D",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "W",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_id",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20260821,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
-  },
-  {
-    "id": 5,
-    "default_seed": 20260822,
-    "name": "causal_conv1d_0005_fp16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
-    "version": "v2.1",
-    "expected_error_msg": null,
-    "api": "pytorch",
-    "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
-    "backward": false,
-    "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"name\":\"fp16_small\",\"dtype\":\"fp16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":5,\"seed\":20260822,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":true,\"with_conv_states\":false}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "fp16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "D",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "W",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_id",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 5,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20260822,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
-  },
-  {
-    "id": 6,
-    "default_seed": 20260823,
-    "name": "causal_conv1d_0006_bf16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
-    "version": "v2.1",
-    "expected_error_msg": null,
-    "api": "pytorch",
-    "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
-    "backward": false,
-    "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "bf16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"name\":\"bf16_small\",\"dtype\":\"bf16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":6,\"seed\":20260823,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":false,\"with_conv_states\":false}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "bf16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "D",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "W",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_id",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 6,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20260823,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
-  },
-  {
-    "id": 7,
-    "default_seed": 20260824,
-    "name": "causal_conv1d_0007_fp16_small",
-    "aclnn_name": null,
-    "triton_name": null,
-    "kernel_name": null,
-    "version": "v2.1",
-    "expected_error_msg": null,
-    "api": "pytorch",
-    "api_type": "executor_causal_conv1d",
-    "aclnn_api_type": "aclnn_function",
-    "triton_api_type": "triton_function",
-    "fusion_api_type": "fusion_function",
-    "fusion_mode": null,
-    "dist_api_type": "dist_function",
-    "kernel_api_type": "kernel_function",
-    "backward": false,
-    "standard": {
-      "acc": {
-        "cv_fused_double_benchmark": {
-          "max_re_ratio": 10,
-          "avg_re_ratio": 3,
-          "root_mean_squared_ratio": 3
-        }
-      },
-      "perf": "not_key",
-      "mem": 1.1
-    },
-    "outputs": null,
-    "inputs": [
-      {
-        "name": "low_precision_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp16",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "fp32_marker",
-        "type": "tensor",
-        "required": true,
-        "dtype": "fp32",
-        "shape": [
-          1
-        ],
-        "range_values": [
-          0,
-          0
-        ],
-        "backward": true,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_spec",
-        "type": "attr",
-        "required": true,
-        "dtype": "non_param",
-        "shape": null,
-        "range_values": "{\"name\":\"fp16_small\",\"dtype\":\"fp16\",\"B\":1,\"T\":8,\"D\":16,\"W\":4,\"op\":\"causal_conv1d\",\"case_id\":7,\"seed\":20260824,\"route\":\"ascendc\",\"soc\":\"ascend910b\",\"with_bias\":false,\"with_conv_states\":false}",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "dtype",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "fp16",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "B",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 1,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "T",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 8,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "D",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 16,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "W",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 4,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "case_id",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 7,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "seed",
-        "type": "attr",
-        "required": true,
-        "dtype": "int",
-        "shape": null,
-        "range_values": 20260824,
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "soc",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascend910b",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      },
-      {
-        "name": "route",
-        "type": "attr",
-        "required": true,
-        "dtype": "string",
-        "shape": null,
-        "range_values": "ascendc",
-        "backward": false,
-        "align_32B": null,
-        "outlier_values": null,
-        "format": null,
-        "is_transpose": false,
-        "transpose_id": null
-      }
-    ],
-    "acl_json": "",
-    "method_inputs": null,
-    "tensor_input": null,
-    "compute_times": null,
-    "save_name": null,
-    "uuid": null,
-    "downloaded": false,
-    "is_boundary": false,
-    "xrun_cs_name": null,
-    "xrun_data": null,
-    "strategy": null
+    ]
   }
 ]

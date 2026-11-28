@@ -12,8 +12,8 @@ import torch.nn.functional as F
 import torch_npu
 from fla_npu.ops.ascendc import chunk_gated_delta_rule_fwd, recurrent_gated_delta_rule
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests/atk/chunk_gated_delta_rule_fwd"))
-from executor_chunk_gated_delta_rule_fwd import GdnCase, run_cpu
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests/atk/smoke/cases/chunk_gated_delta_rule_fwd"))
+from gdn_reference import GdnCase, run_golden_reference
 from recurrent_reference import _prepare_inputs, _run_fp64_composed
 
 
@@ -85,7 +85,7 @@ def run_prefill(case, dim, chunk, device, platform, result):
     else:
         values = forward()
     shape = GdnCase(1, hk, hv, t, dim, dim, chunk, scale, "dense")
-    output = run_cpu((q, k, v, g, beta), shape, q.dtype)[0]
+    output = run_golden_reference(q, k, v, g, beta, shape, q.dtype)[0]
     result["output"] = compare(values[0].cpu(), output.transpose(1, 2).bfloat16())
     return result["output"]["passed"] and (platform != "a5" or result["route"]["passed"])
 

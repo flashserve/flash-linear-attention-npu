@@ -49,11 +49,9 @@ def _to_python(value: Any) -> Any:
     return value
 
 
-def _case_spec(input_data, op_name: str, case_config=None) -> dict[str, Any]:
+def _case_spec(input_data, op_name: str) -> dict[str, Any]:
     """读取 case_spec；若用例未显式提供，则从 attr 输入兜底组装。"""
     raw = _to_python(input_data.kwargs.get("case_spec"))
-    if not raw and case_config is not None:
-        raw = case_config.get_input_data_config(name="case_spec").range_values
     if raw:
         if isinstance(raw, str):
             spec = json.loads(raw)

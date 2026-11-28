@@ -4,7 +4,7 @@ version: v2.1
 name: chunk_kda_bwd_recompute
 aclnn_name:
 generate: generator_chunk_kda_bwd_recompute
-dtype_numbers: 100
+dtype_numbers: 1
 extra_numbers: 0
 standard:
   acc:

@@ -33,13 +33,13 @@ A2、A5 的 CI 镜像统一使用 ATK `26.11.11`。镜像构建时按 CPython AB
 
 每个算子在每个已登记的平台只有一份用例文件，路径为 `cases/<算子>/<A2或A5>/cases.json`。其中每个组的 `cases` 保存 ATK 用例，`count` 是组内条数，`reference` 指定该组使用的 CPU 标杆。不同组可以复用同一个用例编号。例如 [chunk_fwd_o 的 A5 用例](cases/chunk_fwd_o/A5/cases.json)中，普通组和 `mode=opt` 组各有一条 90 号，CI 按各自配置执行并分别记录结果。
 
-A2、A5 共用算子标杆。标有 `reference_source=repository` 的组使用 `tests/atk/<算子>/executor_*.py`，其余组使用 `cases/<算子>/executor_*.py`。公共模块位于 `cases/common/`，算子专用的参考函数和输入生成器随算子存放。运行时直接使用仓内文件。
+A2、A5 共用算子标杆。各组从 `cases/<算子>/` 加载自己的 `executor_*.py`。标有 `require_fp64_golden` 的组还校验高精度标杆的浮点输出为 FP64。公共模块位于 `cases/common/`，算子专用的参考函数和输入生成器随算子存放。运行时直接使用仓内文件。
 
 标杆取自 [work_tool 的固定提交 72d3720](https://gitcode.com/chen-linxin4/work_tool/tree/72d372032214b8866cd6073431b0d478e7744ba5/FLA_ATK)。以下目录映射便于与上游核对。
 
 | 冒烟算子 | 上游 FLA_ATK 路径 |
 |---|---|
-| `chunk_fwd_h` | `chunk_gated_delta_rule_bwd/scripts/fwd_h_cpu.py`，数学实现位于 [fwd_h_cpu.py](../chunk_fwd_h/fwd_h_cpu.py)，由前向和 GDN 反向标杆共用 |
+| `chunk_fwd_h` | `chunk_gated_delta_rule_bwd/scripts/fwd_h_cpu.py`，数学实现位于 [fwd_h_cpu.py](cases/chunk_fwd_h/fwd_h_cpu.py)，由前向和 GDN 反向标杆共用 |
 | `chunk_kda_fwd`、`chunk_kda_fwd_fused` | `chunk_kda_fwd/executor_chunk_kda_fwd_v2.py`、`chunk_kda_fwd/executor_chunk_kda_fwd.py` |
 | `chunk_kda_fwd_prepare`、`chunk_kda_fwd_finalize` | `chunk_kda_fwd_prepare_a2/`、`chunk_fwd_finalize/` |
 | `chunk_kda_bwd_prepare` | `chunk_kda_bwd_prepare_a3/` |
@@ -83,8 +83,8 @@ A5 的 recompute 用例 ID 0–199 均在 `w`、`qg`、`kg` 超差。三路均�
 在仓库根目录重新生成这两组精度输入：
 
 ```bash
-python3 tests/atk/chunk_fwd_h/gen_chunk_fwd_h.py --output-dir /tmp/fwd-h-cases --summary
-cd tests/atk/chunk_kda_bwd_recompute
+python3 tests/atk/smoke/cases/chunk_fwd_h/gen_chunk_fwd_h.py --output-dir /tmp/fwd-h-cases --summary
+cd tests/atk/smoke/cases/chunk_kda_bwd_recompute
 atk case -f chunk_kda_bwd_recompute.yaml -p gen_chunk_kda_bwd_recompute.py -dt 100 -en 0 -s 20260813
 ```
 

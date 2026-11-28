@@ -10,8 +10,7 @@ from atk.tasks.api_execute.base_api import BaseApi
 suite = json.loads(os.environ["FLA_ATK_SUITE"])
 op = suite["op"]
 reference_root = Path(__file__).resolve().parent / "cases"
-operator_dir = (reference_root if suite.get("reference_source") != "repository"
-                else reference_root.parents[1]) / op
+operator_dir = reference_root / op
 helpers = Path(__file__).resolve().parent / "helpers"
 sys.path.insert(0, str(helpers))
 
@@ -84,7 +83,7 @@ class Smoke(executor_base):
         result = tensors(out)
         if not result or any(not torch.isfinite(t).all().item() for t in result):
             raise RuntimeError("nonfinite or empty output")
-        if high and suite.get("reference_source") == "repository" and suite["output"] == "native":
+        if high and suite.get("require_fp64_golden", False):
             if any(t.is_floating_point() and t.dtype != torch.float64 for t in result):
                 raise RuntimeError(f"{op}: the FP64 benchmark returned a reduced-precision tensor")
         role = "high" if high else "low" if cpu else "dut"

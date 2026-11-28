@@ -10,7 +10,7 @@
 - `BSND/TND` 的逻辑特征维 `D` 必须为 `16` 的倍数；`BNSD/NTD` 的 `Dh` 必须为 `16` 的倍数。
 - `x/y/weight/dy/initial_state/dht` 数据类型需要一致，支持 `FLOAT/FLOAT16/BFLOAT16`；`activation=1/2` 时必须提供 `y`。
 - `TND/NTD` 必须提供 `queryStartLoc`，其首项为 `0`、末项为 `totalTokens`，且单调不减；固定 batch 模式要求 `T > 0`。
-- 固定长度用例覆盖 `BSND`、`BSH` 和 `activation=0/1/2`。生成器把选择写入 `case_spec`。需要 `y` 时，算子标杆从量化后的 `x` 和 `weight` 构造预激活值，三路使用相同输入。
+- 当前 ATK 用例使用 `inputLayout=BSND`，并通过 `case_spec` 固定具体取值；扩展用例时应继续满足这些限制。
 
 ## 标杆来源
 

@@ -23,12 +23,11 @@
 `torch_custom/fla_npu/test/test_fwd_h.py`；
 `fla/ops/ascendc/gdn/chunk_gdn_fwd/chunk_fwd_h/README.md`
 
-[`executor_chunk_fwd_h.py`](executor_chunk_fwd_h.py) 从 JSON 构造输入、调用 NPU 并选择 CPU 计算精度。CPU 递推实现在 [`fwd_h_cpu.py`](fwd_h_cpu.py)。标杆按 sequence、value head
+CPU 标杆、输入构造、`run_cpu`、`run_npu` 和 `FunctionApi` 均在本目录的
+`executor_chunk_fwd_h.py` 中实现；公共文件只提供基础工具函数。标杆按 sequence、value head
 和 chunk 展开递推，并复现 kernel 的 BF16 写回、FP32 矩阵乘累加、state dtype 转换和
 `use_exp2` 计算语义。CPU 与 NPU 节点使用相同 seed 和量化输入，ATK 使用
-`cv_fused_double_benchmark` 比较全部可见输出。同一份输入分别运行 NPU、CPU 同精度和 CPU FP64 标杆；最大相对误差比、平均相对误差比和均方根误差比的阈值分别为 5、1.5、1.5。
-
-单独运行 ATK 时，A2 设置 `GDN_ATK_BENCHMARK_ARCH=arch22`，A5 设置 `GDN_ATK_BENCHMARK_ARCH=arch35`。CI 根据平台自动设置。
+`mixed_tolerance_bm` 比较全部可见输出。
 
 ## SOC 支持
 

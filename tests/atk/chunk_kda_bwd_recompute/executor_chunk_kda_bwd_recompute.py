@@ -69,52 +69,7 @@ def _expand_hk_to_hv(tensor: torch.Tensor, hv: int) -> torch.Tensor:
     return tensor.repeat_interleave(group, dim=1)
 
 
-def _forward_checkpoint(s):
-    """Reconstruct the triangular forward checkpoint from the quantized inputs."""
-    for name in ("q", "k"):
-        s[name] = torch.nn.functional.normalize(s[name].float(), dim=-1).to(
-            torch.bfloat16
-        )
-    raw = s["g"].double()
-    if s["use_gate"]:
-        if "dt_bias" in s:
-            raw = raw + s["dt_bias"].double()[None, :, None]
-        raw = s["lower_bound"] * torch.sigmoid(
-            raw * torch.exp(s["A_log"].double())[None, :, None, None]
-        )
-    a = torch.zeros_like(s["A"])
-    keys = _expand_hk_to_hv(s["k"].double(), raw.shape[1])
-    for start, end in _input_chunks(s):
-        gate = raw[:, :, start:end].cumsum(2)
-        kk = keys[:, :, start:end]
-        n = end - start
-        eye = torch.eye(n, dtype=torch.float64)
-        diff = gate.unsqueeze(3) - gate.unsqueeze(2)
-        lower = eye.new_ones(n, n).tril(-1).bool()
-        exp = torch.exp(diff.masked_fill(~lower[None, None, :, :, None], 0))
-        gram = (kk.unsqueeze(3) * kk.unsqueeze(2) * exp).sum(-1)
-        lhs = (gram * s["beta"][:, :, start:end, None].double()).masked_fill(~lower, 0)
-        inverse = torch.linalg.solve_triangular(
-            lhs + eye, eye.expand_as(lhs), upper=False, unitriangular=True
-        )
-        a[:, :, start:end, :n] = inverse.to(a.dtype)
-    s["A"] = a
-    return s
-
-
 def build_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool = False) -> dict[str, Any]:
-    if spec.get("checkpoint") != "forward_triangular":
-        return _random_inputs(spec, device, high_precision)
-
-    raw = _forward_checkpoint(_random_inputs(spec, torch.device("cpu"), False))
-    return {
-        key: value.to(device=device, dtype=torch.float64 if high_precision else value.dtype)
-        if torch.is_tensor(value) else value
-        for key, value in raw.items()
-    }
-
-
-def _random_inputs(spec: dict[str, Any], device: torch.device, high_precision: bool):
     dtype_name = str(spec.get("dtype", "bf16")).lower()
     if dtype_name == "fp16":
         dtype_name = "bf16"
@@ -255,11 +210,10 @@ def run_npu(spec: dict[str, Any], input_data: InputDataset):
         inputs["beta"],
         inputs["A"],
         inputs["chunk_size"],
-        A_log=inputs["A_log"] if inputs["use_gate"] else None,
+        A_log=inputs["A_log"],
         dt_bias=inputs.get("dt_bias"),
         cu_seqlens=inputs.get("cu_seqlens"),
         chunk_indices=inputs.get("chunk_indices"),
-        input_layout=spec.get("input_layout", "BNSD"),
         use_gate_in_kernel=bool(inputs["use_gate"]),
         use_exp2=bool(inputs["use_exp2"]),
         lower_bound=float(inputs["lower_bound"]),
@@ -276,7 +230,7 @@ class FunctionApi(BaseApi):
         self.high_precision = self.device == "cpu" and self.is_benchmark_task
 
     def __call__(self, input_data: InputDataset, with_output: bool = False):
-        spec = _case_spec(input_data, OP_NAME, self.task_result.case_config)
+        spec = _case_spec(input_data, OP_NAME)
         if self.device in {"npu", "pyaclnn"}:
             outputs = run_npu(spec, input_data)
         elif self.device == "cpu":
