@@ -613,6 +613,135 @@ def npu_recurrent_gated_delta_rule(
     return result
 
 
+def npu_mega_recurrent_kda_metadata(cu_seqlens, tokens):
+    """Create the reusable TH schedule for one batch on the current NPU stream."""
+    return _op("npu_mega_recurrent_kda_metadata")(cu_seqlens, tokens, _current_stream_ptr())
+
+
+def npu_mega_recurrent_kda(
+    hidden_states,
+    qkv_projection_weight,
+    decay_projection_a_weight,
+    decay_projection_b_weight,
+    beta_projection_weight,
+    output_gate_projection_weight,
+    output_norm_weight,
+    output_projection_weight,
+    conv1d_weight,
+    conv_state,
+    checkpoint_state,
+    replay_u,
+    replay_k,
+    replay_decay,
+    state_indices,
+    conv_num_accepted_tokens,
+    a_log,
+    dt_bias,
+    *,
+    cu_seqlens=None,
+    metadata=None,
+    use_device_metadata=False,
+    qkv_projection_weight_scale=None,
+    qkv_scale_alg=0,
+    scale,
+    lower_bound,
+    rms_norm_eps,
+):
+    """Return projected output, convolution state and the three replay tensors."""
+    import torch
+
+    states = (conv_state, replay_u, replay_k, replay_decay)
+    if any(t.requires_grad for t in states):
+        raise RuntimeError("npu_mega_recurrent_kda mutates state tensors in place. Mutable state tensors "
+                           "must not require gradients; use a functional state API for training.")
+    transfers = []
+
+    def host_metadata(tensor, allowed):
+        if tensor.ndim != 1 or tensor.dtype not in allowed or not tensor.is_contiguous():
+            raise ValueError("Expected a contiguous one-dimensional integer metadata tensor")
+        if tensor.device.type == "cpu":
+            return tensor
+        if tensor.device != hidden_states.device:
+            raise ValueError("Device metadata must be on the hidden_states device")
+        host = torch.empty_like(tensor, device="cpu", pin_memory=True)
+        host.copy_(tensor, non_blocking=True)
+        transfers.append(host)
+        return host
+
+    mx = qkv_projection_weight.dtype == torch.float8_e4m3fn
+    int8 = qkv_projection_weight.dtype == torch.int8
+    quantized = mx or int8
+    if quantized != (qkv_projection_weight_scale is not None):
+        raise ValueError("Quantized QKV weights require matching weight scales")
+    if qkv_scale_alg not in (0, 1) or (not mx and qkv_scale_alg != 0):
+        raise ValueError("qkv_scale_alg applies only to MXFP8 QKV")
+    if quantized:
+        import torch_npu
+
+        if any(t.device != hidden_states.device for t in (qkv_projection_weight, qkv_projection_weight_scale)):
+            raise ValueError("QKV weights and scales must be on the hidden_states device")
+        fmt = torch_npu.get_npu_format(qkv_projection_weight)
+        explicit_nz = int8 and qkv_projection_weight.ndim == 4 and fmt in (0, 2)
+        logical_nz = fmt == 29 and (not int8 or qkv_projection_weight.ndim == 2)
+        if not (logical_nz or explicit_nz):
+            raise ValueError("Quantized QKV weight must have FRACTAL_NZ storage")
+        if torch_npu.get_npu_format(qkv_projection_weight_scale) not in (0, 2):
+            raise ValueError("QKV weight scales must have plain contiguous storage")
+    if quantized or metadata is not None or use_device_metadata:
+        packed = hidden_states.ndim == 2
+        if (cu_seqlens is not None) != packed or (not packed and metadata is not None):
+            raise ValueError("TH requires cu_seqlens, BSH uses the sequence dimension")
+        for tensor in (state_indices, conv_num_accepted_tokens, cu_seqlens, metadata):
+            if tensor is not None and tensor.device != hidden_states.device:
+                raise ValueError("All device metadata must be on the hidden_states device")
+        if packed and metadata is None:
+            if not quantized:
+                raise ValueError("TH requires a device metadata plan")
+            metadata = npu_mega_recurrent_kda_metadata(cu_seqlens, hidden_states.shape[0])
+        symbol = "npu_mega_recurrent_kda_v2"
+        sequence_args = (cu_seqlens, metadata)
+        if mx:
+            symbol = "npu_mega_recurrent_kda_mx"
+            sequence_args += (qkv_projection_weight_scale, qkv_scale_alg)
+        elif int8:
+            symbol = "npu_mega_recurrent_kda_int8"
+            sequence_args += (qkv_projection_weight_scale,)
+    else:
+        state_indices = host_metadata(state_indices, (torch.int32,))
+        conv_num_accepted_tokens = host_metadata(conv_num_accepted_tokens, (torch.int32,))
+        if cu_seqlens is not None:
+            cu_seqlens = host_metadata(cu_seqlens, (torch.int32, torch.int64))
+        if transfers:
+            torch.npu.current_stream(hidden_states.device).synchronize()
+        symbol = "npu_mega_recurrent_kda"
+        sequence_args = (cu_seqlens,)
+    result = _op(symbol)(
+        hidden_states,
+        qkv_projection_weight,
+        decay_projection_a_weight,
+        decay_projection_b_weight,
+        beta_projection_weight,
+        output_gate_projection_weight,
+        output_norm_weight,
+        output_projection_weight,
+        conv1d_weight,
+        conv_state,
+        checkpoint_state,
+        replay_u,
+        replay_k,
+        replay_decay,
+        state_indices,
+        conv_num_accepted_tokens,
+        a_log,
+        dt_bias,
+        *sequence_args,
+        scale, lower_bound, rms_norm_eps, _current_stream_ptr(),
+    )
+    bump = _INC_VERSION or _increment_version()
+    bump(states)
+    return result
+
+
 def npu_recurrent_kda(
     q,
     k,
@@ -2324,7 +2453,7 @@ def npu_merge_fwd_bwd_kernel(
 # ---------------------------------------------------------------------------
 # Which wrappers apply the in-place contract themselves
 # ---------------------------------------------------------------------------
-# These four are the ones a decode step calls with a state argument.  Each
+# These operators update their state arguments in place.  Each
 # refuses a grad-requiring state and bumps the version counter inside its own
 # frame, which is what __init__._get_direct_op reads this marker for: adding its
 # generic mutation wrapper on top would bump the counter twice for one call, so
@@ -2333,6 +2462,7 @@ for _contract_op in (
         "npu_causal_conv1d_fn",
         "npu_causal_conv1d_update",
         "npu_recurrent_gated_delta_rule",
+        "npu_mega_recurrent_kda",
         "npu_recurrent_kda"):
     globals()[_contract_op]._fla_npu_inplace_contract = True
 del _contract_op
