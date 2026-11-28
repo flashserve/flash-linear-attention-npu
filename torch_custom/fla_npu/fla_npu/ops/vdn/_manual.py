@@ -23,7 +23,7 @@ _HAS_KERNEL = _available()
 
 
 @lru_cache(maxsize=16)
-def _tiling(device, frames, heads, cores, stream_key=None):
+def _tiling(device, frames, heads, cores, stream_key=None, frame_size=(27, 15)):
     tables = []
     batch = frames * heads
     channels = heads * 128
@@ -33,7 +33,9 @@ def _tiling(device, frames, heads, cores, stream_key=None):
         raw = bytearray((_PACKAGE / "manual_tiling" / f"{name}-85-7.bin").read_bytes())
         if name == "c":
             # Batch, input/output channels, packed groups, batch grid and logical groups.
-            fields = ((0, frames), (4, channels), (16, channels), (28, channels // 16),
+            height, width = frame_size
+            fields = ((0, frames), (4, channels), (8, height), (12, width),
+                      (16, channels), (28, channels // 16), (40, height), (44, width),
                       (92, cores // 4), (156, channels))
         else:
             # Flat batch, A/B/C batch strides, matrices per core and L1 batch tile.
@@ -72,8 +74,9 @@ def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_si
         return None
 
     weights = short_conv or {}
+    grid = tuple(frame_size or ()) if weights else (27, 15)
     if weights:
-        if set(weights) != {"k", "v"} or tuple(frame_size or ()) != (15, 27):
+        if set(weights) != {"k", "v"} or grid not in ((27, 15), (15, 27)):
             return None
         for pair in weights.values():
             if (len(pair) != 2 or not _matches(pair[0], device, bf, (heads*dim, 1, 5, 5))
@@ -98,10 +101,10 @@ def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_si
     padded_tail = 1 << (tail - 1).bit_length()
     if padded_tail * heads < cores:
         return None
-    return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile,cores)
+    return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile,cores,grid)
 
 
-def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores):
+def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores, frame_size):
     f, h, s, d = q.shape
     row = torch.arange(f, device="cpu")
     lo, hi = bounds.unbind(1)
@@ -115,7 +118,7 @@ def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores):
         return fp(f,h,d,d)
     # Allocate and reuse each cached table on the same stream, including across LRU evictions.
     stream = _stable._current_stream_ptr()
-    tables = _tiling(q.device,f,h,cores,stream)
+    tables = _tiling(q.device, f, h, cores, stream, frame_size)
     inputs = [q,k,v,beta,alpha,bounds.contiguous().to(q.device),text_state if text_state is not None else q,
               *weights.get("k",(q,q)),*weights.get("v",(q,q)),*tables]
     if weights:

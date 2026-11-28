@@ -75,11 +75,11 @@ Ascend 910B2C、CANN 8.5.0、PyTorch/torch_npu 2.9.0。标准 A2 OPP 随 wheel �
 ## 包含 K/V 特征卷积的前向
 
 ```bash
-python tests/atk/vdn_forward/scripts/bench_forward.py --device 0 --frames 87 --heads 7 --short-conv 15 27 --rule newton_schulz
-python tests/atk/vdn_forward/scripts/bench_forward.py --device 0 --frames 87 --heads 7 --short-conv 15 27 --rule vdn_solve
+python tests/atk/vdn_forward/scripts/bench_forward.py --device 0 --frames 87 --heads 7 --short-conv 27 15 --rule newton_schulz
+python tests/atk/vdn_forward/scripts/bench_forward.py --device 0 --frames 87 --heads 7 --short-conv 27 15 --rule vdn_solve
 ```
 
-以上命令在同一次公开前向调用内完成 K/V 空间卷积、时间卷积、特征处理和注意力读出。Q 只做特征处理。使用独立固定种子的 K/V 卷积权重、BF16 输入和预计算文本状态。空间尺寸在本次 405-token 测试中取 15×27。省略 `--short-conv` 可复现前面按已完成卷积输入测量的路径。
+以上命令在同一次公开前向调用内完成 K/V 空间卷积、时间卷积、特征处理和注意力读出。Q 只做特征处理。使用独立固定种子的 K/V 卷积权重、BF16 输入和预计算文本状态。示例按原生 `(高, 宽) = (27, 15)` 运行。下述历史数据使用 `(15, 27)`，复现时请传 `--short-conv 15 27`。省略 `--short-conv` 可复现前面按已完成卷积输入测量的路径。
 
 在 910B2C 上先用独立 CPU PyTorch 标杆检查整个 clip 的 K、V 特征与两个求解器的输出，再预热 3 次并采集 15 次同步前向。下表为优化前后的端到端 P50，时间包含权重布局转换；增量峰值为相对调用前存活张量的 NPU allocated 峰值，包含返回值。
 

@@ -54,26 +54,26 @@ class TestVdnPipeline(unittest.TestCase):
                 torch.npu.matmul.allow_hf32 = False
                 torch.npu.conv.allow_hf32 = False
                 torch.use_deterministic_algorithms(True)
-                for f, h, tokens, conv, active in [
-                    (85, 7, 405, True, True), (87, 7, 405, False, True),
-                    (87, 14, 405, True, True), (86, 7, 405, False, True),
-                    (86, 8, 405, True, True), (65, 9, 405, True, False), (97, 7, 405, False, False),
-                    (85, 7, 404, False, False), (3, 2, 17, False, False),
+                for f, h, tokens, grid, active in [
+                    (85, 7, 405, (27, 15), True), (85, 7, 405, (15, 27), True), (87, 7, 405, None, True),
+                    (87, 14, 405, (27, 15), True), (86, 7, 405, None, True),
+                    (86, 8, 405, (15, 27), True), (65, 9, 405, (27, 15), False), (97, 7, 405, None, False),
+                    (85, 7, 404, None, False), (3, 2, 17, None, False),
                 ]:
-                    with self.subTest(frames=f, heads=h, tokens=tokens, conv=conv):
+                    with self.subTest(frames=f, heads=h, tokens=tokens, grid=grid):
                         case = make_case(f, h, tokens, torch.bfloat16, text=False, seed=1503)
-                        weights = short_conv_weights(h, torch.bfloat16) if conv else {}
+                        weights = short_conv_weights(h, torch.bfloat16) if grid else {}
                         args = on_device(case, device)
                         options = dict(delta_rule="newton_schulz", fuse_silu=True, fuse_qk_l2norm=True,
                                        short_conv={k: tuple(t.to(device) for t in w) for k, w in weights.items()},
-                                       frame_size=(15, 27) if conv else None)
+                                       frame_size=grid)
                         with patch.object(entry, "_try_manual", return_value=None):
                             baseline = entry.vdn_forward(*args, **options)
                         with patch.object(_manual, "_launch", wraps=_manual._launch) as launch:
                             output = entry.vdn_forward(*args, **options)
                         self.assertEqual(launch.call_count, int(active))
                         self.assertTrue(torch.equal(output.view(torch.int16), baseline.view(torch.int16)))
-                        oracle = expected(apply_short_conv(case, (15, 27), weights) if conv else case)
+                        oracle = expected(apply_short_conv(case, grid, weights) if grid else case)
                         check(output, oracle)
             finally:
                 torch.use_deterministic_algorithms(previous, warn_only=warn_only)
