@@ -198,6 +198,8 @@ done
 
 后续用管理器追加增量时，各侧在自己的包目录下维护 `opp/wheel_layers/` 和 `opp/.overlay.lock`。增量 wheel 可更新本侧适配层与 OPP，增量 `.run` 更新本侧 OPP 并沿用已选适配层。
 
+**正式 launcher 的选择约束。** 双包模式按正式入口选定适配层，并从该适配层目录加载 `libfla_npu_stable.so`。即使正式侧仅使用 base，也会忽略 `FLA_NPU_STABLE_LIB` 指定的外部路径。需要替换 launcher 时，将修改打入正式增量 wheel，由正式管理器安装并启用。新进程中只有该 wheel 声明覆盖的入口切换到对应的 launcher。操作命令见[双包模式下替换正式 launcher](../../README.md#双包模式下替换正式-launcher)。
+
 ### 3.3 增量安装：通用机制，开发者选择 base
 
 增量安装按主干的 [OPP 增量设计](../../../docs/OPP叠加层增量设计.md) 和 [使用指南](../../../docs/Wheel增量安装指南.md) 执行。

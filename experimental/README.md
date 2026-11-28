@@ -94,6 +94,19 @@ PY
 
 首次 pip 安装提供实验适配层和 OPP。后续实验增量使用下文的实验管理入口，正式增量继续由正式管理器管理。仅有正式 wheel 时，实验 `.run` 不能提供新算子的 Python 入口。
 
+#### 双包模式下替换正式 launcher
+
+正式和实验 wheel 并排启用时，正式算子从选中的正式适配层加载 `libfla_npu_stable.so`。启动前手动设置 `FLA_NPU_STABLE_LIB` 会被忽略，运行时不会提示。若正式侧没有启用增量，测试实际使用正式 base 自带的 launcher。
+
+要验证或部署修改过的正式 launcher，请把修改编入与正式 base 匹配的正式增量 wheel。只更新部分算子时，构建时用 `FLA_NPU_OPS` 指定 OPP 算子，用 `FLA_NPU_OVERLAY_OPS` 声明要切换的正式适配层入口。参见[增量 wheel 构建示例](../docs/Wheel增量安装指南.md#4-如何构建这两类包)。
+
+```bash
+python -m fla_npu_opp_manage --overlay --source /absolute/path/to/formal-update.whl
+python -m fla_npu_opp_manage --status
+```
+
+安装并通过兼容性检查后，确认正式增量已启用，再重启业务进程。若此前用 `FLA_NPU_OVERLAY_VENDOR=''` 临时停用了正式增量，可先执行 `unset FLA_NPU_OVERLAY_VENDOR` 恢复默认选择。该 wheel 声明的入口使用增量目录内的 launcher，其他入口继续使用各自的适配层。正式 base 的库文件和实验侧的增量状态均保留。正式 `.run` 增量只更新 OPP，沿用已选中的 launcher。
+
 ### 单独使用实验环境
 
 在只安装实验 wheel 或显式关闭启动钩子的环境中，先初始化 CANN，再启用 wheel 内的实验 vendor：
