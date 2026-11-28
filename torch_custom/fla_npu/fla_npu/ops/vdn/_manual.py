@@ -54,7 +54,7 @@ def _matches(tensor, device, dtype, shape):
 
 
 def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_silu,
-                fuse_qk_l2norm, short_conv, frame_size, frame_tile, pad_tail, value_first):
+                fuse_qk_l2norm, short_conv, frame_size, frame_tile, pad_tail, value_first, frontend=None):
     frames, heads, tokens, dim = q.shape
     if (not _HAS_KERNEL or not (64 <= frames <= 96 and 4 <= heads <= 16) or (tokens, dim) != (405, 128)
             or delta_rule != "newton_schulz" or not (fuse_silu and fuse_qk_l2norm and pad_tail)
@@ -101,10 +101,10 @@ def try_forward(q, k, v, beta, alpha, bounds, text_state, *, delta_rule, fuse_si
     padded_tail = 1 << (tail - 1).bit_length()
     if padded_tail * heads < cores:
         return None
-    return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile,cores,grid)
+    return _launch(q,k,v,beta,alpha,bounds,text_state,weights,frame_tile,cores,grid,frontend)
 
 
-def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores, frame_size):
+def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores, frame_size, frontend=None):
     f, h, s, d = q.shape
     row = torch.arange(f, device="cpu")
     lo, hi = bounds.unbind(1)
@@ -135,6 +135,7 @@ def _launch(q, k, v, beta, alpha, bounds, text_state, weights, tile, cores, fram
     ])
     groups = 4 if h <= 8 else 2
     panel = 4 * ((f + 2 * groups) // (4 * groups))
-    _stable._op("npu_vdn_pipeline")(*inputs, *workspace, f, h, panel, ITERATIONS - 1,
-                                   bool(weights), text_state is not None, stream, cores)
+    op = "npu_vdn_pipeline_from_features" if frontend is not None else "npu_vdn_pipeline"
+    _stable._op(op)(*inputs, *workspace, f, h, panel, ITERATIONS - 1,
+                    bool(weights), text_state is not None, stream, cores, *(frontend or ()))
     return workspace[-1]

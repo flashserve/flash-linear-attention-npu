@@ -24,3 +24,17 @@ target_include_directories(vdn_pipeline_device PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(vdn_pipeline_device PRIVATE ascendcl)
 
 target_include_directories(vdn_pipeline_device PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../torch_custom/fla_npu/csrc/include")
+
+find_program(VDN_OPC opc)
+if(VDN_OPC AND EXISTS "$ENV{ASCEND_HOME_PATH}/opp/built-in/op_impl/ai_core/tbe/impl/ops_legacy/dynamic/mat_mul.py")
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(frontend_header "${CMAKE_CURRENT_BINARY_DIR}/prelude_native.hpp")
+  add_custom_command(OUTPUT "${frontend_header}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/frontend_codegen.py"
+            "${CMAKE_CURRENT_BINARY_DIR}/frontend_codegen" "${frontend_header}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/frontend_codegen.py" VERBATIM)
+  add_custom_target(vdn_frontend DEPENDS "${frontend_header}")
+  add_dependencies(vdn_pipeline_device vdn_frontend)
+  target_include_directories(vdn_pipeline_device PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_compile_definitions(vdn_pipeline_device PRIVATE VDN_FRONTEND=1)
+endif()

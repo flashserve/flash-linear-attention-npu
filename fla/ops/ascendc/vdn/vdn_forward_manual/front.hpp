@@ -3,7 +3,17 @@
 #include "conv_body.hpp"
 #include "triton.hpp"
 #include "gram_body.hpp"
-struct Addresses {GM_ADDR p[BufferCount];int f,h,bridgePanel,steps,conv,seed; GM_ADDR clocks; int debug;};
+struct Addresses {GM_ADDR p[BufferCount];int f,h,bridgePanel,steps,conv,seed; GM_ADDR clocks; int debug; GM_ADDR extra[11]; int alphaBf16; int textStride[6]; int width,length,textSteps; float textScale;};
+#ifdef VDN_FRONTEND
+namespace Prelude {
+#if defined(__DAV_CUBE__)
+__aicore__ inline void Down(Addresses g);
+__aicore__ inline void Up(Addresses g);
+#else
+__aicore__ inline void Gate(Addresses g,GM_ADDR delta);
+#endif
+}
+#endif
 namespace Front {
 using namespace AscendC;
 constexpr int S=405,D=128;
@@ -72,12 +82,12 @@ __aicore__ inline void SeedBanks(Addresses g) {
         PipeBarrier<PIPE_ALL>();DataCopy(p[j*16384],ub,16384);DataCopy(s[(int64_t(g.f)*g.h+j)*16384],ub,16384);PipeBarrier<PIPE_ALL>();
     }
 }
-__aicore__ inline void CastKeys(Addresses g) {
+__aicore__ inline void CastKeys(Addresses g,int tokens=S) {
     LocalTensor<float> vals(TPosition::VECCALC,0,4096);auto factors=vals[4096],scales=vals[8192];
     auto bf=vals[8256].ReinterpretCast<bfloat16_t>();auto bt=bf[4096];
     GlobalTensor<bfloat16_t> k,b;k.SetGlobalBuffer((__gm__ bfloat16_t*)g.p[Key]);b.SetGlobalBuffer((__gm__ bfloat16_t*)g.p[Beta]);
     GlobalTensor<float> x,w;x.SetGlobalBuffer((__gm__ float*)g.p[K32]);w.SetGlobalBuffer((__gm__ float*)g.p[WK32]);
-    int rows=g.f*g.h*S;
+    int rows=g.f*g.h*tokens;
     for(int j=GetBlockIdx();j<(rows+31)/32;j+=GetBlockNum()*GetSubBlockNum()){
         int r=32*j;int n=rows-r<32?rows-r:32;
         DataCopy(bf,k[int64_t(r)*128],n*128);
@@ -139,7 +149,7 @@ __aicore__ inline void Spatial(Addresses g,GM_ADDR packed,GM_ADDR filter,int fir
 #endif
 // Cube produces the next raw spatial panel while vector consumes the previous one.
 // Each projection keeps its two-frame halo across the panel boundary.
-__aicore__ inline void ConvPipeline(Addresses g) {
+template<int Version> __aicore__ inline void ConvPipeline(Addresses g) {
     const int frameGroups=GetBlockNum()/4;
     const int split=((g.f/2+frameGroups/2)/frameGroups)*frameGroups;
     // The V pack stays live through its second spatial panel. Reuse Query and B32
@@ -151,6 +161,8 @@ __aicore__ inline void ConvPipeline(Addresses g) {
     const int firstValues=(g.f+7)/8;
 #if defined(__DAV_VEC__)
     PackProjection(g,false,g.p[Packed],g.p[Filter]);
+#elif defined(VDN_FRONTEND)
+    if constexpr(Version==11) Prelude::Up(g);
 #endif
     SyncAll<false>();
     // Spatial order is K front, K back, V front, V back. The last wave drains V.
@@ -165,6 +177,9 @@ __aicore__ inline void ConvPipeline(Addresses g) {
         }
 #else
         if(wave==0){
+#ifdef VDN_FRONTEND
+            if constexpr(Version==11) Prelude::Gate(g,g.p[First]);
+#endif
             PackProjection(g,true,packedV,filterV);
         }else{
             const int ready=wave-1;
@@ -187,10 +202,13 @@ __aicore__ inline void ConvPipeline(Addresses g) {
 template<int Version> __aicore__ inline void Prepare(Addresses g){
 #if defined(__DAV_VEC__)
     SeedBanks(g);
+#elif defined(VDN_FRONTEND)
+    // Down and up share the two existing barriers preceding the first spatial tile.
+    if constexpr(Version==11) Prelude::Down(g);
 #endif
     SyncAll<false>();
     if(g.conv) {
-        ConvPipeline(g);
+        ConvPipeline<Version>(g);
 #if defined(__DAV_CUBE__)
         OriginalGramB::Run(g.p[Value],g.p[Key],g.p[B16],g.p[GramBT]);
 #else

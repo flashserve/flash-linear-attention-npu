@@ -9,3 +9,6 @@ cmake --build "$out/build" -j2
 mkdir -p "$2/manual_tiling"
 cp "$out/build/libvdn_pipeline_device.so" "$2/"
 cp "$src"/tiling/*.bin "$2/manual_tiling/"
+if nm -D --defined-only "$out/build/libvdn_pipeline_device.so" | grep ' vdn_forward_pipeline_from_features$' >/dev/null; then
+    cp "$src"/tiling/*-frontend.json.z "$2/manual_tiling/"
+fi

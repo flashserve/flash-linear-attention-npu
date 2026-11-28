@@ -1038,7 +1038,7 @@ define dso_local void @JyKV.vector(i64 %0, ptr addrspace(1) %1, ptr addrspace(1)
   call void @vand_1d_int32_t(ptr addrspace(6) %94, ptr addrspace(6) %95, i64 0, i64 8192, i64 1, ptr addrspace(6) inttoptr (i64 131328 to ptr addrspace(6)), ptr addrspace(6) inttoptr (i64 131328 to ptr addrspace(6)), i64 0, i64 8192, i64 1, ptr addrspace(6) %98, ptr addrspace(6) %99, i64 0, i64 8192, i64 1, ptr addrspace(6) null, ptr addrspace(6) null, i64 0, i64 0, i64 1)
   %frame_rows = mul i32 %9, %10
   %143 = mul i32 %108, %frame_rows
-  %144 = mul i32 %110, 405
+  %144 = mul i32 %110, %10
   %145 = sext i32 %143 to i64
   %146 = sext i32 %144 to i64
   %147 = add i64 %118, %145

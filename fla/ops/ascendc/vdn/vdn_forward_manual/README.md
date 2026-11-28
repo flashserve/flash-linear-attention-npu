@@ -31,3 +31,9 @@ With paired K/V short convolution, the following numbers cover the complete publ
 | 87 / 14 | 18.854 | 11.871 | 488.5 / 2099.9 |
 
 The full-frame workspace accounts for the higher peak. The largest measured increase over the previous PR path was 1611.4 MiB.
+
+## Frame means and text inputs
+
+The optional `vdn_forward_from_features` entry includes the OpenVDN frame-alpha projections and projected-text initial state in the same device launch as video readout. Both alpha projections, softplus, exponential, the text key Gram and the Newton solve run with FP32 math. The B Gram preserves its native BF16 result before conversion to FP32. Text uses its own length as the spectral bound. K/V may be token-strided views of a packed projection. Text beta is already sigmoid-activated.
+
+CANN 9.2.1's host tiler selects the projection and Gram schedules. The build generates the device functions from the installed OPP with `opc`. The package includes small precomputed tables for representative grids on the 910B3 and 910B2. Other grids use the installed host tiler once per cached shape. Configurations outside the available templates use the eager frontend and the existing video dispatch. A wheel built without the frontend payload can still use the eager frontend. The device implementation reuses the video workspaces before video processing starts. Text and video outputs keep the native rounding points. The same kernel accepts contiguous FP32 or BF16 alpha operands and promotes BF16 into existing video scratch before projection.

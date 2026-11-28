@@ -133,6 +133,7 @@ static void register_schemas(StableLibrary& m) {
   m.def(kSchema_solve_tri);
   m.def(kSchema_vdn_scan);
   m.def(vdn_manual::schema);
+  m.def(vdn_manual::feature_schema);
   m.def(kSchema_vdn_add_diagonal);
   m.def(kSchema_vdn_bridge);
   m.def(kSchema_chunk_gated_delta_rule_fwd_prepare);
@@ -148,7 +149,8 @@ static void register_schemas(StableLibrary& m) {
 }
 
 static void register_implementations(StableLibrary& m) {
-  m.impl("npu_vdn_pipeline", &vdn_manual::run);
+  m.impl("npu_vdn_pipeline", &vdn_manual::launch<false>);
+  m.impl("npu_vdn_pipeline_from_features", &vdn_manual::launch<true>);
   m.impl("npu_vdn_scan", &fla_npu_stable::stable::boxed_adapter<run_vdn_scan>);
   m.impl("npu_vdn_add_diagonal", &fla_npu_stable::stable::boxed_adapter<run_vdn_add_diagonal>);
   m.impl("npu_vdn_bridge", &fla_npu_stable::stable::boxed_adapter<run_vdn_bridge>);

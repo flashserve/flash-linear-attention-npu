@@ -92,3 +92,22 @@ python tests/atk/vdn_forward/scripts/bench_forward.py --device 0 --frames 87 --h
 87 帧、7 头用例的 Newton P10/P50/P90 为 8.557/8.575/8.599 ms，直接求解为 12.436/12.472/12.526 ms。相对 CPU 标杆的端到端相对 L2 误差分别为 3.86e−4、3.84e−4，峰值归一化误差均为 5.21e−3。空间恒等核的独立单测逐元素核对 BF16 时间卷积的舍入和跨帧块取值。
 
 在 87 帧 7 头的 Newton 路径上，用同一 NPU stream 的事件对实际调用分段计时。每次先将所有帧块、K 和 V 的同类区段相加，再取 13 次中位数。输入视图准备与 5×5 空间卷积为 2.523 ms，空间输出转为时间核布局及输出分配为 0.311 ms，五点时间卷积与融合的特征处理为 2.173 ms。事件插桩与端到端计时分别运行。
+
+## 从帧均值和已投影的文本输入运行
+
+`frame_mean` 为 FP32 或 BF16 的 `[F, hidden_size]`。传入共享 down 权重、本地 head 对应的 up 权重、逐通道 `dt_bias` 和逐 head 的 `A_log`。连续 BF16 权重在融合 kernel 内转成 FP32，可直接用 checkpoint 中的权重。也支持已转成 FP32 的权重。文本 K/V 的形状为 `[L,H,128]`，文本 beta 为已过 sigmoid 的 `[L,H]` 或 `[L,H,1]`。无文本时可省略三个文本参数。输入的视频 Q/K/V、beta 和 bounds 与原接口相同。
+
+```python
+from fla_npu.ops.vdn import vdn_forward_from_features
+
+with torch.inference_mode():
+    out = vdn_forward_from_features(
+        q, k, v, beta, bounds, frame_mean=frame_mean,
+        down_weight=down_weight, up_weight=local_up_weight,
+        dt_bias=local_dt_bias, a_log=local_a_log,
+        text_k=text_k, text_v=text_v, text_beta=text_beta,
+        short_conv=short_conv, frame_size=(27, 15),
+    )
+```
+
+在确定性模式、关闭 matmul 和 conv 的 HF32 后运行。首次遇到未预置的形状可能触发 CANN host tiling，计时时请注明是否含首次调用。可用 `test_frontend.py` 验证公开入口、FP32 中间结果及最终输出。

@@ -2,4 +2,6 @@
 
 from .forward import vdn_forward
 
-__all__ = ["vdn_forward"]
+from .frontend import vdn_forward_from_features
+
+__all__ = ["vdn_forward", "vdn_forward_from_features"]
