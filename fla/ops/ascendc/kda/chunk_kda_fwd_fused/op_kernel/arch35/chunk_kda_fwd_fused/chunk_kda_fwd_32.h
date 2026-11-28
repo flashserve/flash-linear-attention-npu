@@ -14,44 +14,42 @@ public:
 
 	__gm__ void *tmp_gm;
 
-
 	// For compute use
 	__aicore__ inline void Init();
 
-	template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+    template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void copy_l1_to_l0a(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0a);
 
-	template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+    template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void copy_l1_to_l0b(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0b);
 
 	// A 转置:V2+ifTranspose(轴语义:m_slot=K,n=M;dstStride=M/16=n>>4,对齐 adv_api matmul 官方用法)
-	template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+    template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void copy_l1_to_l0a_transpose(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0a);
 
-	template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+    template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void copy_l1_to_l0b_transpose(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0b);
 
 	static constexpr AscendC::FixpipeConfig KDA_CFG_UB_NZ = {AscendC::CO2Layout::NZ, true};
 	static constexpr AscendC::FixpipeConfig KDA_CFG_UB_ND = {AscendC::CO2Layout::ROW_MAJOR, true};
 
-	template<uint64_t m_slot, uint64_t n>
+    template <uint64_t m_slot, uint64_t n>
 	__aicore__ inline void copy_l0c_to_l1_bf16(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<float> &l0c);
 
-	template<bool nz2nd, uint64_t dst_id, uint64_t m_slot, uint64_t n>
+    template <bool nz2nd, uint64_t dst_id, uint64_t m_slot, uint64_t n>
 	__aicore__ inline void copy_l0c_to_ub_bf16(const AscendC::LocalTensor<T> &ub, const AscendC::LocalTensor<float> &l0c);
 
-	template<bool nz2nd, uint64_t m_slot, uint64_t n>
+    template <bool nz2nd, uint64_t m_slot, uint64_t n>
 	__aicore__ inline void copy_l0c_to_ub_f32(const AscendC::LocalTensor<float> &ub, const AscendC::LocalTensor<float> &l0c);
 
-	template<uint64_t vid, uint64_t len, uint64_t element_size>
+    template <uint64_t vid, uint64_t len, uint64_t element_size>
 	__aicore__ inline void copy_l1_to_ub(const AscendC::LocalTensor<float> &ub, const AscendC::LocalTensor<float> &l1);
 
-	template<uint64_t m_slot, uint64_t k, uint64_t n>
+    template <uint64_t m_slot, uint64_t k, uint64_t n>
 	__aicore__ inline void mmad(const AscendC::LocalTensor<float> &l0c, const AscendC::LocalTensor<T> &l0a, const AscendC::LocalTensor<T> &l0b);
 
-	template<uint64_t m_slot, uint64_t k, uint64_t n>
+    template <uint64_t m_slot, uint64_t k, uint64_t n>
 	__aicore__ inline void mmad_acc(const AscendC::LocalTensor<float> &l0c, const AscendC::LocalTensor<T> &l0a, const AscendC::LocalTensor<T> &l0b);
-
 
 public:
 
@@ -291,20 +289,8 @@ public:
 	__aicore__ inline void matmul_state_acc_a(int loop_id, uint32_t y1_c_slot, uint32_t y1_a_slot, uint32_t y1_b_slot);
 	__aicore__ inline void matmul_iter_out_a(int loop_id, uint32_t out1_c_slot, uint32_t score_delta_a_c1_slot, uint32_t score_delta_a_c2_slot, uint32_t score_delta_a_c3_slot, uint32_t score_delta_a_c4_slot, uint32_t iter_out_a_a_slot, uint32_t iter_out_a_b_slot, uint32_t qds1_c_slot);
 
-
-
-
-
-
-
-
-
-
-
 	__aicore__ inline void copy_l1_to_ub_gamma(int loop_id, uint32_t gamma_ub_slot, uint32_t betaB_ub_slot, uint32_t gamma_slot, uint32_t beta_slot);
 	__aicore__ inline void copy_l1_to_l0ab_kplus_kminus(int loop_id, uint32_t kplus_kminus_a_slot, uint32_t kplus_kminus_b_slot, uint32_t kPlus_slot, uint32_t kPlusB_slot, uint32_t kMinus_slot);
-
-
 
 	__aicore__ inline void copy_l1_to_l0ab_kplus_qplus_score_a(int loop_id, uint32_t kplus_qplus_score_a_a_slot, uint32_t kplus_qplus_score_a_b_slot, uint32_t kPlus_slot, uint32_t qPlus_slot, uint32_t scoreA_slot);
 	__aicore__ inline void copy_l1_to_l0ab_y1(int loop_id, uint32_t y1_a_slot, uint32_t y1_b_slot, uint32_t m_slot, uint32_t vCorrA_slot);
@@ -313,49 +299,12 @@ public:
 	__aicore__ inline void copy_l1_to_l0ab_y2(int loop_id, uint32_t y2_a_slot, uint32_t y2_b_slot, uint32_t m_slot, uint32_t vCorrB_slot);
 	__aicore__ inline void copy_l1_to_l0ab_iter_out_b(int loop_id, uint32_t iter_out_b_a_slot, uint32_t iter_out_b_b_slot, uint32_t kRes_slot, uint32_t maskedQk_slot, uint32_t stateAccB_slot);
 
-
-
-
-
-
-
-
-
-
-
 	__aicore__ inline void copy_l0c_to_ub_kplus_kminus(int loop_id, uint32_t kplus_kminus_ub_slot, uint32_t kplus_kminus_c_slot);
 
 	__aicore__ inline void copy_l0c_to_ub_kds1(int loop_id, uint32_t kds1_ub_slot, uint32_t kds1_c_slot);
 	__aicore__ inline void copy_l0c_to_l1_y1(int loop_id, uint32_t stateAccA_slot, uint32_t y1_c_slot);
 
 	__aicore__ inline void copy_score_delta_l0c_to_ub(int loop_id, uint32_t score_delta_a_ub1_slot, uint32_t score_delta_a_c1_slot);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 	template <bool STEADY>
 	__aicore__ inline void stage_l0ab_y1_u0(int iter, int group_count);
@@ -610,11 +559,11 @@ public:
 	// 只在末组状态更新全部落地后调用(Process 收尾);V 管同序保证读到的是终态。
 	__aicore__ inline void StoreFinalState(__ubuf__ void *s_ub);
 
-	template<uint64_t m, uint64_t n, uint64_t element_size>
+    template <uint64_t m, uint64_t n, uint64_t element_size>
 	__aicore__ inline void ub_gm_single(const AscendC::GlobalTensor<typename AscendC::Std::conditional<element_size == 4, float, T>::type> &mem,
 		__ubuf__ void * ub);
 
-	template<uint64_t m, uint64_t n, uint64_t element_size>
+    template <uint64_t m, uint64_t n, uint64_t element_size>
 	__aicore__ inline void gm_ub_single(__ubuf__ void * ub,
 		const AscendC::GlobalTensor<typename AscendC::Std::conditional<element_size == 4, float, T>::type> &mem);
 
@@ -624,7 +573,7 @@ public:
 		uint64_t has_istate_ = 0, uint64_t out_fstate_ = 0, uint64_t seq_len_ = 0,
 		uint64_t qk_group_ = 1,
 		uint64_t task_count_ = 0, uint64_t hv_real_ = 0, uint64_t block_num_ = 0,
-		uint64_t is_varlen_ = 0, uint64_t cu_base_ = 0, uint64_t epsilon_bits_ = 0x3F50624Du,
+        uint64_t is_varlen_ = 0, uint64_t cu_base_ = 0, uint64_t epsilon_bits_ = default_epsilon_bits,
 		uint64_t gate_flags_ = 0);
 
 	// 每任务绑定(Process 任务循环开头调用):按拍平任务号 fh 重绑全部 GM 视图、
@@ -644,25 +593,25 @@ public:
 	// 注:核内"读 istate 再写 fs"在空任务上下文实测不稳定(部分元素残留未写,
 	// 因此 istate 直通放在 host 侧一次 ViewCopy。
 	__aicore__ inline void WriteEmptyFinalState();
-	template<bool varlen>
+    template <bool varlen>
 	__aicore__ inline void BindTask(uint32_t fh);
 
-	template<uint64_t m, uint64_t n, uint64_t element_size>
+    template <uint64_t m, uint64_t n, uint64_t element_size>
 	__aicore__ inline void ub_l1_single(const AscendC::LocalTensor<uint8_t> &ub, const AscendC::LocalTensor<uint8_t> &l1);
 
-	template<uint64_t m, uint64_t n, uint64_t element_size>
+    template <uint64_t m, uint64_t n, uint64_t element_size>
 	__aicore__ inline void ub_l1_src_strided_nz(const AscendC::LocalTensor<uint8_t> &ub, const AscendC::LocalTensor<uint8_t> &l1);
 
-	template<uint64_t m, uint64_t n, uint64_t element_size>
+    template <uint64_t m, uint64_t n, uint64_t element_size>
 	__aicore__ inline void ub_l1_dst_strided_nz(const AscendC::LocalTensor<uint8_t> &ub, const AscendC::LocalTensor<uint8_t> &l1);
 
-	template<uint64_t m, uint64_t n, uint64_t element_size>
+    template <uint64_t m, uint64_t n, uint64_t element_size>
 	__aicore__ inline void ub_l1_src_strided_dst_strided_nz(const AscendC::LocalTensor<uint8_t> &ub, const AscendC::LocalTensor<uint8_t> &l1);
 
-	template<uint32_t id, bool gate_f32, bool beta_f32, bool varlen, bool tail>
+    template <uint32_t id, bool gate_f32, bool beta_f32, bool varlen, bool tail>
 	__aicore__ inline void vec_prepare_g3(__ubuf__ void *gate_sc1_ub, __ubuf__ void *gamma_ub, __ubuf__ void *beta_ub, __ubuf__ void *qq2_ub, __ubuf__ void *kk2_ub);
 
-	template<uint32_t id>
+    template <uint32_t id>
 	__aicore__ inline void vec_prepare_qplus_kplus_kminus_kres(__ubuf__ void *qplus_ub, __ubuf__ void *qplusb_ub, __ubuf__ void *kplus_ub, __ubuf__ void *kplusb_ub,
 		__ubuf__ void *kminus_ub, __ubuf__ void *kres_ub, __ubuf__ void *gate_sc_ub, __ubuf__ void *gamma_ub);
 
@@ -672,12 +621,11 @@ public:
 
 	__aicore__ inline void vec_tril_inv2(__ubuf__ void *m_ub, __ubuf__ void *m1_ub, __ubuf__ void *l_ub);
 
-	template<uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
+    template <uint16_t unroll_id, uint16_t iter_id, bool varlen, bool tail>
 	__aicore__ inline void vec_v_corr(__ubuf__ void *v_corr_ub, __ubuf__ void *kplus_score_ub, __ubuf__ void *beta_ub);
 
-	template<uint16_t part_id, uint64_t iter_id>
+    template <uint16_t part_id, uint64_t iter_id>
 	__aicore__ inline void vec_iter_half(__ubuf__ void *s_ub, __ubuf__ void *score_delta_a_ub, __ubuf__ void *score_delta_b_ub, __ubuf__ void *gamma_ub);
-
 
 public:
 
@@ -908,33 +856,22 @@ public:
 
 	// Define operator functions
 
-	template<int U>  // 0=主流水槽位,1=auto_unroll 流水第二槽位
+    template <int U>  // 0=主流水槽位,1=auto_unroll 流水第二槽位
 	__aicore__ inline void vec_prepare_g1(int loop_id, uint32_t gate_sc1_ub, uint32_t gate_pre_a_ub, uint32_t beta_a_ub, uint32_t qhat1_ub, uint32_t khat1_ub);
 
-	template<int U>  // 0=主流水槽位,1=auto_unroll 流水第二槽位
+    template <int U>  // 0=主流水槽位,1=auto_unroll 流水第二槽位
 	__aicore__ inline void vec_prepare_qplus_kplus_kminus_kres(int loop_id, uint32_t qplus_ub, uint32_t kplus_ub, uint32_t kplusb_ub, uint32_t qplusb_ub, uint32_t kminus_ub, uint32_t kres_ub, uint32_t gate_pre_ub, uint32_t qhat_ub, uint32_t khat_ub, uint32_t gate_sc_ub, uint32_t gate_pre_b_ub);
 	__aicore__ inline void vec_tril(int loop_id, uint32_t masked_qk_ub, uint32_t l_ub, uint32_t kplus_kminus_ub, uint32_t qplus_kminus_ub, uint32_t beta_b_ub);
 
 	__aicore__ inline void vec_tril_inv(int loop_id, uint32_t m_ub, uint32_t l_ub, uint32_t m1_ub);
-	template<int U>  // 流水槽位组
+    template <int U>  // 流水槽位组
 	__aicore__ inline void vec_v_corr1(int loop_id, uint32_t v_corr1_ub, uint32_t kplus_score1_ub, uint32_t beta_b_ub);
 	__aicore__ inline void vec_iter_partial1(int loop_id, uint32_t s2_partial_ub, uint32_t ss1_ub, uint32_t score_delta_a_ub1, uint32_t score_delta_a_ub2, uint32_t gamma_ub);
 	__aicore__ inline void vec_iter_final1(int loop_id, uint32_t s2_ub, uint32_t s2_partial_ub, uint32_t score_delta_a_ub3, uint32_t score_delta_a_ub4, uint32_t gamma_ub);
-	template<int U>  // 流水槽位组
+    template <int U>  // 流水槽位组
 	__aicore__ inline void vec_v_corr2(int loop_id, uint32_t v_corr2_ub, uint32_t kplus_score2_ub, uint32_t beta_b_ub);
 	__aicore__ inline void vec_iter_partial2(int loop_id, uint32_t s1_partial_ub, uint32_t ss2_ub, uint32_t score_delta_b_ub1, uint32_t score_delta_b_ub2, uint32_t gamma_ub);
 	__aicore__ inline void vec_iter_final2(int loop_id, uint32_t s1_ub_auto_unroll_id_1, uint32_t s1_partial_ub, uint32_t score_delta_b_ub3, uint32_t score_delta_b_ub4, uint32_t gamma_ub);
-
-
-
-
-
-
-
-
-
-
-
 
 	__aicore__ inline void ub_to_l1_qplus_kplus(int loop_id, uint32_t qplus, uint32_t kplus, uint32_t kplusb, uint32_t qplusb, uint32_t qplus_ub, uint32_t kplus_ub, uint32_t kplusb_ub, uint32_t qplusb_ub);
 	__aicore__ inline void ub_to_l1_kminus_kres(int loop_id, uint32_t kminus, uint32_t kres, uint32_t gamma, uint32_t beta, uint32_t kminus_ub, uint32_t kres_ub, uint32_t gate_pre_ub, uint32_t beta_ub);
@@ -943,20 +880,6 @@ public:
 	__aicore__ inline void ub_to_l1_s1(int loop_id, uint32_t s1, uint32_t ss1_ub, uint32_t s1_ub);
 	__aicore__ inline void ub_to_l1_v_corr1(int loop_id, uint32_t v_corr1, uint32_t v_corr1_ub);
 	__aicore__ inline void ub_to_gm_out1(int loop_id, uint32_t out1_ub);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 	template <bool STEADY>
 	__aicore__ inline void stage_prepare_g1_u0(int iter, int group_count);

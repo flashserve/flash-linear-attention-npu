@@ -1,16 +1,8 @@
+// Cube 侧实现：L0/L1 数据搬运、MMAD 以及 C/V 同步。
 
-// Implement Init for set/wait flag mechanism in Cube
-// Implement Cube-side set/wait_intra_block with the "pseudo-set method"
-
-#include "kernel_operator.h"  // SetFlag/WaitFlag/CrossCoreSetFlag/CrossCoreWaitFlag(AscendC 基础 API)
-
-
-
-
+#include "kernel_operator.h"
 
 #ifdef __DAV_C310_CUBE__
-
-
 
 // KDA 形状常量(与 aiv 侧一致;数值相同的轴按语义分开命名)
 // 槽位表(addrL0A/L0B/L0C/L1/addrUB)的地址单位:表项值 x 单位 = 字节偏移
@@ -53,57 +45,36 @@ __aicore__ inline AscendC::LocalTensor<U> Ub(uint32_t byteOff)
 	return AscendC::LocalTensor<U>(AscendC::TPosition::VECCALC, byteOff, (ub_window_bytes - byteOff) / sizeof(U));
 }
 
-
-// T 使用 bfloat16_t,fixpipe 出数量化位、mmad、L0/L1 视图均跟随该类型。
+// T 使用 bfloat16_t；fixpipe 量化、mmad 和 L0/L1 视图均跟随该类型。
+constexpr uint32_t quant_pre_m1_shift = 13;
+constexpr uint32_t quant_pre_exponent_shift = 10;
+constexpr uint64_t quant_pre_ieee754_one_exponent = 127;
+constexpr uint64_t ctrl_hif8_mask = uint64_t{1} << 45;
+constexpr uint64_t ctrl_saturation_mask = uint64_t{1} << 48;
+constexpr uint64_t ctrl_mmad_n_first_mask = uint64_t{1} << 51;
 
 template <typename T, bool IsVarlen, bool HasTail>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::Init()
 	{
-		// Init Fixpipe
-		//SPR.FPC, can be configured with [void set_fpc(uint64_t config)]
-		//[7:0], [15:8], [23:16], [31:24], [39:32] - all kinds of quant parameter addresses, not used here.
-		//[62:40], reserved. [63], the L0C unit flag clean bit for unit-flag mechanism. Not used here.
+    // SPR.QUANT_PRE[31:13]：M1 使用 TF32 位模式 1.0，符号位和尾数位均为 0。
+    constexpr uint64_t quantPreM1 =
+        (quant_pre_ieee754_one_exponent << quant_pre_exponent_shift) << quant_pre_m1_shift;
+    set_quant_pre(quantPreM1);
 
-		//SPR.QUANT_PRE for fixpipe pre-stage quantization: [void set_quant_pre(uint64_t config)]
-		uint64_t quant_pre = 0;
-		// only set [31:13] fot M1: use TF32, 1 sign bit, 8 exponent bits, 10 mantissa bits
-		quant_pre += ( ( ((uint64_t)0<<(uint64_t)18) + ((uint64_t)127<<(uint64_t)10) + (uint64_t)0) << (uint64_t)13); // if use 1.0 as M1
-		//quant_pre += ss;
-		set_quant_pre(quant_pre);
+    // loop3_size 为 1 时源/目的 stride 无效，因此只需配置低 16 位。
+    constexpr uint64_t loop3Size = 1;
+    set_loop3_para(loop3Size);
 
-		//SPR.RELU_ALPHA, SPR.QUANT_POST, SPR.FIX_CLIP_RELU, obviously not required to config here.
-
-		//SPR.LOOP3_PARA is valid when NZ2ND_EN or NZ2DN_EN or LoopEnhance_EN is enabled. Should be configured here.
-		//[15:0], loop3_size (must be larger than 0), set to 1
-		uint64_t loop3_para = 1;
-		//[31:16], src loop3 stride in unit of C0_SIZE. Since Loop3_size is 1, this is not actually valid here, so set to 0
-		//[63:32], dst loop3 stride in unit of element. Since Loop3_size is 1, this is not actually valid here, so set to 0
-		set_loop3_para(loop3_para);
-
-		//SPR.LOOP4_PARA is only valid when LoopEnhance mode is enabled, obviously not required to config here.
-		//SPR.CHANNEL_PARA is only valid when LoopEnhance mode or NZ2DN mode is enabled. Obviously not required here.
-		//SPR.ELT_ANTIQ_PARA, SPR.ELT_SRC_PARA, obviously not reuqired to config here.
-
-		//SPR.CTRL
-		//[48]: Saturation Ctrl bit for BF16/FP16 compute in Fixpipe. 0 will turn INF to MAX, and NaN to 0.
-		//[49]: FP8 NaN preservation mode. 0 will turn NaN to 0.
-		// We set this register in Init().
-
-		// Legacy CTRL[51] has no public Ascend950 SetCtrlSpr replacement.
-		// Init Mmad Config Reg
+    // SPR.CTRL：关闭 HiF8，开启饱和模式，并选择 N-first mmad 方向。
+    // CTRL[49] 的 FP8 NaN preservation mode 保持原值。
 		uint64_t ctrl = get_ctrl();
-		//[45]: HiF8 ctrl bit, set to 0;
-		ctrl = ctrl & (~((uint64_t)1 << 45));
-		//[48]: Saturation Ctrl, Set to 1 to saturate;
-		ctrl = ctrl | ((uint64_t)1 << 48);
-		//[51]: mmad direction ctrl (M or N), set to 1 for N first
-		ctrl = ctrl | ((uint64_t)1 << 51);
-		//[49]: FP8 NaN preservation mode. 0 will turn NaN to 0. Either is OK, so not set here.
+    ctrl &= ~ctrl_hif8_mask;
+    ctrl |= ctrl_saturation_mask | ctrl_mmad_n_first_mask;
 		set_ctrl(ctrl);
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l1_to_l0a(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0a) {
 		const AscendC::LocalTensor<T> &dst = l0a;
 		const AscendC::LocalTensor<T> &src = l1;
@@ -118,7 +89,7 @@ template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l1_to_l0b(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0b) {
 		const AscendC::LocalTensor<T> &dst = l0b;
 		const AscendC::LocalTensor<T> &src = l1;
@@ -133,7 +104,7 @@ template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l1_to_l0a_transpose(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0a) {
 		const AscendC::LocalTensor<T> &dst = l0a;
 		const AscendC::LocalTensor<T> &src = l1;
@@ -148,7 +119,7 @@ template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
+template <uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l1_to_l0b_transpose(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<T> &l0b) {
 		const AscendC::LocalTensor<T> &dst = l0b;
 		const AscendC::LocalTensor<T> &src = l1;
@@ -163,7 +134,7 @@ template<uint64_t m_slot, uint64_t n, uint64_t m_stride>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t n>
+template <uint64_t m_slot, uint64_t n>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l0c_to_l1_bf16(const AscendC::LocalTensor<T> &l1, const AscendC::LocalTensor<float> &l0c) {
 		AscendC::DataCopyCO12DstParams p;
 		p.nSize = n;
@@ -176,7 +147,7 @@ template<uint64_t m_slot, uint64_t n>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<bool nz2nd, uint64_t dst_id, uint64_t m_slot, uint64_t n>
+template <bool nz2nd, uint64_t dst_id, uint64_t m_slot, uint64_t n>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l0c_to_ub_bf16(const AscendC::LocalTensor<T> &ub, const AscendC::LocalTensor<float> &l0c) {
 		constexpr AscendC::CO2Layout fmt = nz2nd ? AscendC::CO2Layout::ROW_MAJOR : AscendC::CO2Layout::NZ;
 		AscendC::FixpipeParamsArch3510<fmt> p;
@@ -192,7 +163,7 @@ template<bool nz2nd, uint64_t dst_id, uint64_t m_slot, uint64_t n>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<bool nz2nd, uint64_t m_slot, uint64_t n>
+template <bool nz2nd, uint64_t m_slot, uint64_t n>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l0c_to_ub_f32(const AscendC::LocalTensor<float> &ub, const AscendC::LocalTensor<float> &l0c) {
 		constexpr AscendC::CO2Layout fmt = nz2nd ? AscendC::CO2Layout::ROW_MAJOR : AscendC::CO2Layout::NZ;
 		AscendC::FixpipeParamsArch3510<fmt> p;
@@ -208,14 +179,14 @@ template<bool nz2nd, uint64_t m_slot, uint64_t n>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t vid, uint64_t len, uint64_t element_size>
+template <uint64_t vid, uint64_t len, uint64_t element_size>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::copy_l1_to_ub(const AscendC::LocalTensor<float> &ub, const AscendC::LocalTensor<float> &l1)
 	{
 		AscendC::DataCopyL1ToUB<float, vid>(ub, l1, len);
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t k, uint64_t n>
+template <uint64_t m_slot, uint64_t k, uint64_t n>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::mmad(const AscendC::LocalTensor<float> &l0c, const AscendC::LocalTensor<T> &l0a, const AscendC::LocalTensor<T> &l0b)
 	{
 		const AscendC::LocalTensor<float> &c = l0c;
@@ -231,7 +202,7 @@ template<uint64_t m_slot, uint64_t k, uint64_t n>
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
-template<uint64_t m_slot, uint64_t k, uint64_t n>
+template <uint64_t m_slot, uint64_t k, uint64_t n>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::mmad_acc(const AscendC::LocalTensor<float> &l0c, const AscendC::LocalTensor<T> &l0a, const AscendC::LocalTensor<T> &l0b)
 	{
 		const AscendC::LocalTensor<float> &c = l0c;
@@ -278,12 +249,9 @@ template <typename T, bool IsVarlen, bool HasTail>
 		AscendC::LocalTensor<float> kds_l0c = L0c<float>(addrL0C[kds1_c_slot]*l0_addr_unit);
 		AscendC::LocalTensor<float> qds_l0c = L0c<float>(addrL0C[qds1_c_slot]*l0_addr_unit);
 
-
 		this->template mmad<chunk_size,key_dim,value_dim>(kds_l0c, kd_l0a, s_l0b);
 		this->template mmad<chunk_size,key_dim,value_dim>(qds_l0c, qd_l0a, s_l0b);
 
-		// 	// for(int i = 0; i < 32*128; i ++) ((__ubuf__ uint16_t *)(g_ub[id]))[i] = 0;
-		// arrive_cnt ++;
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
@@ -295,8 +263,6 @@ template <typename T, bool IsVarlen, bool HasTail>
 
 		this->template mmad<chunk_size,chunk_size,value_dim>(y_l0c, m_l0a, v_kds_l0b);
 
-		// 	// for(int i = 0; i < 32*128; i ++) ((__ubuf__ uint16_t *)(g_ub[id]))[i] = 0;
-		// arrive_cnt ++;
 	}
 
 template <typename T, bool IsVarlen, bool HasTail>
@@ -382,7 +348,6 @@ template <typename T, bool IsVarlen, bool HasTail>
 		AscendC::LocalTensor<T> kd_l0a = L0a<T>(addrL0A[kplus_qplus_score_a_a_slot]*l0_addr_unit);
 		AscendC::LocalTensor<T> qd_l0a = L0a<T>(addrL0A[kplus_qplus_score_a_a_slot]*l0_addr_unit + chunk_size*key_dim*sizeof(T));
 		AscendC::LocalTensor<T> s_l0b = L0b<T>(addrL0B[kplus_qplus_score_a_b_slot]*l0_addr_unit);
-
 
 		this->template copy_l1_to_l0a<chunk_size,key_dim,0>(kd_1, kd_l0a);
 		this->template copy_l1_to_l0a<chunk_size,key_dim,0>(qd_1, qd_l0a);
@@ -645,7 +610,6 @@ template <bool STEADY>
 		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub3_slot, score_delta_a_c3_slot);
 		}
 	}
-
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
@@ -937,7 +901,6 @@ template <bool STEADY>
 		}
 	}
 
-
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_kds1_u0_x2(int iter, int group_count) {
@@ -1165,7 +1128,6 @@ template <bool STEADY>
 		    copy_score_delta_l0c_to_ub(iter - 1, score_delta_a_ub3_auto_unroll_id_1_slot, score_delta_a_c3_auto_unroll_id_1_slot);
 		}
 	}
-
 
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
@@ -1477,7 +1439,6 @@ template <bool STEADY>
 		}
 	}
 
-
 template <typename T, bool IsVarlen, bool HasTail>
 template <bool STEADY>
 	__aicore__ inline void Kernel<T, IsVarlen, HasTail>::stage_ub_kds1_u1_x3(int iter, int group_count) {
@@ -1669,26 +1630,20 @@ template <typename T, bool IsVarlen, bool HasTail>
 			syncCV.Init();
 
 			// 边沿组直接复用 stage;守卫、同步和 buffer 管理均留在 stage 内。
-			for (int iter = 0; iter < pipelineStages - 1 && iter < groupCount; iter ++) {
+        for (int iter = 0; iter < pipelineStages - 1 && iter < groupCount; iter++) {
 				RunPipelineStages<false>(iter, groupCount);
 			}
 
-			for (int iter = pipelineStages - 1; iter < groupCount; iter ++) {
+        for (int iter = pipelineStages - 1; iter < groupCount; iter++) {
 				RunPipelineStages<true>(iter, groupCount);
 			}
-			for (int iter = groupCount; iter < groupCount + pipelineStages - 1; iter ++) {
+        for (int iter = groupCount; iter < groupCount + pipelineStages - 1; iter++) {
 				RunPipelineStages<false>(iter, groupCount);
 			}
-
-
-
 
 			syncCV.Finalize();
 		}  // task 循环
 
 	}
-
-
-
 
 #endif
