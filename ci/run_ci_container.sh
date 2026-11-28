@@ -239,6 +239,31 @@ mount_args=(
     -v "$gdr_accuracy_cache:$gdr_accuracy_cache_container"
     -w /workspace/repo
 )
+smoke_cache_args=()
+runtime_image="$image"
+if [[ -n "${CI_SMOKE_CACHE_HOST_DIR:-}" ]] && mkdir -p "$CI_SMOKE_CACHE_HOST_DIR"; then
+    image_id="$(docker image inspect --format '{{.Id}}' "$image")" || image_id=""
+    if [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+        runtime_image="$image_id"
+        mount_args+=(-v "$CI_SMOKE_CACHE_HOST_DIR:/ci-smoke-cache")
+        smoke_cache_args+=(-e CI_SMOKE_CACHE_DIR=/ci-smoke-cache -e CI_SMOKE_IMAGE_ID="$image_id"
+                          -e CI_SMOKE_CACHE_DIRTY=/workspace/repo/.ci-tmp/smoke-cache-dirty)
+    fi
+fi
+atk_smoke_ops=""
+# The workflow supplies the first parent of the merge actually being tested.
+# ops=... diagnostics only compile and do not enter the runtime stage.
+atk_base="${CI_ATK_BASE_SHA:-${NPU_CI_BASE_SHA:-}}"
+if [[ -n "$atk_base" && "${CI_STAGE:-all}" == "all" && -z "${CI_OPS:-}" ]]; then
+    platform="${CI_ACCURACY_PLATFORM:?CI accuracy platform is required for ATK selection}"
+    atk_smoke_ops="$(python3 tests/atk/smoke/run.py affected --platform "${platform^^}" \
+        --git-range "$atk_base" HEAD)"
+    if [[ -n "$atk_smoke_ops" ]]; then
+        echo "[CI][ATK] ${platform^^}: ${atk_smoke_ops//$'\n'/ }"
+    else
+        echo "[CI][ATK] No matching operator on ${platform^^}."
+    fi
+fi
 if [[ -n "$host_tmpdir" ]]; then
     mount_args+=(-v "$host_tmpdir:$container_tmpdir")
 fi
@@ -277,6 +302,7 @@ docker run --rm \
     --ipc host \
     "${device_args[@]}" \
     "${mount_args[@]}" \
+    "${smoke_cache_args[@]}" \
     -e ASCEND_RT_VISIBLE_DEVICES="${NPU_SELECTED_DEVICE}" \
     -e NPU_SELECTED_DEVICE="${NPU_SELECTED_DEVICE}" \
     -e NPU_SELECTED_NAME="${NPU_SELECTED_NAME}" \
@@ -288,6 +314,8 @@ docker run --rm \
     -e CI_STAGE="${CI_STAGE:-all}" \
     -e CI_SOC="${CI_SOC:-${NPU_SOC}}" \
     -e CI_OPS="${CI_OPS:-}" \
+    -e CI_MODEL_DATE="${CI_MODEL_DATE:-}" \
+    -e CI_ATK_SMOKE_OPS="$atk_smoke_ops" \
     -e CI_JOBS="${CI_JOBS:-}" \
     -e CI_CPACK_JOBS="${CI_CPACK_JOBS:-}" \
     -e CI_FORCE_CLEAN_CACHE="${CI_FORCE_CLEAN_CACHE:-false}" \
@@ -322,7 +350,7 @@ docker run --rm \
     -e FLA_NPU_LOCAL_VERSION="${FLA_NPU_LOCAL_VERSION:-}" \
     -e FLA_NPU_TORCH_VERSION="${FLA_NPU_TORCH_VERSION:-}" \
     -e FLA_NPU_CXX11_ABI="${FLA_NPU_CXX11_ABI:-}" \
-    "$image" \
+    "$runtime_image" \
     "${container_command[@]}" &
 docker_pid=$!
 wait "$docker_pid"
