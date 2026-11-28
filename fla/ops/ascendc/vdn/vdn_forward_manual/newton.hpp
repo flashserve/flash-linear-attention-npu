@@ -217,6 +217,13 @@ public:
                  layout::zN::MakeLayoutInL0C(MakeCoord(D,D)));
     }
 
+    // FIX has written this matrix and its previous L1 readers have retired.
+    CATLASS_DEVICE void ReloadState(AscendC::LocalTensor<float> dst, AscendC::GlobalTensor<float> src, int lane) {
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(lane);
+        copyGm_(dst,src,L1Layout::template MakeLayout<float>(D,D),layout::RowMajor{D,D});
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(lane);
+    }
+
     CATLASS_DEVICE void DrainStore()
     {
         // FIX -> MTE2 covers Xnext GM feedback, including the GM load itself.
@@ -537,4 +544,87 @@ __aicore__ inline void RunNewton(Params p) {
 }
 
 
- } // namespace JyShallowNewton
+ // Four independent Newton solves share the existing six GM scratch matrices per core.
+// Each vector worker consumes its half of P before publishing R at the same address.
+__aicore__ inline void RunFour(Params p) {
+    constexpr uint16_t groupDone = 8;
+    const uint32_t workers = AscendC::GetBlockNum();
+#if defined(__DAV_CUBE__)
+    const uint32_t owner = AscendC::GetBlockIdx();
+#else
+    const uint32_t owner = AscendC::GetBlockIdx() / AscendC::GetSubBlockNum();
+#endif
+    AscendC::GlobalTensor<float> scratch;
+    scratch.SetGlobalBuffer((__gm__ float*)p.workspace + int64_t(owner)*6*ELEMENTS);
+    Arch::Resource<Arch::AtlasA2> resource;
+#if defined(__DAV_CUBE__)
+    ActiveResidentGemm<32> mm(resource);
+    AscendC::GlobalTensor<float> matrix, initial, state;
+    matrix.SetGlobalBuffer((__gm__ float*)p.m);
+    initial.SetGlobalBuffer((__gm__ float*)p.x);
+    state.SetGlobalBuffer((__gm__ float*)p.output);
+    auto l1 = resource.l1Buf.template GetBufferByByte<float>(0);
+    static_assert(8*MATRIX_BYTES <= Arch::AtlasA2::L1_SIZE);
+#else
+    VectorPhases vec(resource);
+    AscendC::GlobalTensor<float> eye;
+    eye.SetGlobalBuffer((__gm__ float*)p.eye);
+    vec.LoadEye(eye);
+#endif
+    for (uint32_t first=owner; first<p.matrices; first+=4*workers) {
+        const uint32_t available = 1+(p.matrices-1-first)/workers;
+        const uint32_t count = available < 4 ? available : 4;
+#if defined(__DAV_CUBE__)
+        // L1 banks 0..2 retain M, 3..6 retain X. Bank 7 alternates between M3 and R.
+        for (uint32_t lane=0;lane<count;++lane) {
+            if (lane < 3)
+                mm.Load(l1[lane*ELEMENTS],matrix[int64_t(first+lane*workers)*ELEMENTS]);
+        }
+        for (uint32_t lane=0;lane<count;++lane) {
+            const int64_t off=int64_t(first+lane*workers)*ELEMENTS;
+            mm.Load(l1[(3+lane)*ELEMENTS],initial[off]);
+        }
+        for (uint32_t it=0;it<p.iterations;++it) {
+            if (count==4)
+                mm.Prefetch(l1[7*ELEMENTS],matrix[int64_t(first+3*workers)*ELEMENTS]);
+            for (uint32_t lane=0;lane<count;++lane) {
+                if (it) AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(lane);
+                if (lane==3) mm.WaitPrefetch();
+                const int mb=lane==3 ? 7 : lane;
+                mm.Multiply(l1[mb*ELEMENTS],l1[(3+lane)*ELEMENTS],scratch[lane*ELEMENTS]);
+                // Independent P and R tokens per lane. Reuse only after its consumer has run.
+                AscendC::CrossCoreSetFlag<2,PIPE_FIX>(lane);
+            }
+            const bool feedback=it+1<p.iterations;
+            for (uint32_t lane=0;lane<count;++lane) {
+                const int64_t off=int64_t(first+lane*workers)*ELEMENTS;
+                AscendC::CrossCoreWaitFlag<2>(4+lane);
+                mm.Load(l1[7*ELEMENTS],scratch[lane*ELEMENTS]);
+                // Prioritize the current R transfer; reload the previous X during this multiply.
+                if (feedback && lane>0)
+                    mm.ReloadState(l1[(2+lane)*ELEMENTS],state[off-int64_t(workers)*ELEMENTS],lane-1);
+                mm.Multiply(l1[(3+lane)*ELEMENTS],l1[7*ELEMENTS],state[off]);
+                if (feedback) AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(lane);
+            }
+            if (feedback) {
+                const uint32_t last=count-1;
+                mm.ReloadState(l1[(3+last)*ELEMENTS],state[int64_t(first+last*workers)*ELEMENTS],last);
+            } else mm.DrainStore();
+        }
+        AscendC::CrossCoreSetFlag<2,PIPE_FIX>(groupDone);
+#else
+        for (uint32_t it=0;it<p.iterations;++it) {
+            for (uint32_t lane=0;lane<count;++lane) {
+                auto residual=scratch[lane*ELEMENTS];
+                AscendC::CrossCoreWaitFlag<2>(lane);
+                vec.Run(residual,eye,residual,0.f,false);
+                AscendC::CrossCoreSetFlag<2,PIPE_MTE3>(4+lane);
+            }
+        }
+        AscendC::CrossCoreWaitFlag<2>(groupDone);
+#endif
+    }
+    AscendC::PipeBarrier<PIPE_ALL>();
+}
+
+} // namespace JyShallowNewton
