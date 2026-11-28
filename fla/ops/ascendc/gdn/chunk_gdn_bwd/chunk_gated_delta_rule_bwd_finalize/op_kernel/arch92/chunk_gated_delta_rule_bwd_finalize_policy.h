@@ -19,11 +19,22 @@ constexpr uint32_t UB_TOTAL_BYTES = 0x5D000;
 constexpr uint32_t L1_TOTAL_BYTES = 0x72000;
 // Reuse the same closed event for stage aliases, rather than allocating per alias.
 constexpr uint32_t L1_EVENT_COUNT = 2 * HEAD_COUNT;
-constexpr uint32_t MTE3_MTE2_EVENT_COUNT = 2 * SLOT_COUNT;
-constexpr uint32_t V_MTE2_EVENT_COUNT = SLOT_COUNT + 1;
+constexpr uint32_t MTE3_MTE2_EVENT_COUNT = 2 * SLOT_COUNT + 1;
+constexpr uint32_t V_MTE2_EVENT_COUNT = SLOT_COUNT + 2;
 constexpr uint32_t REQUIRED_EVENT_CAPACITY = 8;
-constexpr uint16_t VEC_TO_CUBE_FLAG = 1;
-constexpr uint16_t CUBE_TO_VEC_FLAG = 3;
+// Each mode-4 counter carries one stage hand-off, in local head order.
+enum class FinalizeCvFlag : uint16_t {
+    S0Ready,  // AIV -> AIC: vb/kbg
+    S1Ready,  // AIC -> AIV: dAu
+    S3Ready,  // AIC -> AIV: dAw0/dvb
+    S4Ready,  // AIV -> AIC: dA0
+    S7Ready,  // AIC -> AIV: a2/dA2/dkbg0
+    S8Ready,  // AIV -> AIC: dA
+    S11Ready, // AIC -> AIV: dkb/dkbT/ds0
+    S12Ready, // AIV -> AIC: ds/doG/vDecay
+    S13Ready, // AIC -> AIV: dqHv/dkIntra/dkBase
+    S14Free,  // AIV -> AIC: release the window
+};
 namespace UB {
 constexpr uint32_t K = 0x00000;
 constexpr uint32_t V = 0x0C000;

@@ -125,7 +125,8 @@ public:
                 stage12Mte3ToMte2_[eventIndex]);
             AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
-        stage14Mte3ToScalar_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_S>();
+        stage12VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
+        stage14Mte3ToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::MTE3_MTE2>();
         stage15VToMte2_ = pipe_->AllocEventID<AscendC::HardEvent::V_MTE2>();
         AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
@@ -299,7 +300,7 @@ public:
                         kbgOutGm_[workspaceVectorOffset], kbg_[streamSlot_], vectorCopyParams);
                     AscendC::DataCopyPad(
                         vbOutGm_[workspaceVectorOffset], vb_[streamSlot_], vectorCopyParams);
-                    SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
+                    SetReady<PIPE_MTE3>(FinalizeCvFlag::S0Ready);
                     streamSlot_ = NextSlot(streamSlot_);
                 }
 
@@ -307,7 +308,7 @@ public:
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    WaitReady(CUBE_TO_VEC_FLAG);
+                    WaitReady<PIPE_V>(FinalizeCvFlag::S1Ready);
                     Stage2VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dAu_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(kb_[streamSlot_].GetPhyAddr()),
@@ -330,7 +331,7 @@ public:
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
-                    WaitReady(CUBE_TO_VEC_FLAG);
+                    WaitReady<PIPE_V>(FinalizeCvFlag::S3Ready);
                     Stage4VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dAw0_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(dAu_[streamSlot_].GetPhyAddr()),
@@ -341,7 +342,7 @@ public:
                         coreIdx_, workspaceGroupRound, headOffset);
                     AscendC::DataCopyPad(
                         dA0OutGm_[workspaceVectorOffset], dAw0_[streamSlot_], matrixCopyParams);
-                    SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
+                    SetReady<PIPE_MTE3>(FinalizeCvFlag::S4Ready);
                     streamSlot_ = NextSlot(streamSlot_);
                 }
 
@@ -381,7 +382,7 @@ public:
                     hv = hvBase + headOffset;
                     gOffset = (chunk.bIdx * tiling_->HV + hv) * tiling_->T + chunk.tokenStart;
                     vOffset = gOffset * tiling_->V;
-                    WaitReady(CUBE_TO_VEC_FLAG);
+                    WaitReady<PIPE_V>(FinalizeCvFlag::S7Ready);
                     Stage8VF<DT>(
                         reinterpret_cast<__ubuf__ DT *>(dA2_[streamSlot_].GetPhyAddr()),
                         reinterpret_cast<__ubuf__ DT *>(gateDA_[streamSlot_].GetPhyAddr()),
@@ -400,7 +401,7 @@ public:
                         coreIdx_, workspaceGroupRound, headOffset);
                     AscendC::DataCopyPad(
                         dA0OutGm_[workspaceVectorOffset], dA2_[streamSlot_], matrixCopyParams);
-                    SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
+                    SetReady<PIPE_MTE3>(FinalizeCvFlag::S8Ready);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(mte3ToMte2_[streamSlot_]);
                     streamSlot_ = NextSlot(streamSlot_);
                 }
@@ -443,8 +444,10 @@ public:
                     vectorBase = gOffset * K_SIZE_128;
                     workspaceVectorOffset = GetWorkspaceHeadOffset(
                         coreIdx_, workspaceGroupRound, headOffset);
-                    // S11 publishes Fixpipe output and prior S9 GM writes before S12 issues any copies.
-                    WaitReady(CUBE_TO_VEC_FLAG);
+                    // S11 publishes ds0 and the earlier S9 GM writes. Gate the dependent loads as well as VF.
+                    WaitReady<PIPE_V>(FinalizeCvFlag::S11Ready);
+                    AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
+                    AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
                     AscendC::DataCopy(
                         doG_[streamSlot_], doGm_[vectorBase], chunk.chunkLen * V_SIZE_128);
                     AscendC::DataCopy(
@@ -495,12 +498,12 @@ public:
                         dk0Stage13OutGm_[workspaceVectorOffset], vDecay_[streamSlot_], vectorCopyParams);
                     AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[streamSlot_]);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3ToV_[streamSlot_]);
-                    SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
+                    SetReady<PIPE_MTE3>(FinalizeCvFlag::S12Ready);
                     streamSlot_ = NextSlot(streamSlot_);
                 }
                 streamSlot_ = 0;
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
-                    WaitReady(CUBE_TO_VEC_FLAG);
+                    WaitReady<PIPE_V>(FinalizeCvFlag::S13Ready);
                     hv = hvBase + headOffset;
                     hk = hv / tiling_->headRatio;
                     localHv = hv - hk * tiling_->headRatio;
@@ -558,15 +561,15 @@ public:
                     streamSlot_ = NextSlot(streamSlot_);
                 }
 
-                // Finish the S14 stores before dispatching the S15 reads or reusing the UB.
-                AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(stage14Mte3ToScalar_);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(stage14Mte3ToScalar_);
+                SetReady<PIPE_MTE3>(FinalizeCvFlag::S14Free);
                 for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
                     AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
                 }
-                SetReady<PIPE_MTE3>(VEC_TO_CUBE_FLAG);
                 // Only the last window runs S15. The next S0 consumes the events in other windows.
                 if (isLastWindow) {
+                    // The S15 GM reads must follow the S14 stores.
+                    AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(stage14Mte3ToMte2_);
+                    AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(stage14Mte3ToMte2_);
                     for (uint32_t slot = 0; slot < SLOT_COUNT; ++slot) {
                         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stateVToMte2_[slot]);
                     }
@@ -711,7 +714,8 @@ public:
             pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stateVToMte2_[eventIndex]);
         }
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
-        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_S>(stage14Mte3ToScalar_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage12VToMte2_);
+        pipe_->ReleaseEventID<AscendC::HardEvent::MTE3_MTE2>(stage14Mte3ToMte2_);
         pipe_->ReleaseEventID<AscendC::HardEvent::V_MTE2>(stage15VToMte2_);
     }
 
@@ -918,7 +922,8 @@ private:
     AscendC::TEventID mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stage12Mte3ToMte2_[SLOT_COUNT];
     AscendC::TEventID stateVToMte2_[SLOT_COUNT];
-    AscendC::TEventID stage14Mte3ToScalar_;
+    AscendC::TEventID stage12VToMte2_;
+    AscendC::TEventID stage14Mte3ToMte2_;
     AscendC::TEventID stage15VToMte2_;
     int64_t stateChunkNum_ = 0;
 };

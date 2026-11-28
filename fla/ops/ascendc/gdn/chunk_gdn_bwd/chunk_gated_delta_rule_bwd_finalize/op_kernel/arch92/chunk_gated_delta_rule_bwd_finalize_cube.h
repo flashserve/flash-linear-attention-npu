@@ -67,7 +67,9 @@ public:
         Catlass::Arch::Resource<ArchTag> resource;
 
         AscendC::TPipe eventPipe;
-        stage13Mte2ToScalar_ = eventPipe.AllocEventID<AscendC::HardEvent::MTE2_S>();
+        for (uint32_t slot = 0; slot < HEAD_COUNT; ++slot) {
+            inputFixToMte2_[slot] = eventPipe.AllocEventID<AscendC::HardEvent::FIX_MTE2>();
+        }
         // Two resident-event groups and three independent L0 slots.
         for (uint32_t i = 0; i < 6; ++i) {
             MTE1_MTE2Events_[i] = eventPipe.AllocEventID<AscendC::HardEvent::MTE1_MTE2>();
@@ -242,7 +244,7 @@ public:
                         aL1, duL1, kbgL1, dw0L1, l0A, l0B, l0C, dvbCv, dAw0Cv,
                         chunk, hvBase + headOffset, headOffset);
                     // Publish readiness on FIX after all S3 copies for this head.
-                    SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
+                    SetReady<PIPE_FIX>(FinalizeCvFlag::S3Ready);
                 }
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     ProcessStage5Head(
@@ -254,7 +256,7 @@ public:
                     ProcessStage7Head(
                         aL1, dA0L1, dw0L1, l0A, l0B, l0C, dA2Cv, dkbg0Cv,
                         chunk, hvBase + headOffset, headOffset);
-                    SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
+                    SetReady<PIPE_FIX>(FinalizeCvFlag::S7Ready);
                 }
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     ProcessStage9Head(
@@ -265,12 +267,12 @@ public:
                     ProcessStage11Head(
                         doStage11L1, vNewStage11L1, l0A, l0B, l0C, ds0Cv,
                         chunk, hvBase + headOffset, headOffset);
-                    SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
+                    SetReady<PIPE_FIX>(FinalizeCvFlag::S11Ready);
                 }
                 // S13 dk_base spans the compact ds slots of adjacent heads.
                 // All S12 MTE3 consumers must finish before any of these CV writes.
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
-                    WaitReady(VEC_TO_CUBE_FLAG);
+                    WaitVectorInput(FinalizeCvFlag::S12Ready, static_cast<uint32_t>(headOffset));
                 }
                 for (headOffset = 0; headOffset < taskCount; ++headOffset) {
                     ProcessStage13Head(
@@ -278,9 +280,9 @@ public:
                         kStage5L1, hL1, vNewStage11L1, vbL1, l0A, l0B, l0C,
                         dk0Cv, dqIntraCv, dkIntraCv,
                         chunk, hvBase + headOffset, headOffset);
-                    SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
+                    SetReady<PIPE_FIX>(FinalizeCvFlag::S13Ready);
                 }
-                WaitReady(VEC_TO_CUBE_FLAG);
+                WaitReady<PIPE_FIX>(FinalizeCvFlag::S14Free);
                 ++windowBank;
             }
         }
@@ -316,7 +318,9 @@ public:
         for (uint32_t i = 0; i < 3; ++i) {
             eventPipe.ReleaseEventID<AscendC::HardEvent::M_FIX>(M_FIXEvents_[i]);
         }
-        eventPipe.ReleaseEventID<AscendC::HardEvent::MTE2_S>(stage13Mte2ToScalar_);
+        for (uint32_t slot = 0; slot < HEAD_COUNT; ++slot) {
+            eventPipe.ReleaseEventID<AscendC::HardEvent::FIX_MTE2>(inputFixToMte2_[slot]);
+        }
     }
 
 private:
@@ -493,7 +497,7 @@ private:
         }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[hEvent]);
 
-        WaitReady(VEC_TO_CUBE_FLAG);
+        WaitVectorInput(FinalizeCvFlag::S0Ready, localHv);
         typename TileCopyDau::template CopyGmToL1B<decltype(blockGmVb)>{}(tensorL1Vb, blockGmVb);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[duEvent]);
 
@@ -538,10 +542,10 @@ private:
         auto tensorDauCv = tla::MakeTensor(
             dAuCv[localHv], UB_DAU_LAYOUT, Catlass::Arch::PositionUB{});
         auto blockDauCv = tla::GetTile(
-            tensorDauCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
+            tensorDauCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dAuL0CSlot]);
         CopyL0CToUb<decltype(blockDauCv)>{}(blockDauCv, tensorDauL0C, false, uint8_t{0});
-        SetReady<PIPE_FIX>(CUBE_TO_VEC_FLAG);
+        SetReady<PIPE_FIX>(FinalizeCvFlag::S1Ready);
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dAuL0CSlot]);
 
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[hEvent]);
@@ -703,7 +707,7 @@ private:
         auto tensorDAwCv = tla::MakeTensor(
             dAw0Cv[localHv], UB_DAU_LAYOUT, Catlass::Arch::PositionUB{});
         auto blockDAwCv = tla::GetTile(
-            tensorDAwCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
+            tensorDAwCv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dAwL0CSlot]);
         CopyL0CToUb<decltype(blockDAwCv)>{}(blockDAwCv, tensorDAwL0C, false, uint8_t{0});
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dAwL0CSlot]);
@@ -812,7 +816,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[l1Event]);
         typename TileCopyDau::template CopyGmToL1A<decltype(blockGmK)>{}(
             tensorL1K, blockGmK);
-        WaitReady(VEC_TO_CUBE_FLAG);
+        WaitVectorInput(FinalizeCvFlag::S4Ready, l1Event);
         typename TileCopyDw0::template CopyGmToL1A<decltype(blockGmDA0)>{}(
             tensorL1DA0, blockGmDA0);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[l1Event]);
@@ -914,7 +918,7 @@ private:
         auto tensorA2Cv = tla::MakeTensor(
             a2Cv[localHv], UB_DAU_LAYOUT, Catlass::Arch::PositionUB{});
         auto blockA2Cv = tla::GetTile(
-            tensorA2Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
+            tensorA2Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[a2L0CSlot]);
         CopyL0CToUb<decltype(blockA2Cv)>{}(blockA2Cv, tensorA2L0C, false, uint8_t{0});
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[a2L0CSlot]);
@@ -986,7 +990,7 @@ private:
         auto tensorDA2Cv = tla::MakeTensor(
             dA2Cv[localHv], UB_DAU_LAYOUT, Catlass::Arch::PositionUB{});
         auto blockDA2Cv = tla::GetTile(
-            tensorDA2Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
+            tensorDA2Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(M_FIXEvents_[dA2L0CSlot]);
         CopyL0CToUb<decltype(blockDA2Cv)>{}(blockDA2Cv, tensorDA2L0C, false, uint8_t{0});
         AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIX_MEvents_[dA2L0CSlot]);
@@ -1086,7 +1090,7 @@ private:
         AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[l1Event]);
         typename TileCopyStage9DkbT::template CopyGmToL1B<decltype(blockGmKb)>{}(
             tensorL1Kb, blockGmKb);
-        WaitReady(VEC_TO_CUBE_FLAG);
+        WaitVectorInput(FinalizeCvFlag::S8Ready, l1Event);
         typename TileCopyDw0::template CopyGmToL1A<decltype(blockGmDA)>{}(
             tensorL1DA, blockGmDA);
         AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[l1Event]);
@@ -1226,7 +1230,7 @@ private:
         auto tensorDs0Cv = tla::MakeTensor(
             ds0Cv[localHv], UB_DAU_LAYOUT, Catlass::Arch::PositionUB{});
         auto blockDs0Cv = tla::GetTile(
-            tensorDs0Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, chunkLen));
+            tensorDs0Cv, tla::MakeCoord(0, 0), tla::MakeShape(chunkLen, FixpipeBf16Columns(chunkLen)));
         auto tensorL1Do = tla::MakeTensor(
             doL1[doSlot], L1_DU_LAYOUT, Catlass::Arch::PositionL1{});
         auto tensorL1VNewA = tla::MakeTensor(
@@ -1385,9 +1389,8 @@ private:
         typename TileCopyDw0::template CopyGmToL1A<decltype(blockGmDs)>{}(tensorL1Ds, blockGmDs);
         typename TileCopyDau::template CopyGmToL1A<decltype(blockGmDoG)>{}(tensorL1DoG, blockGmDoG);
         typename TileCopyDau::template CopyGmToL1A<decltype(blockGmVDecay)>{}(tensorL1VDecay, blockGmVDecay);
-        // Finish the resident loads before dispatching the two slices that reuse them.
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(stage13Mte2ToScalar_);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(stage13Mte2ToScalar_);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[dsEvent]);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(MTE2_MTE1Events_[dsEvent]);
         // N=64 keeps every L0A/L0B/L0C slot within 16 KiB.
         for (uint32_t nOffset = 0; nOffset < K_SIZE_128; nOffset += 64) {
             constexpr uint32_t nSize = 64;
@@ -1572,12 +1575,28 @@ private:
         AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(MTE1_MTE2Events_[dsEvent]);
     }
 
+    __aicore__ static inline uint32_t FixpipeBf16Columns(uint32_t validColumns)
+    {
+        // The explicit sub-block overload needs 32-byte rows. Both the L0C fractal and UB row fit the padding.
+        constexpr uint32_t columnsPerBlock = UB_ALIGN_BYTES / sizeof(DT);
+        return (validColumns + columnsPerBlock - 1U) / columnsPerBlock * columnsPerBlock;
+    }
+
+    __aicore__ inline void WaitVectorInput(FinalizeCvFlag flag, uint32_t slot)
+    {
+        // Let FIX publish earlier Cube results before acquiring the next Vector input.
+        // Only the subsequent GM loads depend on this local event.
+        WaitReady<PIPE_FIX>(flag);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_MTE2>(inputFixToMte2_[slot]);
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_MTE2>(inputFixToMte2_[slot]);
+    }
+
     __aicore__ inline int64_t WorkspaceHeadOffset(int64_t headOffset) const
     {
         return GetWorkspaceHeadOffset(coreIdx_, workspaceGroupRound_, headOffset);
     }
 
-    AscendC::TEventID stage13Mte2ToScalar_;
+    AscendC::TEventID inputFixToMte2_[HEAD_COUNT];
     AscendC::TEventID MTE1_MTE2Events_[6];
     AscendC::TEventID MTE2_MTE1Events_[6];
     AscendC::TEventID FIX_MTE1Events_[6];

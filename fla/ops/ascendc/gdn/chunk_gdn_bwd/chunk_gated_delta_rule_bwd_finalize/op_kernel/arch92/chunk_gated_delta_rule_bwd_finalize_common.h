@@ -88,14 +88,14 @@ __aicore__ inline uint32_t NextSlot(uint32_t slot)
     return (slot + 1U) % SLOT_COUNT;
 }
 template <pipe_t Pipe>
-__aicore__ inline void SetReady(uint16_t flag)
+__aicore__ inline void SetReady(FinalizeCvFlag flag)
 {
-    AscendC::CrossCoreSetFlag<0x4, Pipe>(flag);
+    AscendC::CrossCoreSetFlag<0x4, Pipe>(static_cast<uint16_t>(flag));
 }
-__aicore__ inline void WaitReady(uint16_t flag)
+template <pipe_t Pipe>
+__aicore__ inline void WaitReady(FinalizeCvFlag flag)
 {
-    // Both directions use ordered flags. Stop dispatch before issuing dependent pipe work.
-    AscendC::CrossCoreWaitFlag<0x4, PIPE_S>(flag);
+    AscendC::CrossCoreWaitFlag<0x4, Pipe>(static_cast<uint16_t>(flag));
 }
 } // namespace GDN::FinalizeArch92
 #endif
