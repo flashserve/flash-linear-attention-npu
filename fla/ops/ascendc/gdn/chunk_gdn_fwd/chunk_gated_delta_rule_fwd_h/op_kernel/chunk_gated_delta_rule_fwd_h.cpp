@@ -71,12 +71,7 @@ __aicore__ inline void ChunkGatedDeltaRuleFwdHLaunchTyped(
                 k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
         }
     } else {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-        // The A5 preload epilogue reloads h in the token dtype.
-        if constexpr (V_DIM == 128 && !std::is_same<StateT, float>::value) {
-#else
         if (V_DIM == 128) {
-#endif
             ChunkGatedDeltaRuleFwdHKernelPreloadImpl<DataT, GateT, StateT, WorkspaceT, TileShapes, false, true, useExp2>(
                 k, w, u, g, gk, inital_state, cu_seqlens, chunk_indices, h, v_new, final_state, tiling, user);
         } else {
