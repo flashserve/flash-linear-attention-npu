@@ -9,6 +9,7 @@
  */
 
 #include "opdev/op_log.h"
+#include "opdev/platform.h"
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
 #include "chunk_gated_delta_rule_fwd_h.h"
@@ -65,9 +66,21 @@ const std::array<const aclTensor *, 3> ChunkGatedDeltaRuleFwdH(
     const int64_t logicalKDim = kShape.GetDim(3);
     const int64_t logicalVHeads = uShape.GetDim(1);
     const int64_t logicalVDim = uShape.GetDim(3);
+    const aclTensor *stateArg = finalStateOut;
+    if (stateArg == nullptr && !outputFinalState &&
+        GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510) {
+        // Keep the optional output slot before workspace and tiling in the A5 launch ABI.
+        op::Shape placeholderShape;
+        placeholderShape.AppendDim(1);
+        const auto dtype = initialStateOptional == nullptr ? DataType::DT_FLOAT : initialStateOptional->GetDataType();
+        stateArg = executor->AllocTensor(placeholderShape, dtype, Format::FORMAT_ND);
+        if (stateArg == nullptr) {
+            return {nullptr, nullptr, nullptr};
+        }
+    }
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ChunkGatedDeltaRuleFwdH,
         OP_INPUT(k, w, u, g, gkOptional, initialStateOptional, actualCuSeqlens, actualChunkIndices),
-        OP_OUTPUT(hOut, vNewOut, finalStateOut),
+        OP_OUTPUT(hOut, vNewOut, stateArg),
         OP_ATTR(outputFinalState, chunkSize, logicalBatch, logicalSeqlen,
                 logicalKHeads, logicalVHeads, logicalKDim, logicalVDim));
     if (ret != ACLNN_SUCCESS) {
