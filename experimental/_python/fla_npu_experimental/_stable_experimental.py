@@ -1,4 +1,4 @@
-"""RWKV8 public signature preserved; execution uses the experimental Stable dispatcher."""
+"""Public Python wrappers for experimental Stable operators."""
 from ._loader import validate_active_environment
 from ._contract import validate_chunk_len
 

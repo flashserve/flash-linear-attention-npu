@@ -163,7 +163,8 @@ python -m fla_npu_experimental_manage --remove-overlay
 site-packages/
 ├── fla_npu_experimental_manage.py                # 实验管理入口
 └── fla_npu_experimental/                         # 以下均属实验包
-    ├── __init__.py / _rwkv8.py / _stable.py
+    ├── __init__.py / _stable_experimental.py     # 公开入口 / 实验算子 Python wrapper
+    ├── _stable.py                                # 加载 launcher 并调用 dispatcher
     ├── _layers.py / _wheel_overlay.py            # 布局配置 / 公共管理器副本
     ├── layer_manifest.json / _stable_hash.py / _build.json
     ├── libfla_npu_experimental_stable.so         # base 适配层

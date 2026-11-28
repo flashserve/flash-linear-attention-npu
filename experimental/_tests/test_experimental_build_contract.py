@@ -161,6 +161,20 @@ class ExperimentalPackageTest(unittest.TestCase):
                 self.builder.build_package(self.root / "dist", "g++")
             run.assert_not_called()
 
+    def test_partial_selection_keeps_a_shared_wrapper_module(self):
+        package = self.root / "experimental/_python/fla_npu_experimental"
+        shared = package / "_stable_experimental.py"
+        shared.write_text("def alpha(): return 1\ndef beta(): return 2\n", encoding="utf-8")
+        wrappers = {"alpha": (shared.stem, "alpha"), "beta": (shared.stem, "beta"),
+                    "gamma": ("_gamma", "gamma")}
+        (package / "_gamma.py").touch()
+        with patch.object(self.builder, "WRAPPERS", wrappers):
+            self.builder.select_wrappers(package, {"alpha"})
+        exports = _load_module("wrapper_exports", package / "_exports.py").EXPORTS
+        self.assertEqual(exports, {"alpha": shared.stem})
+        self.assertEqual(_load_module("shared_wrapper", shared).alpha(), 1)
+        self.assertFalse((package / "_gamma.py").exists())
+
     def test_output_in_build_cleanup_directory_is_rejected(self):
         for name in ("build", "build_out", "output"):
             with self.subTest(name=name), patch.object(self.builder.subprocess, "run") as run:
@@ -215,7 +229,7 @@ class ExperimentalWheelVersionTest(unittest.TestCase):
             root = Path(tmp)
             package = root / "fla_npu_experimental"
             files = [package / "opp/op_kernel/kernel.bin", package / "libfla_npu_experimental_stable.so",
-                     package / "_rwkv8.py", package / "layer_manifest.json",
+                     package / "_stable_experimental.py", package / "layer_manifest.json",
                      root / "fla_npu_experimental_manage.py"]
             stamp = package / "_stable_hash.py"
             for path in [*files, stamp]:

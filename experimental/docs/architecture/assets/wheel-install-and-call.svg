@@ -31,7 +31,7 @@
     <path d="M20 52H484" stroke="#cbdde8"/>
     <text x="20" y="81" class="entry formal">fla_npu/</text>
     <path d="M29 90V181 M29 106H43 M29 131H43 M29 156H43 M29 181H43" class="guide"/>
-    <text x="50" y="111" class="code">ops/ascendc/</text>
+    <text x="50" y="111" class="code">ops/ascendc/_stable.py</text>
     <text x="50" y="136" class="code">libfla_npu_stable.so</text>
     <text x="50" y="161" class="code">layer_manifest.json</text>
     <text x="50" y="186" class="code">opp/vendors/fla_npu_transformer/</text>
@@ -48,7 +48,7 @@
     <path d="M20 52H484" stroke="#c8e2d5"/>
     <text x="20" y="81" class="entry experimental">fla_npu_experimental/</text>
     <path d="M29 90V181 M29 106H43 M29 131H43 M29 156H43 M29 181H43" class="guide"/>
-    <text x="50" y="111" class="code">_rwkv8.py</text>
+    <text x="50" y="111" class="code">_stable_experimental.py</text>
     <text x="50" y="136" class="code">libfla_npu_experimental_stable.so</text>
     <text x="50" y="161" class="code">layer_manifest.json</text>
     <text x="50" y="186" class="code">opp/vendors/fla_npu_experimental_transformer/</text>
@@ -72,7 +72,7 @@
 
   <g transform="translate(24 639)">
     <rect width="504" height="72" rx="9" fill="#e8f3fa" stroke="#b9d4e5"/>
-    <text x="20" y="26" class="label formal">正式 Python 入口</text>
+    <text x="20" y="26" class="label formal">正式 Python 入口（wrapper 位于 _stable.py）</text>
     <text x="20" y="53" class="entry">fla_npu.ops.ascendc.npu_recompute_w_u_fwd</text>
     <path d="M252 73V95" class="arrow"/>
     <rect y="102" width="504" height="94" rx="9" fill="#f3f8fc" stroke="#b9d4e5"/>
@@ -86,7 +86,7 @@
   </g>
   <g transform="translate(552 639)">
     <rect width="504" height="72" rx="9" fill="#e4f4ec" stroke="#b6d9c8"/>
-    <text x="20" y="26" class="label experimental">实验 Python 入口</text>
+    <text x="20" y="26" class="label experimental">实验 Python 入口（wrapper 位于 _stable_experimental.py）</text>
     <text x="20" y="53" class="entry">fla_npu_experimental.fused_recurrent_rwkv8</text>
     <path d="M252 73V95" class="arrow"/>
     <rect y="102" width="504" height="94" rx="9" fill="#f1f9f5" stroke="#b6d9c8"/>
