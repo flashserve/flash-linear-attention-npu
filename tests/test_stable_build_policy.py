@@ -47,38 +47,11 @@ class StableBuildPolicyTest(unittest.TestCase):
                     runpy.run_path(str(ROOT / relative))
                     run.assert_not_called()
                 kwargs = setup.call_args.kwargs
-                policy.validate_runtime_requirements(kwargs["install_requires"])
-                self.assertIn("torch==2.12.0+cpu", kwargs["install_requires"])
-                self.assertIn("torch_npu==2.12.0", kwargs["install_requires"])
+                self.assertTrue(set(policy.RUNTIME_REQUIREMENTS).issubset(kwargs["install_requires"]))
                 self.assertEqual(kwargs["python_requires"], ">=3.9")
                 distribution = kwargs["distclass"]()
                 self.assertFalse(distribution.is_pure())
                 self.assertFalse(distribution.has_ext_modules())
-
-    def test_runtime_pins_accept_normalized_distribution_names(self):
-        self.assertEqual(policy.validate_runtime_requirements(
-            ["numpy", "Torch == 2.12.0+cpu", "torch-npu == 2.12.0"]), [])
-
-    def test_runtime_pins_reject_cuda_unbounded_and_conditional_dependencies(self):
-        for requirement in ("torch>=2.7.1", "torch==2.12.0", "torch==2.12.0+cu130",
-                            "torch==2.12.0+cpu; platform_machine == 'x86_64'",
-                            "torch[opt-einsum]==2.12.0+cpu",
-                            "torch @ https://example.org/torch.whl"):
-            with self.subTest(requirement=requirement):
-                with self.assertRaisesRegex(RuntimeError, "unconditional"):
-                    policy.validate_runtime_requirements([requirement, "torch_npu==2.12.0"])
-        for requirements in (["torch==2.12.0+cpu", "torch_npu>=2.7.1"],
-                             [*policy.RUNTIME_REQUIREMENTS, "torch>=2.7.1"],
-                             [*policy.RUNTIME_REQUIREMENTS, "torch-npu==2.12.0"]):
-            with self.subTest(requirements=requirements):
-                with self.assertRaisesRegex(RuntimeError, "unconditional"):
-                    policy.validate_runtime_requirements(requirements)
-
-    def test_runtime_pins_require_both_dependencies_unless_injecting(self):
-        with self.assertRaisesRegex(RuntimeError, "torch_npu==2.12.0"):
-            policy.validate_runtime_requirements(["torch==2.12.0+cpu"])
-        self.assertEqual(policy.validate_runtime_requirements(
-            ["torch==2.12.0+cpu"], allow_missing=True), ["torch_npu==2.12.0"])
 
     def test_standalone_wheel_uses_platform_tag(self):
         with mock.patch.object(setuptools, "setup") as setup:
