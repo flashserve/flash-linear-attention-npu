@@ -6,7 +6,8 @@ Single source of truth shared by:
   (generated torch_custom/fla_npu/fla_npu/_compat.py; the guard only emits
   advisory RuntimeWarnings for below-minimum versions and never blocks import)
 
-Keep the public promise aligned with the README and the wheel metadata: CANN
+Minimum runtime compatibility (wheel installation pins live separately in
+stable_build_policy.py): CANN
 >= 8.5.2 (a2/a3) or >= 9.0.0 (a5), torch >= 2.7.1, torch_npu >=
 TORCH_NPU_GDN_FIX_MINIMUMS[torch], triton-ascend >= 3.2.1 on CANN 9.x
 (9.0.0+).
@@ -19,9 +20,8 @@ from __future__ import annotations
 MIN_CANN_BY_TIER = {"a2": "8.5.2", "a3": "8.5.2", "a5": "9.0.0"}
 MIN_CANN = MIN_CANN_BY_TIER["a2"]
 # The Stable-ABI launcher resolves aoti_torch_* symbols that exist from 2.7.1
-# on, which is also the lower bound the wheel declares (Requires-Dist). Below
-# it the mandatory launcher cannot load and fla_npu reports an error; the
-# promise covers the launcher, so the documented minimum matches the metadata.
+# on. This compatibility floor is independent of the CPU runtime versions
+# selected for automatic installation by stable_build_policy.py.
 MIN_TORCH = "2.7.1"
 MIN_TRITON_ASCEND = "3.2.0"
 MIN_TRITON_ASCEND_A5 = "3.2.1"
